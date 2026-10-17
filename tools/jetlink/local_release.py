@@ -49,7 +49,9 @@ def resolve(root, selection):
   record = json.loads(path.read_text())
   if set(record) != {'selection', 'source_commit', 'runtime', 'storage_format', 'bundle'}:
     raise ValueError('Invalid local experiment record')
-  if record['selection'] != selection or record['runtime'] != RUNTIME or record['storage_format'] != 1:
+  from update_host import validate_runtime
+  validate_runtime(record['runtime'])
+  if record['selection'] != selection or record['storage_format'] != 1:
     raise ValueError('Local experiment is not registered for this selection')
   if re.fullmatch('[0-9a-f]{40}', str(record['source_commit'])) is None:
     raise ValueError('Invalid local source commit')

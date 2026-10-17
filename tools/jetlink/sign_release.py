@@ -7,7 +7,7 @@ import tarfile
 
 from Crypto.PublicKey import ECC
 from Crypto.Signature import eddsa
-from update_host import digest, validate_manifest
+from update_host import bundle_runtime, digest, validate_manifest
 
 
 def main():
@@ -24,10 +24,10 @@ def main():
       pin = 'openpilot/selfdrive/modeld/jetlink/cinque_v2.json'
     spec = json.load(archive.extractfile(pin))
     compatibility = 'tools/jetlink/runtime_compatibility.json'
-    storage_format = (json.load(archive.extractfile(compatibility))['protected_storage_format']
-                      if compatibility in archive.getnames() else None)
+    metadata = json.load(archive.extractfile(compatibility)) if compatibility in archive.getnames() else {}
+    storage_format = metadata.get('protected_storage_format')
   manifest = {'format': 1, 'source_commit': commit,
-              'runtime': {'arch': 'aarch64', 'l4t': '36.4.7', 'tensorrt': '10.3.0'},
+              'runtime': bundle_runtime(metadata),
               'bundle': {'url': f'https://upload.shind0.synology.me/models/jetlink-host-{commit}/precompiled-runtime.tar.gz',
                          'sha256': digest(args.bundle), 'size': args.bundle.stat().st_size},
               'model': {'url': args.model_url, 'sha256': spec['sha256'], 'size': spec['nbytes']}}

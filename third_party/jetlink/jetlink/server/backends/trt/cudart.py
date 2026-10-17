@@ -105,6 +105,8 @@ def stream_end_capture(stream: int):
 
 
 def graph_instantiate(graph):
+  if hasattr(_rt, "cudaGraphInstantiateWithFlags"):
+    return check(_rt.cudaGraphInstantiateWithFlags(graph, 0))
   # Signature moved across cuda-python releases: newer takes (graph, flags),
   # older takes (graph, errNode, logBuffer, bufferSize).
   try:

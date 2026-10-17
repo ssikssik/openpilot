@@ -48,9 +48,10 @@ def inspect_package(package):
     raise ValueError('Package has the wrong model')
   # Import verified helper code only after comparing it with the bundle.
   sys.path.insert(0, str(package))
-  from local_release import RUNTIME, validate_selection
+  from local_release import validate_selection
+  from update_host import bundle_runtime
   validate_selection(selection)
-  record = {'selection': selection, 'source_commit': commit, 'runtime': RUNTIME,
+  record = {'selection': selection, 'source_commit': commit, 'runtime': bundle_runtime(compatibility),
             'storage_format': 1, 'bundle': manifest['files']['host.tar.gz']}
   return record
 

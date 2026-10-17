@@ -35,6 +35,7 @@ def test_protected_image_rejects_old_comma_release_before_download(tmp_path, mon
   marker.write_text('{"format":1}')
   monkeypatch.setattr(update, 'PROTECTED_MARKER', marker)
   monkeypatch.setattr(update, 'verify_signature', lambda _: None)
+  monkeypatch.setattr(update, 'check_runtime', lambda _: None)
   monkeypatch.setattr(update, 'fetch', lambda *_: pytest.fail('Incompatible release downloaded'))
   value = manifest()
   with pytest.raises(ValueError, match='protected storage'):
@@ -82,6 +83,7 @@ def test_download_corruption_does_not_replace_current_file(tmp_path, monkeypatch
 def test_failed_candidate_preserves_running_release_and_model(tmp_path, monkeypatch):
   monkeypatch.setattr(update, 'ROOT', tmp_path)
   monkeypatch.setattr(update, 'verify_signature', lambda _: None)
+  monkeypatch.setattr(update, 'check_runtime', lambda _: None)
   old = tmp_path / 'releases' / ('d' * 40)
   old.mkdir(parents=True)
   candidate = old.with_name('a' * 40)
@@ -122,6 +124,7 @@ def test_no_telemetry_does_not_authorize_automatic_download(monkeypatch):
 def test_power_loss_during_failed_candidate_rollback_keeps_recovery_record(tmp_path, monkeypatch):
   monkeypatch.setattr(update, 'ROOT', tmp_path)
   monkeypatch.setattr(update, 'verify_signature', lambda _: None)
+  monkeypatch.setattr(update, 'check_runtime', lambda _: None)
   old = tmp_path / 'releases' / ('d' * 40)
   candidate = tmp_path / 'releases' / ('a' * 40)
   old.mkdir(parents=True); candidate.mkdir()

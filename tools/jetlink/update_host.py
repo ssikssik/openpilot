@@ -25,6 +25,23 @@ PROTECTED_MARKER = Path('/etc/carrot-jetlink-protected.json')
 DEFAULT_MANIFEST = 'https://upload.shind0.synology.me/models/jetlink-host-stable/manifest.json'
 
 
+RUNTIME_PROFILES = {
+  'jetpack-6': {'arch': 'aarch64', 'l4t': '36.4.7', 'tensorrt': '10.3.0'},
+  'jetpack-7.2.1': {'arch': 'aarch64', 'l4t': '39.2.1', 'tensorrt': '10.16.2'},
+}
+
+
+def validate_runtime(runtime):
+  if runtime not in RUNTIME_PROFILES.values():
+    raise ValueError('Unsupported OS/runtime ABI')
+  return dict(runtime)
+
+
+def bundle_runtime(compatibility):
+  # Legacy committed bundles omitted runtime and were built for JetPack 6.
+  return validate_runtime(compatibility.get('runtime', RUNTIME_PROFILES['jetpack-6']))
+
+
 def verify_signature(manifest):
   from Crypto.PublicKey import ECC
   from Crypto.Signature import eddsa
@@ -89,8 +106,7 @@ def fetch(url, path, sha256, size, progress=None):
 def validate_manifest(manifest):
   if manifest.get('format') != 1 or not re.fullmatch('[0-9a-f]{40}', str(manifest.get('source_commit', ''))):
     raise ValueError('Unsupported release manifest')
-  if manifest.get('runtime') != {'arch': 'aarch64', 'l4t': '36.4.7', 'tensorrt': '10.3.0'}:
-    raise ValueError('This updater cannot change the OS/runtime ABI')
+  validate_runtime(manifest.get('runtime'))
   if not re.fullmatch('[0-9a-f]{64}', str(manifest.get('model', {}).get('sha256', ''))):
     raise ValueError('Model identity required')
   checked_url(manifest['bundle']['url'])
@@ -132,8 +148,9 @@ def stage(manifest_url=DEFAULT_MANIFEST):
 
 
 def check_runtime(manifest):
+  expected = validate_runtime(manifest.get('runtime'))
   l4t = subprocess.check_output(['dpkg-query', '-W', '-f=${Version}', 'nvidia-l4t-core'], text=True)
-  if not l4t.startswith('36.4.7-'):
+  if not l4t.startswith(expected['l4t'] + '-'):
     raise ValueError('Installed L4T does not match the release')
   runtime = subprocess.check_output([str(ROOT / 'venv/bin/python'), '-c', 'import tensorrt; print(tensorrt.__version__)'], text=True).strip()
   if runtime != manifest['runtime']['tensorrt'] or os.uname().machine != 'aarch64':
@@ -141,6 +158,10 @@ def check_runtime(manifest):
 
 
 def check_bundle(candidate, manifest):
+  metadata = candidate / 'tools/jetlink/runtime_compatibility.json'
+  compatibility = json.loads(metadata.read_text()) if metadata.is_file() else {}
+  if bundle_runtime(compatibility) != manifest['runtime']:
+    raise ValueError('Bundle runtime differs from manifest')
   if (candidate / 'SOURCE_COMMIT').read_text().strip() != manifest['source_commit']:
     raise ValueError('Bundle source identity mismatch')
   pin = candidate / 'openpilot/selfdrive/modeld/jetlink/jetson_model.json'
@@ -156,10 +177,12 @@ def selected_commit(selection):
     from local_release import resolve
     record = resolve(ROOT, selection)
     validate_storage_compatibility(record)
+    check_runtime(record)
     return record['source_commit']
   validate_manifest(selection)
   verify_signature(selection)
   validate_storage_compatibility(selection)
+  check_runtime(selection)
   return selection['source_commit']
 
 
@@ -172,11 +195,11 @@ def stage_manifest(manifest, progress=None):
   validate_manifest(manifest)
   verify_signature(manifest)
   validate_storage_compatibility(manifest)
+  check_runtime(manifest)
   commit = manifest['source_commit']
   if (ROOT / 'current/SOURCE_COMMIT').read_text().strip() == commit:
     return
   # Installation dependencies and kernel changes need a separately tested image.
-  check_runtime(manifest)
   updates = ROOT / 'updates'
   updates.mkdir(exist_ok=True)
   bundle = updates / (commit + '.tar.gz')
@@ -239,6 +262,7 @@ def activate():
     validate_manifest(manifest)
     verify_signature(manifest)
     validate_storage_compatibility(manifest)
+    check_runtime(manifest)
   release = ROOT / 'releases' / manifest['source_commit']
   if release.is_symlink() or release.resolve().parent != (ROOT / 'releases').resolve():
     raise ValueError('Invalid release directory')

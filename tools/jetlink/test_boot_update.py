@@ -18,6 +18,7 @@ def env(tmp_path, monkeypatch):
   monkeypatch.setattr(update, 'ROOT', tmp_path)
   monkeypatch.setattr(update, 'PROTECTED_MARKER', tmp_path / 'no-protection')
   monkeypatch.setattr(update, 'verify_signature', lambda _: None)
+  monkeypatch.setattr(update, 'check_runtime', lambda _: None)
   monkeypatch.setattr(boot, 'READY', tmp_path / 'ready')
   monkeypatch.setattr(boot, 'STATUS', tmp_path / 'status')
   monkeypatch.setattr(boot, 'BOOT_ID', tmp_path / 'boot-id')
