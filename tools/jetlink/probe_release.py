@@ -24,7 +24,7 @@ def main():
   host = EngineHost(EngineCache(Path(sys.argv[1]), TrtBackend()))
   try:
     host.request(Request(spec['sha256'], spec['nbytes'], spec['frame_skip']), None)
-    deadline = time.monotonic() + 900
+    deadline = time.monotonic() + 3600
     while time.monotonic() < deadline:
       status = host.status(spec['sha256'], spec['frame_skip'])
       if status['state'] == 'ready':

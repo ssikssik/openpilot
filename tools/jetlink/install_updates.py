@@ -85,7 +85,7 @@ Before=carrot-jetlink.service carrot-jetlink-hud.service
 [Service]
 Type=oneshot
 ExecStart={command} activate
-TimeoutStartSec=1000
+TimeoutStartSec=4500
 RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
@@ -99,7 +99,7 @@ ExecStart={command} automatic
 Nice=19
 IOSchedulingClass=idle
 CPUAffinity=0 1
-TimeoutStartSec=1800
+TimeoutStartSec=4500
 ''',
     'carrot-jetlink-update-stage.timer': '''[Unit]
 Description=Check for Jetson runtime updates while offroad

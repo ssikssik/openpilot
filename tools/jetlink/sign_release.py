@@ -7,7 +7,7 @@ import tarfile
 
 from Crypto.PublicKey import ECC
 from Crypto.Signature import eddsa
-from update_host import digest, validate_manifest
+from update_host import SUPPORTED_L4T, digest, validate_manifest
 
 
 def main():
@@ -16,6 +16,8 @@ def main():
   parser.add_argument('--key', type=Path, required=True)
   parser.add_argument('--model-url', required=True)
   parser.add_argument('--output', type=Path, required=True)
+  parser.add_argument('--l4t', choices=SUPPORTED_L4T, default='36.4.7',
+                      help='Exact L4T version of the host used to build and validate this bundle')
   args = parser.parse_args()
   with tarfile.open(args.bundle) as archive:
     commit = archive.extractfile('SOURCE_COMMIT').read().decode().strip()
@@ -27,7 +29,7 @@ def main():
     storage_format = (json.load(archive.extractfile(compatibility))['protected_storage_format']
                       if compatibility in archive.getnames() else None)
   manifest = {'format': 1, 'source_commit': commit,
-              'runtime': {'arch': 'aarch64', 'l4t': '36.4.7', 'tensorrt': '10.3.0'},
+              'runtime': {'arch': 'aarch64', 'l4t': args.l4t, 'tensorrt': '10.3.0'},
               'bundle': {'url': f'https://upload.shind0.synology.me/models/jetlink-host-{commit}/precompiled-runtime.tar.gz',
                          'sha256': digest(args.bundle), 'size': args.bundle.stat().st_size},
               'model': {'url': args.model_url, 'sha256': spec['sha256'], 'size': spec['nbytes']}}

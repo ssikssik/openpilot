@@ -22,6 +22,9 @@ import urllib.request
 
 ROOT = Path('/opt/carrot-jetlink')
 PROTECTED_MARKER = Path('/etc/carrot-jetlink-protected.json')
+SUPPORTED_L4T = ('36.4.7', '36.5.2')
+PROBE_PROCESS_TIMEOUT = 3660  # 1h engine preparation plus startup/shutdown grace.
+
 DEFAULT_MANIFEST = 'https://upload.shind0.synology.me/models/jetlink-host-stable/manifest.json'
 
 
@@ -86,11 +89,17 @@ def fetch(url, path, sha256, size, progress=None):
     temporary.unlink(missing_ok=True)
 
 
+def validate_runtime(runtime):
+  if (not isinstance(runtime, dict) or set(runtime) != {'arch', 'l4t', 'tensorrt'} or
+      runtime.get('arch') != 'aarch64' or runtime.get('l4t') not in SUPPORTED_L4T or
+      runtime.get('tensorrt') != '10.3.0'):
+    raise ValueError('This updater cannot change the OS/runtime ABI')
+
+
 def validate_manifest(manifest):
   if manifest.get('format') != 1 or not re.fullmatch('[0-9a-f]{40}', str(manifest.get('source_commit', ''))):
     raise ValueError('Unsupported release manifest')
-  if manifest.get('runtime') != {'arch': 'aarch64', 'l4t': '36.4.7', 'tensorrt': '10.3.0'}:
-    raise ValueError('This updater cannot change the OS/runtime ABI')
+  validate_runtime(manifest.get('runtime'))
   if not re.fullmatch('[0-9a-f]{64}', str(manifest.get('model', {}).get('sha256', ''))):
     raise ValueError('Model identity required')
   checked_url(manifest['bundle']['url'])
@@ -109,7 +118,7 @@ def probe_release(release):
              str(release / 'tools/jetlink/probe_release.py'), str(ROOT / 'cache')]
   process = subprocess.Popen(command, start_new_session=True)
   try:
-    code = process.wait(timeout=960)
+    code = process.wait(timeout=PROBE_PROCESS_TIMEOUT)
   except BaseException:
     # Killing only runuser can leave its GPU-building Python child alive.
     # Reap the entire isolated probe group before the old server may start.
@@ -132,8 +141,9 @@ def stage(manifest_url=DEFAULT_MANIFEST):
 
 
 def check_runtime(manifest):
+  validate_runtime(manifest.get('runtime'))
   l4t = subprocess.check_output(['dpkg-query', '-W', '-f=${Version}', 'nvidia-l4t-core'], text=True)
-  if not l4t.startswith('36.4.7-'):
+  if not l4t.strip().startswith(manifest['runtime']['l4t'] + '-'):
     raise ValueError('Installed L4T does not match the release')
   runtime = subprocess.check_output([str(ROOT / 'venv/bin/python'), '-c', 'import tensorrt; print(tensorrt.__version__)'], text=True).strip()
   if runtime != manifest['runtime']['tensorrt'] or os.uname().machine != 'aarch64':

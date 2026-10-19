@@ -211,4 +211,48 @@ def test_probe_timeout_kills_and_reaps_entire_child_group(monkeypatch):
   monkeypatch.setattr(update.os, 'killpg', lambda pid, sig: calls.append(('kill', pid)), raising=False)
   with pytest.raises(subprocess.TimeoutExpired):
     update.probe_release(Path('/synthetic/release'))
-  assert calls == [('wait', 960), ('kill', 12345), ('wait', None)]
+  assert calls == [('wait', update.PROBE_PROCESS_TIMEOUT), ('kill', 12345), ('wait', None)]
+
+
+@pytest.mark.parametrize('release', ['36.4.7', '36.5.2'])
+def test_runtime_must_match_signed_release_exactly(release, monkeypatch):
+  value = manifest()
+  value['runtime']['l4t'] = release
+  update.validate_manifest(value)
+  monkeypatch.setattr(update.os, 'uname', lambda: SimpleNamespace(machine='aarch64'))
+  def output(command, **kwargs):
+    return release + '-20260716114719\n' if command[0] == 'dpkg-query' else '10.3.0\n'
+  monkeypatch.setattr(update.subprocess, 'check_output', output)
+  update.check_runtime(value)
+  value['runtime']['l4t'] = '36.5.2' if release == '36.4.7' else '36.4.7'
+  with pytest.raises(ValueError, match='Installed L4T'):
+    update.check_runtime(value)
+
+
+@pytest.mark.parametrize('runtime', [None, {}, {'arch':'aarch64','l4t':'36.5.20','tensorrt':'10.3.0'},
+  {'arch':'aarch64','l4t':'36.5.2','tensorrt':'10.4.0'},
+  {'arch':'x86_64','l4t':'36.5.2','tensorrt':'10.3.0'}])
+def test_reject_unreviewed_runtime(runtime):
+  value = manifest()
+  value['runtime'] = runtime
+  with pytest.raises(ValueError, match='OS/runtime ABI'):
+    update.validate_manifest(value)
+
+
+def test_jp623_runtime_is_covered_by_manifest_signature(monkeypatch):
+  import base64
+  from Crypto.PublicKey import ECC
+  from Crypto.Signature import eddsa
+  key = ECC.generate(curve='Ed25519')
+  original = Path.read_text
+  monkeypatch.setattr(Path, 'read_text', lambda p, *a, **k:
+                      key.public_key().export_key(format='PEM') if p.name == 'release-signing-public.pem' else original(p, *a, **k))
+  value = manifest()
+  value['runtime']['l4t'] = '36.5.2'
+  payload = json.dumps(value, sort_keys=True, separators=(',', ':')).encode()
+  value['signature'] = base64.b64encode(eddsa.new(key, 'rfc8032').sign(payload)).decode()
+  update.validate_manifest(value)
+  update.verify_signature(value)
+  value['runtime']['l4t'] = '36.4.7'
+  with pytest.raises(ValueError):
+    update.verify_signature(value)
