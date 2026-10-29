@@ -40,8 +40,8 @@ PRE_OVERRIDE_CONFIRM_FRAMES = 2
 PRE_OVERRIDE_MAX_TORQUE_DELTA = -10.0
 LOW_SPEED_ANGLE_RATE_RAMP_SPEED = 15.0 * CV.KPH_TO_MS
 MID_SPEED_ANGLE_RATE_LIMIT_SPEED = 40.0 * CV.KPH_TO_MS
-# 10-29 experiment (Ioniq 5 PE): the stock parking assist turns the wheel to 460 deg; let the LKAS angle go past 175 at
-# parking speeds to see whether the EPS follows beyond the 176.7 deg LFA limit, back to 175 by 30 km/h
+# Low-speed angle experiment for Ioniq 5 PE and EV4: allow commands beyond the 176.7 deg LFA limit.
+# EPS response above that limit needs vehicle validation; return to 175 deg by 30 km/h.
 LOW_SPEED_ANGLE_MAX = 450.  # deg
 LOW_SPEED_ANGLE_MAX_KPH = (20., 30.)
 # Stock parking assist steering: the camera's LFA turns VALUE63 to 15 when it starts (10-29, two auto parks). openpilot's
@@ -228,7 +228,7 @@ def park_assist_active(CS):
 class CarController(CarControllerBase):
   def steer_angle_max(self, v_ego_raw):
     angle_max = self.params.ANGLE_LIMITS.STEER_ANGLE_MAX
-    if self.CP.carFingerprint != CAR.HYUNDAI_IONIQ_5_PE:
+    if self.CP.carFingerprint not in (CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV4):
       return angle_max
     return float(np.interp(v_ego_raw * CV.MS_TO_KPH, LOW_SPEED_ANGLE_MAX_KPH, [LOW_SPEED_ANGLE_MAX, angle_max]))
 

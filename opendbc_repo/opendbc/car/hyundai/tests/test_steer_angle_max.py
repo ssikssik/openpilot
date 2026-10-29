@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from opendbc.car.hyundai.carcontroller import CarController
 from opendbc.car.hyundai.values import CAR
 
@@ -10,11 +12,15 @@ def angle_max(car, kph):
   return CarController.steer_angle_max(cc, kph / 3.6)
 
 
-def test_ioniq_5_pe_turns_past_175_only_at_parking_speeds():
-  assert angle_max(CAR.HYUNDAI_IONIQ_5_PE, 5) == 450
-  assert angle_max(CAR.HYUNDAI_IONIQ_5_PE, 25) == 312.5   # tapers 20 -> 30 km/h
-  assert angle_max(CAR.HYUNDAI_IONIQ_5_PE, 40) == 175
-  assert angle_max(CAR.KIA_EV9, 5) == 175
+@pytest.mark.parametrize("car", [CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV4])
+@pytest.mark.parametrize("kph, expected", [(0, 450), (5, 450), (20, 450), (25, 312.5), (30, 175), (40, 175)])
+def test_low_speed_angle_max(car, kph, expected):
+  assert angle_max(car, kph) == expected
+
+
+@pytest.mark.parametrize("kph", [0, 5, 20, 25, 30, 40])
+def test_other_cars_keep_standard_angle_max(kph):
+  assert angle_max(CAR.KIA_EV9, kph) == 175
 
 
 def test_park_assist_stand_aside_only_at_parking_speeds():
