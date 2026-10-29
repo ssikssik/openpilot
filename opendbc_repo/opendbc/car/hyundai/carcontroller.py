@@ -41,9 +41,9 @@ PRE_OVERRIDE_MAX_TORQUE_DELTA = -10.0
 LOW_SPEED_ANGLE_RATE_RAMP_SPEED = 15.0 * CV.KPH_TO_MS
 MID_SPEED_ANGLE_RATE_LIMIT_SPEED = 40.0 * CV.KPH_TO_MS
 # Low-speed angle experiment for Ioniq 5 PE and EV4: allow commands beyond the 176.7 deg LFA limit.
-# EPS response above that limit needs vehicle validation; return to 175 deg by 30 km/h.
+# EPS response above that limit needs vehicle validation; return to 175 deg by 40 km/h.
 LOW_SPEED_ANGLE_MAX = 450.  # deg
-LOW_SPEED_ANGLE_MAX_KPH = (20., 30.)
+LOW_SPEED_ANGLE_MAX_KPH = (30., 40.)
 # Stock parking assist steering: the camera's LFA turns VALUE63 to 15 when it starts (10-29, two auto parks). openpilot's
 # steering-only mode came on during both and pulled against it; at parking speeds, stand aside (no panda blocking)
 PARK_ASSIST_VALUE63 = 15
