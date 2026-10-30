@@ -32,6 +32,57 @@ def test_paddle_background_requires_enabled_paddle_mode(
 def test_model_turn_background_requires_active_steering(cruise_enabled, lat_active):
   normal = 1 if cruise_enabled else 7
   assert _select_cluster_background(cruise_enabled, lat_active, False, 0, turning=True) == (6 if lat_active else normal)
+  # roundabout ban (Kick and auto lane change held off) flashes red engaged or not
+  assert _select_cluster_background(cruise_enabled, lat_active, False, 0, roundabout=True) == 6
+
+
+def test_roundabout_hold_20s_below_60kph():
+  from opendbc.car.hyundai.carstate import CarState, ROUNDABOUT_HOLD_FRAMES
+  cs = SimpleNamespace(ccnc_0x162={'SIGNS': 0}, ccnc_signs_prev=0, roundabout_frames=0, roundabout_hold_enabled=True)
+  ret = SimpleNamespace(vEgo=0.)
+  def run(n, signs=0, kph=30):
+    cs.ccnc_0x162['SIGNS'], ret.vEgo = signs, kph / 3.6
+    out = []
+    for _ in range(n):
+      CarState._update_roundabout(cs, ret)
+      out.append(ret.naviRoundabout)
+    return out
+  assert not any(run(10))
+  assert all(run(500, signs=24))                   # the 5 s pulse
+  assert all(run(ROUNDABOUT_HOLD_FRAMES - 501))    # held to 20 s from the rise
+  assert not any(run(10))
+  run(1, signs=24)
+  assert not any(run(10, signs=24, kph=80))        # highway pre-notice
+  cs.roundabout_hold_enabled = False              # RoundaboutLaneChangeHold off
+  assert not any(run(10, kph=30))
+
+
+def test_tunnel_ban_only_after_a_no_lane_change_notice():
+  from opendbc.car.hyundai.carstate import CarState, TUNNEL_NOTICE_FRAMES
+  cs = SimpleNamespace(ccnc_0x162={'SIGNS': 0}, hda_info_4a3={'TunnelExist': 0}, tunnel_notice_frames=0, tunnel_banned=False,
+                       tunnel_hold_enabled=True)
+  ret = SimpleNamespace()
+  def run(n, tunnel=0, signs=0):
+    cs.hda_info_4a3['TunnelExist'], cs.ccnc_0x162['SIGNS'] = tunnel, signs
+    out = []
+    for _ in range(n):
+      CarState._update_tunnel(cs, ret)
+      out.append(ret.naviTunnel)
+    return out
+  assert not any(run(300, tunnel=1))               # 10-30 12:58/13:14 underpasses: no notice, no ban
+  run(10)
+  run(500, signs=16)                               # notice 8 s before the 13:24 tunnel
+  run(300)
+  assert all(run(TUNNEL_NOTICE_FRAMES, tunnel=1))  # held to the exit, past the notice window
+  assert not any(run(10))
+  assert all(run(10, tunnel=1, signs=16))          # a notice inside the tunnel counts too
+  run(10)
+  run(TUNNEL_NOTICE_FRAMES + 10)
+  assert not any(run(10, tunnel=1))                # notice too long ago
+  run(10)
+  run(10, signs=16)
+  cs.tunnel_hold_enabled = False                   # TunnelLaneChangeHold off
+  assert not any(run(10, tunnel=1))
 
 
 @pytest.mark.parametrize('desire', range(5))
@@ -195,6 +246,8 @@ def test_engaged_standstill_keeps_steering_and_lane_change_icons(monkeypatch, st
 ))
 def test_dashed_lane_line_codes(color, lane_line, expected):
   assert hyundaicanfd._dashed_lane_line(color, lane_line) == expected
+  for car in hyundaicanfd.NO_DASHED_LANE_CARS:  # Ioniq 9 / EV9 clusters draw nothing for dashed codes
+    assert hyundaicanfd._dashed_lane_line(color, lane_line, car) == color
 
 
 @pytest.mark.parametrize(('blindspot', 'left'), ((False, 14), (True, 4)))  # orange (BSD) stays even when unseen
@@ -565,9 +618,9 @@ def test_tunnel_lane_change_refusal_text(monkeypatch):
     md = log.ModelDataV2.new_message()
     md.meta.desire = desire
     state = SimpleNamespace(
-      adrv_0x161={key: 0 for key in definition.sigs}, out=structs.CarState(latEnabled=True, leftBlinker=blinker), modelV2=md,
+      adrv_0x161={key: 0 for key in definition.sigs}, out=structs.CarState(latEnabled=True, leftBlinker=blinker, naviTunnel=bool(tunnel)), modelV2=md,
       lfahda_cluster=None, cruise_buttons_msg=None, adrv_0x200=None, adrv_0x1ea=None, ccnc_0x162=None, is_metric=True,
-      paddle_button_prev=0, softHoldActive=0, trailer_connected=False, hda_info_4a3={'TunnelExist': tunnel},
+      paddle_button_prev=0, softHoldActive=0, trailer_connected=False,
     )
     control = structs.CarControl(latActive=True, enabled=True)
     msg = hyundaicanfd.create_ccnc_messages(cp, packer, SimpleNamespace(ECAN=0, CAM=2), frame, control, state,

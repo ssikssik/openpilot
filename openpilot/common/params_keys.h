@@ -219,6 +219,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ClusterLaneTestValue", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"CanfdHazardTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"SteerAngleTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
+    {"SpasSteerTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"ClusterLaneTestFrom", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"ClusterLaneTestTo", {CLEAR_ON_MANAGER_START, INT, "0"}},
 
@@ -241,6 +242,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     {"AutoTurnControl", {PERSISTENT, INT, "0"}},
     {"AutoTurnControlRightLaneChange", {PERSISTENT, BOOL, "0"}},
+    {"ManualLaneChangeIndicator", {PERSISTENT, BOOL, "0"}},
     {"AutoTurnControlSpeedTurn", {PERSISTENT, INT, "20"}},
     {"AutoTurnControlTurnEnd", {PERSISTENT, INT, "6"}},
     {"AutoTurnMapChange", {PERSISTENT, INT, "0"}},
@@ -260,6 +262,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"VehicleSpeedCameraControlMode", {PERSISTENT, INT, "1"}},
     {"VehicleSpeedCameraDistanceTime", {PERSISTENT, INT, "60"}},
     {"AutoRoadSpeedLimitOffset", {PERSISTENT, INT, "-1"}},
+    {"AutoRoadSpeedOnEngage", {PERSISTENT, BOOL, "0"}},
     {"AutoNaviSpeedBumpTime", {PERSISTENT, INT, "1"}},
     {"AutoNaviSpeedBumpSpeed", {PERSISTENT, INT, "35"}},
     {"AutoNaviSpeedBumpEndDistance", {PERSISTENT, INT, "200"}},
@@ -333,6 +336,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"HyundaiCameraSCC", {PERSISTENT, INT, "0"}},
     {"HyundaiCanfdClusterDirectTx", {PERSISTENT, BOOL, "0"}},
     {"CanfdBlinkerKick", {PERSISTENT, BOOL, "0"}},
+    {"RoundaboutLaneChangeHold", {PERSISTENT, BOOL, "1"}},
+    {"TunnelLaneChangeHold", {PERSISTENT, BOOL, "0"}},
     {"CanfdBlinkerMenuTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"CanfdBlinkerStalk", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"CanfdBvmView", {CLEAR_ON_MANAGER_START, INT, "0"}},

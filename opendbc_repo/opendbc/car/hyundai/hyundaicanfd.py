@@ -624,6 +624,13 @@ def create_acc_control(packer, CAN, enabled, accel_last, accel, stopping, gas_ov
   return packer.make_can_msg("SCC_CONTROL", CAN.ECAN, values), values["aReqValue"]
 
 
+# SpasSteerTest: the stock parking ECU's steering request (05_can/rspa_steer_20261030.md). SPAS1 byte 3 is 0x4b on
+# every stock frame, NEW_SIGNAL_2 the mode (3 idle, 4 ask, 5 active; the EPS echoes it in 0xEA byte 5), NEW_SIGNAL_1 the
+# angle (+left, 0.1 deg). Only the parked form is sent: the stock frame gains bytes 5..19 only after D is selected.
+def create_spas_steer(packer, CAN, mode, angle):
+  return [packer.make_can_msg("SPAS1", CAN.ECAN, {"BYTE3": 0x4b, "NEW_SIGNAL_2": mode, "NEW_SIGNAL_1": angle})]
+
+
 def create_spas_messages(packer, CAN, frame, left_blink, right_blink, spas2_template=None):
   ret = []
 
@@ -1077,9 +1084,13 @@ def _set_raw_bits(msg, bits, value):
   return addr, bytes(d), bus
 
 
-def _dashed_lane_line(color, lane_line):
+# Clusters that draw no line for the dashed codes (owner reports 10-28~30) keep the solid colour
+NO_DASHED_LANE_CARS = (CAR.HYUNDAI_IONIQ_9, CAR.KIA_EV9)
+
+
+def _dashed_lane_line(color, lane_line, car=None):
   # 0x161 dashed codes seen on the Ioniq 5 PE cluster: 8 white, 10 green (no orange dashed)
-  if lane_line // 10 > 0 and lane_line % 10 in (0, 5):  # camera: dashed / DLM inner dashed (color 0 = no lane info)
+  if car not in NO_DASHED_LANE_CARS and lane_line // 10 > 0 and lane_line % 10 in (0, 5):  # camera: dashed / DLM inner dashed (color 0 = no lane info)
     return {2: 8, 6: 10}.get(color, color)
   return color
 
@@ -1100,12 +1111,14 @@ _traffic_display_state.last, _traffic_display_state.green_until = 0, 0
 LANE_HIGHLIGHT_BY_LAT = {1: 1, 2: 3, 3: 4, 4: 5}  # laneless green, lane mode sky blue, steer warn yellow, saturated red (cluster test 24, 10-24)
 
 
-def _select_cluster_background(cruise_enabled, lat_active, paddle_pressed, paddle_mode, turning=False, traffic_state=0):
+def _select_cluster_background(cruise_enabled, lat_active, paddle_pressed, paddle_mode, turning=False, traffic_state=0,
+                               roundabout=False):
   # A detected traffic light takes over the background until detection ends.
   if traffic_state in TRAFFIC_BACKGROUND:
     return TRAFFIC_BACKGROUND[traffic_state]
   # Reuse the existing flashing-red background to identify an active model turn.
-  if (lat_active and turning) or (paddle_mode > 0 and paddle_pressed):
+  # Kick and automatic lane changes are held off after a roundabout sign (CarState.naviRoundabout): same flashing red
+  if (lat_active and turning) or (paddle_mode > 0 and paddle_pressed) or roundabout:
     return 6
   return 1 if cruise_enabled else 3 if lat_active else 7
 
@@ -1314,6 +1327,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         values["BACKGROUND"] = _select_cluster_background(
           cruise_enabled, lat_active, CS.paddle_button_prev > 0, paddle_mode, turning=desire in (1, 2),
           traffic_state=_traffic_display_state(getattr(hud_control, "trafficState", 0), frame),
+          roundabout=getattr(CS.out, "naviRoundabout", False),
         )
         values["CENTERLINE"] = 1 if HDA_CntrlModSta > 0 else 0
         values["CAR_CIRCLE"] = 2 if hdp_active else 1 if cruise_enabled else 0
@@ -1363,8 +1377,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         text = _cluster_alert_text(getattr(hud_control, "alertType", "") or "") if is_ioniq5pe else None
         if text and (values[text[0]] == 0 or (text[0] == "ALERTS_5" and values["ALERTS_5"] == popup and frame < popup_until)):
           values[text[0]] = text[1]
-        hda_info = getattr(CS, "hda_info_4a3", None)
-        tunnel = hda_info is not None and hda_info.get("TunnelExist", 0) > 0
+        tunnel = getattr(CS.out, "naviTunnel", False)
         if desire in (3, 4):  # the change started (driver torque): nothing refused any more
           create_ccnc_messages._tunnel_refusal_until = 0
         elif tunnel and lat_active and CS.out.leftBlinker != CS.out.rightBlinker:  # one side (not hazards)
@@ -1400,7 +1413,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           if hud_control.leftLaneDepart:
             values["LANELINE_LEFT"] = 4 if (frame // 50) % 2 == 0 else 1
           else:
-            values["LANELINE_LEFT"] = _dashed_lane_line(lane_color, CS.out.leftLaneLine) if left_seen or lane_color == 4 else LANE_LINE_UNSEEN  # orange stays
+            values["LANELINE_LEFT"] = _dashed_lane_line(lane_color, CS.out.leftLaneLine, getattr(CP, "carFingerprint", None)) if left_seen or lane_color == 4 else LANE_LINE_UNSEEN  # orange stays
 
           lane_color = 6 if md is not None and md.meta.laneChangeAvailableRight else 2
           if lane_line_check >= 1:
@@ -1411,7 +1424,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           if hud_control.rightLaneDepart:
             values["LANELINE_RIGHT"] = 4 if (frame // 50) % 2 == 0 else 1
           else:
-            values["LANELINE_RIGHT"] = _dashed_lane_line(lane_color, CS.out.rightLaneLine) if right_seen or lane_color == 4 else LANE_LINE_UNSEEN
+            values["LANELINE_RIGHT"] = _dashed_lane_line(lane_color, CS.out.rightLaneLine, getattr(CP, "carFingerprint", None)) if right_seen or lane_color == 4 else LANE_LINE_UNSEEN
 
         values["LCA_LEFT_ARROW"] = 2 if CS.out.leftBlinker else 0
         values["LCA_RIGHT_ARROW"] = 2 if CS.out.rightBlinker else 0

@@ -40,10 +40,13 @@ PRE_OVERRIDE_CONFIRM_FRAMES = 2
 PRE_OVERRIDE_MAX_TORQUE_DELTA = -10.0
 LOW_SPEED_ANGLE_RATE_RAMP_SPEED = 15.0 * CV.KPH_TO_MS
 MID_SPEED_ANGLE_RATE_LIMIT_SPEED = 40.0 * CV.KPH_TO_MS
-# Low-speed angle experiment for Ioniq 5 PE and EV4: allow commands beyond the 176.7 deg LFA limit.
+# EV4-only low-speed angle experiment: allow commands beyond the 176.7 deg LFA limit.
 # EPS response above that limit needs vehicle validation; return to 175 deg by 40 km/h.
 LOW_SPEED_ANGLE_MAX = 450.  # deg
 LOW_SPEED_ANGLE_MAX_KPH = (30., 40.)
+# SteerAngleTest range. Non-EV4 LKAS angles stay at STEER_ANGLE_MAX: 10-29 test (20261029_2056) the EPS stopped at
+# ~180 deg and raised steerFaultTemporary whenever asked for more
+STEER_ANGLE_TEST_MAX = 450.  # deg
 # Stock parking assist steering: the camera's LFA turns VALUE63 to 15 when it starts (10-29, two auto parks). openpilot's
 # steering-only mode came on during both and pulled against it; at parking speeds, stand aside (no panda blocking)
 PARK_ASSIST_VALUE63 = 15
@@ -59,9 +62,15 @@ APRK_ADDR = 0x7B1
 APRK_EXT_SESSION = bytes([0x02, 0x10, 0x03, 0, 0, 0, 0, 0])
 APRK_COM_DISABLE = bytes([0x03, 0x28, 0x83, 0x01, 0, 0, 0, 0])
 APRK_DEFAULT_SESSION = bytes([0x02, 0x10, 0x01, 0, 0, 0, 0, 0])
+# SpasSteerTest: stock RSPA handshake, mode 4 then 5 after 0.1 s (2019 log 226.7 -> 226.8 s), angle at 100 deg/s
+SPAS_STEER_ASK_FRAMES = 10
+SPAS_STEER_RATE = 1.0
 # kick: ~2 flashes when the driver starts crossing a lane line without the blinker (lane_crossing.py).
 # shortcut: flash count at 1.0 s is not measured (BCM ran on ~1.2 s after the command stopped, EV4 10-26), tune after a drive
 BLINKER_PULSE_FRAMES = int(1.0 / DT_CTRL)
+# No kick across a yellow (centre) line. The camera color drops to 0 while the line is crossed (10-30 seg 22: 10 -> 2
+# at the kick), so a yellow seen on that side in the last 2 s counts (10-30 seg 1: kick over yellow dashed 20)
+YELLOW_HOLD_FRAMES = int(2.0 / DT_CTRL)
 # Every stock lever press starts with one BLINKER + BLINKER_TAP frame before the steady frame (Ioniq 5 3372.9 s:
 # 4280304010000000 tap -> de90304000000000 hold; GV80 82.96 s: 5a10304010000000 tap). The BCM needs that edge -
 # replaying only the steady form (TAP 0) did nothing on either car. GV80's lever is momentary and releases itself.
@@ -228,7 +237,7 @@ def park_assist_active(CS):
 class CarController(CarControllerBase):
   def steer_angle_max(self, v_ego_raw):
     angle_max = self.params.ANGLE_LIMITS.STEER_ANGLE_MAX
-    if self.CP.carFingerprint not in (CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV4):
+    if self.CP.carFingerprint != CAR.KIA_EV4:
       return angle_max
     return float(np.interp(v_ego_raw * CV.MS_TO_KPH, LOW_SPEED_ANGLE_MAX_KPH, [LOW_SPEED_ANGLE_MAX, angle_max]))
 
@@ -253,6 +262,8 @@ class CarController(CarControllerBase):
     self.hapticFeedbackWhenSpeedCamera = 0
     self.max_angle_frames = MAX_ANGLE_FRAMES
     self.steer_angle_test = 0
+    self.spas_steer_test = 0  # SpasSteerTest: target angle through the parking ECU's SPAS1 request, 0 off
+    self.spas_angle, self.aprk_buses = 0., ()
     self.blinking_signal = False # 1Hz
     self.blinking_frame = int(1.0 / DT_CTRL)
     self.soft_hold_mode = 2
@@ -274,6 +285,7 @@ class CarController(CarControllerBase):
     self.stalk_press_frame = 0
     self.aprk_state, self.aprk_frame = 0, 0  # 0 normal, 1 extended session asked, 2 silenced
     self.lane_crossing, self.blinker_side, self.blinker_pulse_end = LaneCrossing(), 0, 0
+    self.yellow_until = [0, 0]  # left, right
     self.standstill_frame = -1e6
 
     self.activateCruise = 0
@@ -375,30 +387,46 @@ class CarController(CarControllerBase):
     # The driver crossing a line with the lamp off, engaged or not (modelV2 runs either way). Not the model's own lane
     # change: holding SPAS2 through it read back as the driver's blinker and the lamp never went off (EV4 10-26).
     lamp = CS.out.leftBlinker or CS.out.rightBlinker
-    # 0x4A3 TunnelExist: lane changes are banned in tunnels (10-29: 4/4 rises at tunnel entries, cluster "no lane change")
-    hda_info = getattr(CS, "hda_info_4a3", None)
-    tunnel = hda_info is not None and hda_info.get("TunnelExist", 0) > 0
+    # lane changes are banned in a tunnel announced as no-lane-change, and for 20 s after a roundabout sign (carstate)
+    tunnel = getattr(CS.out, "naviTunnel", False) or getattr(CS.out, "naviRoundabout", False)
     side = self.lane_crossing.update(getattr(CS, "modelV2", None), self.frame * DT_CTRL,
                                      self.blinker_control and drive and not lamp and not tunnel, CS.out.steeringTorque)
+    for i, line in enumerate((CS.out.leftLaneLine, CS.out.rightLaneLine)):
+      if line // 10 == 2:  # camera color: 0 none, 1 white, 2 yellow, 3 blue
+        self.yellow_until[i] = self.frame + YELLOW_HOLD_FRAMES
+    if side and self.frame < self.yellow_until[side - 3]:
+      side = 0
     if side:
       self.blinker_side, self.blinker_pulse_end = side, self.frame + BLINKER_PULSE_FRAMES
     pulse = self.frame < self.blinker_pulse_end
     # the parking ECU is paused only around a kick and restored right after it (menu test: any speed or gear)
-    want = self.blinker_test in (1, 2) or (self.blinker_control and drive and pulse)
+    # SpasSteerTest: parked, stopped, hands off. APRK is asked on both buses - bus 0 ignored it 10-26, and a second SPAS1
+    # stream with its own counter runs on bus 1 (10-30)
+    spas = (self.spas_steer_test != 0 and CS.out.gearShifter == structs.CarState.GearShifter.park and
+            CS.out.standstill and not CS.out.steeringPressed)
+    want = self.blinker_test in (1, 2) or (self.blinker_control and drive and pulse) or spas
     if not want:
-      if self.aprk_state:
-        ret.append(CanData(APRK_ADDR, APRK_DEFAULT_SESSION, self.CAN.ECAN))
-      self.aprk_state = 0
+      for bus in self.aprk_buses:
+        ret.append(CanData(APRK_ADDR, APRK_DEFAULT_SESSION, bus))
+      self.aprk_state, self.aprk_buses = 0, ()
     elif self.aprk_state == 0:
-      ret.append(CanData(APRK_ADDR, APRK_EXT_SESSION, self.CAN.ECAN))
+      self.aprk_buses = (self.CAN.ECAN, self.CAN.ACAN) if spas else (self.CAN.ECAN,)
+      ret += [CanData(APRK_ADDR, APRK_EXT_SESSION, bus) for bus in self.aprk_buses]
       self.aprk_state, self.aprk_frame = 1, self.frame
     elif self.aprk_state == 1:
       if self.frame - self.aprk_frame >= 5:  # 50 ms for the session change
-        ret.append(CanData(APRK_ADDR, APRK_COM_DISABLE, self.CAN.ECAN))
-        self.aprk_state = 2
+        ret += [CanData(APRK_ADDR, APRK_COM_DISABLE, bus) for bus in self.aprk_buses]
+        self.aprk_state, self.aprk_frame = 2, self.frame
+        if spas:
+          self.spas_angle = CS.out.steeringAngleDeg
     else:
       if self.frame % 100 == 0:
-        ret.append(make_tester_present_msg(APRK_ADDR, self.CAN.ECAN, suppress_response=True))
+        ret += [make_tester_present_msg(APRK_ADDR, bus, suppress_response=True) for bus in self.aprk_buses]
+      if spas:
+        target = clip_float(self.spas_steer_test, -STEER_ANGLE_TEST_MAX, STEER_ANGLE_TEST_MAX)
+        self.spas_angle = rate_limit(target, self.spas_angle, -SPAS_STEER_RATE, SPAS_STEER_RATE)
+        mode = 4 if self.frame - self.aprk_frame <= SPAS_STEER_ASK_FRAMES else 5
+        return ret + hyundaicanfd.create_spas_steer(self.packer, self.CAN, mode, self.spas_angle)
       # every frame (100 Hz), twice APRK's 50 Hz: 10-26 APRK stayed on, so its BLINKER_CONTROL 0 frames interleave with ours
       left = (pulse and self.blinker_side == 3) or self.blinker_test == 1
       right = (pulse and self.blinker_side == 4) or self.blinker_test == 2
@@ -427,6 +455,7 @@ class CarController(CarControllerBase):
       params = Params()
       self.max_angle_frames = params.get_int("MaxAngleFrames")
       self.steer_angle_test = params.get_int("SteerAngleTest")
+      self.spas_steer_test = params.get_int("SpasSteerTest")
       steerMax = params.get_int("CustomSteerMax")
       steerDeltaUp = params.get_int("CustomSteerDeltaUp")
       steerDeltaDown = params.get_int("CustomSteerDeltaDown")
@@ -662,7 +691,7 @@ class CarController(CarControllerBase):
     steer_test = (angle_control and self.steer_angle_test != 0 and CS.out.standstill and not CS.out.steeringPressed and
                   not park_assist_active(CS))
     if steer_test:
-      target = clip_float(self.steer_angle_test, -LOW_SPEED_ANGLE_MAX, LOW_SPEED_ANGLE_MAX)
+      target = clip_float(self.steer_angle_test, -STEER_ANGLE_TEST_MAX, STEER_ANGLE_TEST_MAX)
       apply_angle = rate_limit(target, self.apply_angle_last, -STEER_ANGLE_TEST_RATE, STEER_ANGLE_TEST_RATE)
       steering_authority = self.angle_max_torque
 
@@ -763,7 +792,8 @@ class CarController(CarControllerBase):
         can_sends.extend(hyundaicanfd.create_spas_messages(self.packer, self.CAN, self.frame, CC.leftBlinker, CC.rightBlinker,
                                                            getattr(CS, "spas2", None)))
       # carrot-wip's own SPAS path (CanfdBlinkerControl -> CANFD_SPAS_BLINKERS, card.py) owns APRK/SPAS when it is on
-      elif not self.CP.flags & HyundaiFlags.CANFD_SPAS_BLINKERS and (self.blinker_control or self.blinker_test or self.aprk_state):
+      elif not self.CP.flags & HyundaiFlags.CANFD_SPAS_BLINKERS and (self.blinker_control or self.blinker_test or self.aprk_state or
+                                                                    self.spas_steer_test):
         can_sends.extend(self.aprk_blinkers(CC, CS))
 
       if self.camera_scc_params in [2, 3]:

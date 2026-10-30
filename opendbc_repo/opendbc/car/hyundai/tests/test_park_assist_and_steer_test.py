@@ -12,15 +12,15 @@ def angle_max(car, kph):
   return CarController.steer_angle_max(cc, kph / 3.6)
 
 
-@pytest.mark.parametrize("car", [CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV4])
 @pytest.mark.parametrize("kph, expected", [(0, 450), (5, 450), (20, 450), (30, 450), (35, 312.5), (40, 175), (50, 175)])
-def test_low_speed_angle_max(car, kph, expected):
-  assert angle_max(car, kph) == pytest.approx(expected)
+def test_low_speed_angle_max(kph, expected):
+  assert angle_max(CAR.KIA_EV4, kph) == pytest.approx(expected)
 
 
 @pytest.mark.parametrize("kph", [0, 5, 20, 30, 35, 40, 50])
-def test_other_cars_keep_standard_angle_max(kph):
-  assert angle_max(CAR.KIA_EV9, kph) == 175
+@pytest.mark.parametrize("car", [CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV9])
+def test_other_cars_keep_standard_angle_max(car, kph):
+  assert angle_max(car, kph) == 175
 
 
 def test_park_assist_stand_aside_only_at_parking_speeds():

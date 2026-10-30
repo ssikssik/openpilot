@@ -12,7 +12,7 @@ from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.navi_speedcam import SpeedcamPolicy
 from opendbc.car.hyundai.section_average import DISTANCE_SCALE as SECTION_DISTANCE_SCALE, SectionAverage
 from opendbc.car.hyundai.steering_touch import HyundaiSteeringTouch
-from opendbc.car.hyundai.rear_gap import rear_lane_change_blocks
+from opendbc.car.hyundai.rear_gap import tbt_bsd_inputs
 from opendbc.car.hyundai.vehicle_gps import VehicleGPS, register_vehicle_gps
 from opendbc.car.hyundai.values import HyundaiFlags, CAR, DBC, Buttons, CarControllerParams, CAMERA_SCC_CAR, HyundaiExtFlags, \
                                        EV_MODE_ACTIVE_VALUES, EV_MODE_STATUS_ADDR, EV_MODE_STATUS_DLC, EV_MODE_STATUS_MSG, \
@@ -67,6 +67,13 @@ CANFD_CAMERA_TX_MESSAGES = (
 CANFD_CAMERA_FIRST_FRAME_MAX_AGE_NS = 150_000_000
 TRAILER_DISCONNECT_GRACE_FRAMES = int(5.0 / DT_CTRL)
 EV_MODE_STATUS_TIMEOUT_NS = 500_000_000
+# 0x162 SIGNS=24 (roundabout) is a 5 s pulse, not "inside" (17/17 rises, 10-30); turns ran -5..+17 s from the rise.
+# Highway pre-notices came at 80-118 km/h with no turn, hence the speed gate (02_logs/measurements.md §33)
+ROUNDABOUT_HOLD_FRAMES = int(20.0 / DT_CTRL)
+ROUNDABOUT_MAX_SPEED = 60 * CV.KPH_TO_MS
+# Stock navigation's no-lane-change notice (0x162 SIGNS 16, always with 0x380 byte10 0x10) came 2..58 s before 72 of 83
+# tunnels in October (05_can/navi_lanechange_ban.md 10-30); the short city underpasses got none
+TUNNEL_NOTICE_FRAMES = int(60.0 / DT_CTRL)
 LEGACY_LFA_BUTTON_ADDR = 0x391
 LEGACY_CRUISE_BUTTON_ALT_ADDR = 0x3EF
 LEGACY_LFA_BUTTON_ALT_ADDR = 0x416
@@ -200,6 +207,8 @@ class CarState(CarStateBase):
     self.adrv_0x1ea = None
     self.adrv_0x160 = None
     self.ccnc_0x162 = None
+    self.ccnc_signs_prev, self.roundabout_frames = 0, 0
+    self.tunnel_notice_frames, self.tunnel_banned = 0, False
     self.canfd_wrapped_navi = CP.carFingerprint == CAR.KIA_PV5
     self.navi_profile_msg = CANFD_NAVI_PROFILE_MSG if self.canfd_wrapped_navi else "NEW_MSG_4BE"
     self.vehicleNaviZoneControlSupported = not self.canfd_wrapped_navi  # Legacy kind-7 profile zones only
@@ -251,6 +260,8 @@ class CarState(CarStateBase):
     self.vehicleSpeedCameraDistanceTime = self._vehicle_speed_camera_distance_time(distance_time_tenths)
     self.vehicleNaviCanControl = self._vehicle_navi_can_control_mode(self.op_params.get_int("VehicleNaviCanControl"))
     self.vehicleNaviSchoolZoneControl = self.op_params.get_bool("VehicleNaviSchoolZoneControl")
+    self.roundabout_hold_enabled = self.op_params.get_bool("RoundaboutLaneChangeHold")
+    self.tunnel_hold_enabled = self.op_params.get_bool("TunnelLaneChangeHold")
     self.vehicleSpeedCameraParamsCounter = 0
     self.vehicleNaviEvents = []
     # joongyu01/speedcam: stock-navigation camera-kind policy (mobile zones, +-button skip, section average)
@@ -735,6 +746,8 @@ class CarState(CarStateBase):
       self.vehicleNaviSchoolZoneControl = vehicle_navi_school_zone_control
       if not vehicle_navi_school_zone_control:
         self._clear_vehicle_navi_school_zone()
+    self.roundabout_hold_enabled = self.op_params.get_bool("RoundaboutLaneChangeHold")
+    self.tunnel_hold_enabled = self.op_params.get_bool("TunnelLaneChangeHold")
     self._read_speedcam_params()
     return changed
 
@@ -1094,6 +1107,25 @@ class CarState(CarStateBase):
     self.vehicleNaviEvents.sort(key=lambda event: event["target"])
     self.vehicleNaviEvents = self.vehicleNaviEvents[:VEHICLE_NAVI_MAX_EVENTS]
 
+  def _update_roundabout(self, ret):
+    signs = self.ccnc_0x162.get("SIGNS", 0) if self.ccnc_0x162 is not None else 0
+    if signs == 24 and self.ccnc_signs_prev != 24:
+      self.roundabout_frames = ROUNDABOUT_HOLD_FRAMES
+    self.ccnc_signs_prev = signs
+    self.roundabout_frames = max(self.roundabout_frames - 1, 0)
+    ret.naviRoundabout = self.roundabout_hold_enabled and self.roundabout_frames > 0 and ret.vEgo < ROUNDABOUT_MAX_SPEED
+
+  def _update_tunnel(self, ret):
+    # 0x4A3 TunnelExist alone is every tunnel and underpass; only one announced as no-lane-change counts
+    signs = self.ccnc_0x162.get("SIGNS", 0) if self.ccnc_0x162 is not None else 0
+    self.tunnel_notice_frames = TUNNEL_NOTICE_FRAMES if signs == 16 else max(self.tunnel_notice_frames - 1, 0)
+    tunnel = self.hda_info_4a3 is not None and self.hda_info_4a3.get("TunnelExist", 0) > 0
+    if not tunnel:
+      self.tunnel_banned = False
+    elif self.tunnel_notice_frames > 0:
+      self.tunnel_banned = True
+    ret.naviTunnel = self.tunnel_hold_enabled and self.tunnel_banned
+
   def _update_vehicle_navi_events(self, cp, ret, speed_limit_cam, cp_alt=None):
     ret.speedBumpDistance = 0.0
     ret.schoolZoneActive = False
@@ -1105,8 +1137,8 @@ class CarState(CarStateBase):
     profile_timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_profile_msg)
     self.vehicleNaviAvailable = self.vehicleNaviAvailable or profile_timestamp > 0 or self.vehicleNaviSpeedZoneActive
     ret.vehicleNaviAvailable = self.vehicleNaviAvailable
-    # 10-29: every rise seen was a tunnel entry, shown on the cluster as "no lane change"
-    ret.naviTunnel = self.hda_info_4a3 is not None and self.hda_info_4a3.get("TunnelExist", 0) > 0
+    self._update_tunnel(ret)
+    self._update_roundabout(ret)
     self.vehicleNaviCameraTarget = None
 
     # Track the current warning independently of future 0x4BE previews. A new
@@ -1473,6 +1505,11 @@ class CarState(CarStateBase):
       ret.cruiseState.standstill = cp_cruise_info.vl["SCC_CONTROL"]["InfoDisplay"] >= 4
       ret.cruiseState.speed = cp_cruise_info.vl["SCC_CONTROL"]["VSetDis"] * speed_factor
 
+    # The optional 250m trigger uses OEM BSD independently of corner display data.
+    if self.CP.enableBsm:
+      ret.tbtRearInputsAvailable, ret.tbtRightRearBlocked = tbt_bsd_inputs(
+        self.cp_bsm, max(cp._last_update_nanos, cp_cam._last_update_nanos))
+
     speed_limit_cam = False
     corner = False
     corner_infos = [info for info in (self.adrv_0x1ea, self.ccnc_0x162) if info is not None]
@@ -1490,12 +1527,6 @@ class CarState(CarStateBase):
       ret.rightRearLongDist = self.rr_distance
       ret.leftRearLatDist = corner_max("LR_DETECT_LATERAL")
       ret.rightRearLatDist = corner_max("RR_DETECT_LATERAL")
-      if self.CP.enableBsm:
-        rear_sources = tuple(name for name, info in (
-          ("ADRV_0x1ea", self.adrv_0x1ea), ("CCNC_0x162", self.ccnc_0x162),
-        ) if info is not None)
-        ret.tbtRearInputsAvailable = bool(rear_sources)
-        _, ret.tbtRightRearBlocked = rear_lane_change_blocks(cp_cam, self.cp_bsm, rear_sources)
       corner = True
     if corner:
       raw_corner_radar_enabled = (
