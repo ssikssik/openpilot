@@ -147,4 +147,5 @@ def test_external_hud_skips_camera_and_model_but_retains_device_hud():
     if id(node) not in guarded_nodes:
       retained_renderers.append(callback.value.attr)
 
-  assert {"_hud_renderer", "alert_renderer", "driver_state_renderer"} <= set(retained_renderers)
+  assert {"_hud_renderer", "alert_renderer"} <= set(retained_renderers)
+  assert "driver_state_renderer" not in retained_renderers
