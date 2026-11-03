@@ -241,7 +241,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"AutoCurveSpeedFactor", {PERSISTENT, INT, "120"}},
 
     {"AutoTurnControl", {PERSISTENT, INT, "0"}},
-    {"AutoTurnControlRightLaneChange", {PERSISTENT, BOOL, "0"}},
+    {"AutoTurnControlRightLaneChange", {PERSISTENT, INT, "0"}},
     {"ManualLaneChangeIndicator", {PERSISTENT, BOOL, "0"}},
     {"ModelDesireIndicator", {PERSISTENT, BOOL, "0"}},
     {"ModelPathIndicator", {PERSISTENT, BOOL, "0"}},
@@ -340,6 +340,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CanfdBlinkerKick", {PERSISTENT, BOOL, "0"}},
     {"RoundaboutLaneChangeHold", {PERSISTENT, BOOL, "1"}},
     {"TunnelLaneChangeHold", {PERSISTENT, BOOL, "0"}},
+    {"ComfortBrakeSymmetric", {PERSISTENT, BOOL, "0"}},
     {"CanfdBlinkerMenuTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"CanfdBlinkerStalk", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"CanfdBvmView", {CLEAR_ON_MANAGER_START, INT, "0"}},
@@ -351,6 +352,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CanfdHDA2", {PERSISTENT, INT, "0"}},
     {"CanfdBlinkerControl", {PERSISTENT, BOOL, "0"}},
     {"CanfdBlinkerTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
+    {"CanfdAprkDiag", {CLEAR_ON_MANAGER_START, BOOL, "0"}},
+    {"CanfdAprkDiagResult", {PERSISTENT, STRING, "{}"}},
     {"CanfdDebug", {PERSISTENT, INT, "0"}},
 
     {"SoundVolumeAdjust", {PERSISTENT, INT, "100"}},
