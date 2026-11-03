@@ -138,8 +138,7 @@ class AugmentedRoadView(CameraView):
     timing.call('alert', self.alert_renderer.render, self._content_rect)
     alert_ms = (time.monotonic() - _t) * 1000.0
     _t = time.monotonic()
-    timing.call('driver_state', self.driver_state_renderer.draw_onroad, self._content_rect,
-                self.alert_renderer.get_alert(ui_state.sm) is not None)
+    # User preference: hide the passive DM character on the driving screen.
     ds_ms = (time.monotonic() - _t) * 1000.0
 
     # Custom UI extension point - add custom overlays here
