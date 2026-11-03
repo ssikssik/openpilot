@@ -15,7 +15,7 @@ Regardless of gear or speed, including at standstill, three presses of the physi
 
 Echo filtering uses a short correlation window immediately after an automatic cancellation request and briefly suppresses its paired release. Hyundai/Kia/Genesis openpilot longitudinal control bypasses this filter because its internal cancellation level can stay high even though that path does not transmit a CANCEL button; the internal level therefore cannot hide the first physical press. On stock longitudinal control and other filtered paths, a physical CANCEL press interleaved with an actual echo may still be ignored, or the following press may need one extra release and press; this favors avoiding an unintended DM shutdown.
 
-The three-CANCEL gesture turns monitoring off only for the current ignition session and does not change the saved `DriverMonitoringEnabled` setting. The next ignition-on or manager/device restart clears only this temporary off state. Monitoring resumes under the saved `DriverMonitoringMode` if `DriverMonitoringEnabled` is ON. If you turned it OFF in Carrot Web, it remains OFF across drives and restarts until you manually turn that setting back ON.
+The three-CANCEL gesture saves `DriverMonitoringEnabled=False`. Monitoring stays off across ignition cycles and manager/device restarts until you explicitly turn `DriverMonitoringEnabled` on again in Carrot Web settings. The gesture does not change `DriverMonitoringMode` or `CarrotVisionEnabled`.
 
 ## Four operating cases
 
