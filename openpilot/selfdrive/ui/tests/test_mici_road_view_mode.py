@@ -97,4 +97,4 @@ def test_render_combinations_preserve_alerts_and_cluster_preference(screen, mode
   assert rl.draw_rectangle_rec.call_count == int(suppressed or not camera)
   view._hud_renderer.render.assert_called_once()
   view._alert_renderer.render.assert_called_once()
-  view._driver_state_renderer.draw_onroad.assert_called_once()
+  view._driver_state_renderer.draw_onroad.assert_not_called()

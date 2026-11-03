@@ -301,7 +301,7 @@ class AugmentedRoadView(CameraView):
     # Custom UI extension point - add custom overlays here
     # Use self._content_rect for positioning within camera bounds
     _t = time.monotonic()
-    self._driver_state_renderer.draw_onroad(self.rect, alert_to_render is not None)
+    # User preference: hide the passive DM character on the driving screen.
     ds_ms = (time.monotonic() - _t) * 1000.0
     _t = time.monotonic()
     self._traffic_light.render(self.rect)
