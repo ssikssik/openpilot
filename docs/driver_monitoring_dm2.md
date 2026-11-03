@@ -38,13 +38,11 @@ allowance after input, rather than immediately resuming camera evaluation.
   2026-09-29 follow-up removed the gear and speed restrictions; gear and speed
   changes, including stopping, do not reset it by themselves.
   Ambiguous stock-ACC speed-button echoes conservatively reset it because their
-  source cannot be distinguished. The three-CANCEL session marker stops the
-  model during normal onroad operation and blocks alerts, monitoring-triggered
-  forceDecel and lockout until the next ignition-on or manager/device restart.
-  That boundary clears only the session marker; monitoring resumes only if the
-  saved DriverMonitoringEnabled setting is on. A Web OFF remains off until
-  manually enabled again. Driver View retains face preview with neutral
-  enforcement.
+  source cannot be distinguished. The three-CANCEL gesture saves DriverMonitoringEnabled=False and stops the
+  model during normal onroad operation, including alerts, monitoring-triggered
+  forceDecel and lockout. Ignition cycles and manager/device restarts do not
+  re-enable monitoring. Explicitly enable DriverMonitoringEnabled in Carrot Web
+  to resume. Driver View retains face preview with neutral enforcement.
 
 ## Stock boundary and state transitions
 
@@ -93,7 +91,7 @@ Within one source, changing traffic context preserves elapsed attention seconds.
 Expansion cannot erase orange/red. A shortening that crosses terminal counts the
 terminal transition once. Fresh input may reset before terminal; once terminal
 is reached the stock disengagement/lockout behavior remains while monitoring is
-enabled. The persistent switch and separate session disable sequence gate the
+enabled. The persistent switch and physical CANCEL disable sequence gate the
 complete monitoring path rather than resetting policy awareness. A grace that expires cannot reopen
 merely because the road clears later. Mode 0 camera inputs stay stock; mode 1
 uses fresh edges rather than a continuously held steering/gas state.

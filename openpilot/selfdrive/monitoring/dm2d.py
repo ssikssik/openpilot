@@ -240,12 +240,12 @@ def run_dm2(params, experimental, initial_car_params=None):
       session_disabled = params.get_bool(SESSION_DISABLED_PARAM)
       requested_enabled = setting_enabled and not session_disabled
       if disable_write_pending:
-        # Keep the local gate closed until the asynchronous session marker is
+        # Keep the local gate closed until the asynchronous persistent setting is
         # observable, retrying at the ordinary two-second settings cadence.
-        if session_disabled:
+        if not setting_enabled:
           disable_write_pending = False
         elif rk.frame % 40 == 0:
-          params.put_bool_nonblocking(SESSION_DISABLED_PARAM, True)
+          params.put_bool_nonblocking("DriverMonitoringEnabled", False)
         requested_enabled = False
       if requested_enabled and not monitoring_enabled:
         dm = new_driver_monitor(params, experimental_mode(params))
@@ -304,7 +304,7 @@ def run_dm2(params, experimental, initial_car_params=None):
         if monitoring_enabled and cancel_sequence.update(event_time, physical_buttons):
           monitoring_enabled = False
           disable_write_pending = True
-          params.put_bool_nonblocking(SESSION_DISABLED_PARAM, True)
+          params.put_bool_nonblocking("DriverMonitoringEnabled", False)
         response |= inputs.update(event_time, sample.gasPressed, sample.brakePressed, sample.steeringPressed, buttons)
       else:
         cancel_sequence.reset_input_stream()

@@ -334,7 +334,8 @@ def test_disabled_driver_view_keeps_face_preview_without_enforcement(monkeypatch
 ] + [pytest.param(('drive', 'drive', 'neutral', 'neutral', 'reverse', 'reverse'), id='gear_changes')])
 @pytest.mark.parametrize('speeds', [(10.0,) * 6, (0.0,) * 6, (10.0, 10.0, 0.0, 0.0, 0.0, 0.0)],
                          ids=['moving', 'stopped', 'stopping_during_sequence'])
-def test_three_physical_cancel_presses_disable_for_current_session_at_any_gear_or_speed(monkeypatch, gears, speeds):
+@pytest.mark.parametrize("experimental", [False, True])
+def test_three_physical_cancel_presses_persistently_disable_at_any_gear_or_speed(monkeypatch, gears, speeds, experimental):
   clock, packets = [100.0], []
 
   class Params:
@@ -411,10 +412,10 @@ def test_three_physical_cancel_presses_disable_for_current_session_at_any_gear_o
   monkeypatch.setattr(dm2d, 'DmRatekeeper', lambda *a, **kw: Rate())
   monkeypatch.setattr(dm2d.time, 'monotonic', lambda: clock[0])
   with pytest.raises(Done):
-    dm2d.run_dm2(params, experimental=False)
+    dm2d.run_dm2(params, experimental=experimental)
 
-  assert params.writes == [("DriverMonitoringSessionDisabled", True)] * 2
-  assert params.values["DriverMonitoringSessionDisabled"] is True
+  assert params.writes == [("DriverMonitoringEnabled", False)] * 2
+  assert params.values["DriverMonitoringEnabled"] is False
   assert all(not packet['driverMonitoringState']['dm2Disabled'] for packet in packets[:4])
   assert all(packet['valid'] and packet['driverMonitoringState']['dm2Disabled'] for packet in packets[4:])
 
@@ -590,8 +591,8 @@ def test_hyundai_openpilot_long_cancel_level_does_not_mask_physical_gesture(monk
   with pytest.raises(Done):
     dm2d.run_dm2(params, experimental=False, initial_car_params=cp)
 
-  assert params.writes == [("DriverMonitoringSessionDisabled", True)]
-  assert params.values["DriverMonitoringSessionDisabled"] is True
+  assert params.writes == [("DriverMonitoringEnabled", False)]
+  assert params.values["DriverMonitoringEnabled"] is False
 
 
 @pytest.mark.parametrize(('brand', 'openpilot_longitudinal', 'required'), [
