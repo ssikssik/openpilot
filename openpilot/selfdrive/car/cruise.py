@@ -211,6 +211,8 @@ class VCruiseCarrot:
     self.cruise_state_available_last = False
 
     self._paddle_decel_active = False
+    self._paddle_resume_kph = 0
+    self._paddle_resume_cnt = 0
     self.carrot_cruise_active = False
 
     #self.events = []
@@ -582,6 +584,7 @@ class VCruiseCarrot:
 
     if button_type in [ButtonType.accelCruise, ButtonType.decelCruise, ButtonType.setCruise, ButtonType.resumeCruise]:
       self._paddle_decel_active = False
+      self._paddle_resume_kph = 0
       if self.autoCruiseControl_cancel_timer > 0:
         self._add_log(f"AutoCruiseControl cancel timer RESET {button_type}")
         self.autoCruiseControl_cancel_timer = 0
@@ -855,6 +858,7 @@ class VCruiseCarrot:
 
   def _update_cruise_state(self, CS, CC, v_cruise_kph):
     if not CC.enabled:
+      self._paddle_resume_kph = 0
       #self._pause_auto_speed_up = False
       if self._brake_pressed_count == -1 and self._soft_hold_active > 0:
         #self.autoCruiseControl_cancel_timer = 0
@@ -934,12 +938,22 @@ class VCruiseCarrot:
             elif self.d_rel > 0:
               self._cruise_control(1, 0, "Cruise on (lead car)")
       elif self._paddle_decel_active:
-        if self.xState in [3]:
+        # Hand the stop to the traffic-light stop (3 slowing, 5 stopped) or a lead that is stopping;
+        # a moving lead must not cancel the driver's stop request.
+        if self.xState in [3, 5] or (self.d_rel > 0 and CS.vEgo + self.v_rel < 1.0):
           self._paddle_decel_active = False
-          v_cruise_kph = self.v_ego_kph_set
-        elif self.d_rel > 0:
-          self._paddle_decel_active = False
-          v_cruise_kph = self.v_ego_kph_set
+          if CS.vEgo > 0.5:
+            # Still rolling: hold the current speed into the stop; the set speed returns once stopped.
+            self._paddle_resume_kph = v_cruise_kph
+            self._paddle_resume_cnt = 0
+            v_cruise_kph = self.v_ego_kph_set
+      elif self._paddle_resume_kph > 0:
+        # Give the set speed back once stopped, or when the light stops asking for a stop for 1 s
+        # (green before we stopped); otherwise the speed at hand-off (e.g. 30 of 60) would stick.
+        self._paddle_resume_cnt = self._paddle_resume_cnt + 1 if self.xState not in [3, 5] else 0
+        if CS.vEgo < 0.1 or self._paddle_resume_cnt > int(1.0 / 0.01):
+          v_cruise_kph = max(v_cruise_kph, self._paddle_resume_kph)
+          self._paddle_resume_kph = 0
           
 
     if self._gas_pressed_count > self._gas_tok_timer:
@@ -962,6 +976,7 @@ class VCruiseCarrot:
       gas_pressed_start = self._gas_pressed_count <= 0
       cancel_soft_hold = gas_pressed_start and self._soft_hold_active > 0 and self._cruise_cancel_state
       self._paddle_decel_active = False
+      self._paddle_resume_kph = 0
       self._gas_pressed_count = max(1, self._gas_pressed_count + 1)
       self._gas_pressed_count_last = self._gas_pressed_count
       self._gas_pressed_value = max(CS.gas, self._gas_pressed_value) if self._gas_pressed_count > 1 else CS.gas
@@ -985,6 +1000,7 @@ class VCruiseCarrot:
     if CS.brakePressed:
       self._cruise_ready = False
       self._paddle_decel_active = False
+      self._paddle_resume_kph = 0
       self._brake_pressed_count = max(1, self._brake_pressed_count + 1)
       if self._brake_pressed_count == 1 and self.enabled_last:
         self._v_cruise_kph_at_brake = self.v_cruise_kph

@@ -311,6 +311,7 @@ class CarState(CarStateBase):
     self.ACCMode = 0
     self.LFA_ICON = 0
     self.paddle_button_prev = 0
+    self.paddle_hold_frames = 0
     self.canfdOemBrakeHoldLatched = False
     self.canfdAvhReleaseGraceFrames = 0
 
@@ -379,9 +380,11 @@ class CarState(CarStateBase):
       self.manual_main_off_latched = not self.main_enabled
       print(f"main_enabled = {self.main_enabled}")
 
-    # Camera SCC reports the MAIN change after the physical button release.
-    # Do not let that stale state immediately undo an explicit manual MAIN off.
-    if self.CP.openpilotLongitudinalControl and self.MainMode_ACC and not self.manual_main_off_latched:
+    # CameraSCC MAIN can be requested automatically for cluster objects. Driver
+    # intent comes from AutoEngage initialization and the physical buttons above.
+    # Importing that OEM state would raise cruiseState.available and arm steering.
+    if (self.CP.openpilotLongitudinalControl and not self.CP.flags & HyundaiFlags.CAMERA_SCC
+        and self.MainMode_ACC and not self.manual_main_off_latched):
       self.main_enabled = True
 
   def _update_camera_scc_hint(self, cp_cam, canfd):
@@ -1709,6 +1712,9 @@ class CarState(CarStateBase):
       paddle_button = 1 if cp.vl["CRUISE_BUTTONS"]["LEFT_PADDLE"] == 1 else 2 if cp.vl["CRUISE_BUTTONS"]["RIGHT_PADDLE"] == 1 else 0
     elif self.gear_msg_canfd == "GEAR":
       paddle_button = 1 if cp.vl["GEAR"]["LEFT_PADDLE"] == 1 else 2 if cp.vl["GEAR"]["RIGHT_PADDLE"] == 1 else 0
+    # A held paddle reads 0 for 0.1-0.2 s every few frames; bridge 0.3 s so SCC does not re-engage under the
+    # still-held paddle (that re-engage raised the cluster's "paddle shifter conditions not met" popup, 11-03 18:24).
+    self.paddle_hold_frames = 30 if paddle_button > 0 else max(0, self.paddle_hold_frames - 1)
 
     # Filter the Python list before the single capnp assignment: re-assigning a
     # capnp list field from itself clears the source first and zeroes every event.
