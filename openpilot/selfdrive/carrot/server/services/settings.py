@@ -58,7 +58,14 @@ def current_vehicle_brand(params=None) -> str:
 
 def read_settings_file(path: str) -> Dict[str, Any]:
   with open(path, "r", encoding="utf-8") as f:
-    return json.load(f)
+    data = json.load(f)
+
+  # Older or device-local catalogs may still declare 5% as the minimum.
+  # Use the same corrected bounds for the UI and parameter writes.
+  for setting in data.get("params", []):
+    if setting.get("name") in ("SoundVolumeAdjust", "SoundVolumeAdjustEngage") and setting.get("min") == 5:
+      setting["min"] = 0
+  return data
 
 
 def group_index(settings: Dict[str, Any]) -> Tuple[Dict[str, list], Dict[str, Dict[str, Any]], List[Dict[str, Any]]]:

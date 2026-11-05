@@ -43,6 +43,43 @@ def test_the_catalogue_is_readable_and_populated(params):
   assert all(isinstance(p.get("name"), str) and p["name"] for p in params)
 
 
+@pytest.mark.asyncio
+async def test_legacy_sound_catalog_exposes_and_saves_zero(tmp_path, monkeypatch):
+  from openpilot.selfdrive.carrot.server.features import params as params_api, settings as settings_api
+  from openpilot.selfdrive.carrot.server.services import params as param_service, settings as settings_service
+
+  names = ("SoundVolumeAdjust", "SoundVolumeAdjustEngage")
+  path = tmp_path / "settings.json"
+  path.write_text(json.dumps({"params": [
+    {"name": name, "group": "Sound", "min": 5, "max": 200, "default": 100, "unit": 5} for name in names
+  ]}), encoding="utf-8")
+  monkeypatch.setattr(settings_service, "settings_cache", {**settings_service.settings_cache, "path": str(path), "data": None})
+  monkeypatch.setattr(settings_api, "settings_cache", settings_service.settings_cache)
+  monkeypatch.setattr(param_service, "HAS_PARAMS", False)
+  monkeypatch.setattr(param_service, "_mem_store", {})
+  monkeypatch.setattr(settings_api, "HAS_PARAMS", False)
+  monkeypatch.setattr(params_api, "append_param_change", lambda *args, **kwargs: None)
+  monkeypatch.setattr(params_api, "is_drive_engaged", lambda request: False)
+
+  catalog = json.loads((await settings_api.api_settings(None)).text)
+  assert [(p["name"], p["min"], p["max"], p["unit"]) for p in catalog["items_by_group"]["Sound"]] == [
+    (name, 0, 200, 5) for name in names
+  ]
+
+  class Request:
+    def __init__(self, name):
+      self.name = name
+
+    async def json(self):
+      return {"name": self.name, "value": 0}
+
+  for name in names:
+    response = await params_api.api_param_set(Request(name))
+    assert response.status == 200
+    assert json.loads(response.text)["value"] == 0
+    assert param_service._mem_store[name] == "0"
+
+
 @pytest.mark.parametrize("maximum", (3, 4))
 def test_gap_cycle_catalog_uses_vehicle_maximum_without_mutating_cache(settings, maximum):
   groups, by_name, groups_list = group_index(settings)
