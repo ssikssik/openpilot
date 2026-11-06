@@ -1,5 +1,7 @@
 import { ASSISTANT_RELAY, ASSISTANT_SESSION_KEY, CHATGPT_INSTALL_URL, screenRequest, sessionValid } from './assistant_policy.js';
 import { copyPairingMessage } from './assistant_clipboard.js';
+import { executeDriveCommand, mountDriveAccess, revokeDriveAccess, driveAccessEnabled } from './assistant_drive.js';
+import { executeSettingCommand, mountSettingAccess, revokeSettingAccess } from './assistant_settings.js';
 
 const text = (key, fallback) => globalThis.getUIText?.(`assistant_${key}`, fallback) || fallback;
 let session = null, completed = null, timer = null, polling = false, generation = 0;
@@ -29,13 +31,15 @@ async function request(operation, body = {}, current = session) {
   return response.json();
 }
 async function revoke() {
+  await revokeDriveAccess();
+  await revokeSettingAccess();
   if (!session) return;
   try { await request('disconnect'); }
   catch (error) { if (error.status !== 401) throw error; }
 }
 function schedule() {
   clearTimeout(timer);
-  if (session) timer = setTimeout(poll, document.hidden ? 10000 : 3000);
+  if (session) timer = setTimeout(poll, document.hidden ? 10000 : driveAccessEnabled() ? 1000 : 3000);
 }
 async function poll() {
   if (polling || !session) return;
@@ -46,7 +50,7 @@ async function poll() {
   polling = true;
   const current = session, epoch = generation;
   try {
-    const result = await request('poll', {}, current);
+    const result = await request(driveAccessEnabled() ? 'poll_wait' : 'poll', {}, current);
     if (epoch !== generation) return;
     const newlyLinked = result.account_linked && !session.account_linked;
     if (session.expires_at !== result.expires_at || session.connected !== result.connected || session.account_linked !== result.account_linked) {
@@ -61,6 +65,14 @@ async function poll() {
       if (field) field.value = '';
       const feedback = document.getElementById('assistantAccountFeedback');
       if (feedback) feedback.textContent = text('account_connected', 'Account connected · reusable in new voice chats');
+    }
+    if (result.drive_command) {
+      const driveResult = await executeDriveCommand(result.drive_command);
+      if (driveResult && epoch === generation) await request('drive_ack', driveResult, current);
+    }
+    if (result.settings_command && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) {
+      const settingResult = await executeSettingCommand(result.settings_command);
+      if (settingResult && epoch === generation) await request('settings_ack', settingResult, current);
     }
     const command = result.command;
     if (!screenRequest(command)) return;
@@ -100,10 +112,31 @@ export function openAssistantDialog() {
   const voiceHelp = document.createElement('p');
   voiceHelp.textContent = text('voice_help', 'Sign in to ChatGPT and choose it as your Android default assistant. After connecting once, use the microphone at the top right of the Carrot Web Android app. In a browser, invoke your phone assistant. Keep Carrot Web visible for screen requests.');
   el('Panel').prepend(install, voiceHelp);
-  const account = document.createElement('section');
+  const account = document.createElement('details');
+  account.open = !session?.account_linked;
   account.innerHTML = '<p id="assistantAccountHelp"></p><button id="assistantAccountPair" class="btn" type="button"></button><label id="assistantAccountCodeLabel" for="assistantAccountCode"></label><input id="assistantAccountCode" class="input-text" readonly autocomplete="off" style="width:100%;box-sizing:border-box;user-select:text;-webkit-user-select:text"><button id="assistantAccountCopy" class="btn" type="button"></button><p id="assistantAccountFeedback" role="status"></p><hr>';
+  const summary = document.createElement('summary');
+  summary.textContent = text('setup_steps', 'First connection / reconnect');
+  const setupLink = document.createElement('a');
+  setupLink.className = 'btn'; setupLink.href = 'https://chatgpt.com/plugins';
+  setupLink.target = '_blank'; setupLink.rel = 'noopener noreferrer';
+  setupLink.textContent = text('setup_open', '1. Open ChatGPT connection page');
+  const address = document.createElement('input');
+  address.className = 'input-text'; address.readOnly = true; address.value = `${ASSISTANT_RELAY}/account/mcp`;
+  address.setAttribute('aria-label', text('setup_address', 'Carrot connection address'));
+  address.style.cssText = 'display:block;width:100%;box-sizing:border-box;margin:8px 0';
+  const copyAddress = document.createElement('button');
+  copyAddress.type = 'button'; copyAddress.className = 'btn';
+  copyAddress.textContent = text('setup_copy_address', '2. Copy Carrot connection address');
+  copyAddress.onclick = async () => {
+    const copied = await copyPairingMessage(address);
+    if (el('AccountFeedback')) el('AccountFeedback').textContent = copied ? text('copied', 'Copied') : text('copy_manual', 'Select the address and copy it manually.');
+  };
+  account.prepend(summary, setupLink, address, copyAddress);
   el('Panel').prepend(account);
-  label('AccountHelp', 'account_help', `For mini voice mode, connect the Carrot MCP with OAuth at ${ASSISTANT_RELAY}/account/mcp. Enter the code below on its authorization page once. Then use your Android ChatGPT assistant in new chats. Do not send this code in chat. Disconnect revokes all access to this web connection.`);
+  mountSettingAccess(el('Panel'));
+  mountDriveAccess(el('Panel'));
+  label('AccountHelp', 'account_help', 'In ChatGPT, select + > Add custom MCP server. Name it CarrotAssist, paste the copied address into Server URL and choose OAuth under Authentication. Create and connect it, then enter the code below on the Carrot approval page. The five-minute limit is only for this code; your connection stays available. Do not send the code in chat.');
   label('AccountPair', 'account_pair', 'Create mini-mode connection code');
   label('AccountCodeLabel', 'account_code', 'Device authorization code · expires in 5 minutes');
   label('AccountCopy', 'account_copy', 'Copy authorization code');
@@ -122,7 +155,7 @@ export function openAssistantDialog() {
     } catch (e) { status(e.message); }
     finally { if (el('AccountPair')) el('AccountPair').disabled = false; }
   };
-  label('Help', 'help', 'Connect your account once to use new voice chats. Only setting search, explanation and screen navigation are supported; setting values cannot be changed.');
+  label('Help', 'help', 'Connect your account once to use new voice chats. Setting reads and confirmed changes additionally require permission here and in ChatGPT.');
   label('Disconnect', 'disconnect', 'Disconnect');
   const render = () => {
     if (!el('Panel')) return;

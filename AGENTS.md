@@ -1,5 +1,77 @@
 # Repository memory
 
+- On 2026-11-06, owner requests one continuing ChatGPT voice conversation mixing
+  settings and direct lane/set-speed commands. Rejects per-command buttons and
+  short-local-STT/long-ChatGPT modes. Keep Android0.2.0/default assistant unchanged.
+  Owner is departing: prepare/push for later manual GitPull; do NOT update/restart
+  vehicle or execute live driving commands. Remote voice-start button was only
+  proposed; existing remote targets comma, phone invocation bridge is not added.
+  MCP0.6.0 loads VOICE_RULES.md, adds separately consented carrot.drive and a
+  separate local stationary-issued grant. Old grants never expand. Clear current
+  commands avoid extra conversational confirmation; platform approvals remain.
+  Existing lane FSM owns motion with fresh state, BSD/geometry/torque/driver gates,
+  Tesla real signal acknowledgement; no synthesized physical/DM input. Speed_up
+  uses RES/+ handling, down subtracts an explicit amount, set preserves target;
+  active supported longitudinal control only, never engages lateral/control.
+  Single request, relay5s/local1s freshness, lane preparation3s, duplicate guard10s,
+  no replay after expiry/restart/uncertain feedback. Completion requires lane
+  crossing plus FSM finish; set-speed readback is not measured vehicle speed.
+  Missing result-file IO cannot restore a consumed rejection. Wakeable polling
+  reduces delivery wait, not ChatGPT latency. Fix0.5.1 strict MCP result rejecting
+  device step_note. PC new controller20/API49/MCP18/web8, isolated build/Ruff pass.
+  Linux Signal CI42202066904 passes1644/362subtests +131,40skips; Jetson CI42202066820
+  also passes. Full general build CI remains separate. Runtime owner hashes let
+  revocation cancel pending requests even after a web-server restart.
+  NAS0.6.0 built/started exit0 and public health/discovery verify new scope; owner's
+  driving grant has NOT been added and actual spoken road operation is untested.
+  Full parked device restart needed after GitPull, not web-only reload. No API/key
+  or APK change. KO/EN guides and Wiki describe experimental scope and setup.
+
+- On 2026-11-06, owner explicitly requests supported driving-setting edits while
+  moving. Supersedes the CarrotAssist onroad allowlist below: catalog edits may
+  prepare/commit onroad; only initial local permission needs parked/disengaged
+  state. Keep denied internal/driver-monitoring switches, scope/origin grants,
+  expiry, user confirmation, current-value/definition rechecks and readback/history.
+  Owner reports CruiseMaxVals0 250 ->240 incorrectly proposed241: min=1/unit=5
+  was mistakenly treated as a value lattice. Unit is a web button increment;
+  preserve any in-range explicit integer; round relative calculations to integers
+  (half away from zero), reject fractional absolute requests. MCP0.5.1 explains
+  this to ChatGPT. No APK change needed. Python21/MCP14/web4 and isolated build
+  pass; moving-state tests use fakes, not actual driving or live acceleration edits.
+
+- On 2026-11-06, owner authorizes CarrotAssist public beta with confirmed setting
+  changes, automatic update checks, KO/EN guides and Wiki. Android 0.2.0/code7
+  retains prototype signing identity; release APK SHA256
+  c05c86f2312aa46aaa05bd1ea73f39066c6a7cc49ace88fd3399491bbf433968.
+  Release carrot-assist-v0.2.0 and separate carrot-assist-updates/update.json
+  are published without changing the repository's general Latest release.
+  NAS carrot-mcp 0.5.0/account OAuth adds carrot.settings only by new consent;
+  existing permissions never expand silently. Hashed local origin-bound grant,
+  single-setting read, 60s proposal, explicit confirmation, fresh state and value
+  recheck, readback and voice-source history guard writes. Only display/HUD
+  brightness and alert volume may change onroad; other supported integer settings
+  need fresh stationary/disengaged state. No real-time vehicle commands or logs.
+  Owner's parked device verified through ChatGPT tools: brightness90 ->95 ->90;
+  direct Params readback agrees. Phone updated via GitHub verifier/Android installer
+  code6 ->7; pairing and local grant survive. Tool refresh after reauthorization
+  exposes all11 tools. Actual voice-overlay navigation was tested separately;
+  setting writes used ChatGPT text tools, not a spoken-road acceptance test.
+  Fix already-open setting rows/cache after applied readback. Python41, MCP14,
+  Android discovery33/update15, focused web15 and docs validation pass.
+  Free ChatGPT unverified; Gemini custom MCP US/English restrictions and Live
+  unverified, no Gemini/legacy Assistant tool integration. No AI API/key on relay;
+  each user's ChatGPT allowance applies. Hundreds of clients/load unverified.
+  See docs/user/{ko,en}/carrot-assist.md and Wiki Guide-CarrotAssist. Preserve
+  private signing material outside Git. Web UI setup uses connection-page/copy
+  buttons and actual menu names instead of unexplained OAuth instructions.
+  Post-update repeated test applied95; ChatGPT tool-approval delays expired
+  successive restoration proposals, then the owner took a phone call. Restore90
+  through the normal local param_set API after fresh parked check; direct Params
+  verifies90. Do not claim the second restoration completed through ChatGPT or
+  that changed-row display was physically verified after the last cache fix.
+  ChatGPT may require Allow once in addition to conversational confirmation;
+  guides disclose this, and fully hands-free changes remain unverified.
+
 - On 2026-11-06, owner reports eGPU Light/N16 first-inference AMD-7/hang becoming
   permanently rejected. Prior committed code reproduces next-boot denial;
   pinned N16/Flip/Light/Light2 runtime archives hash-check and map-7 to USB wait
