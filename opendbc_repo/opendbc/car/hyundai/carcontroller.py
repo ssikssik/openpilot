@@ -282,6 +282,7 @@ class CarController(CarControllerBase):
     self.soft_hold_mode = 2
     self.depart_jerk = False
     self.blinker_control = False
+    self.blinker_kick_mode = 1  # CanfdBlinkerKickMode: 0 only after an ack, 1 panda piggyback, 2 direct 25 Hz, 3 direct 100 Hz
     self.blinker_test = 0  # CanfdBlinkerMenuTest: 1 left, 2 right (menu test, any speed/gear)
     self.blinker_stalk = 0  # CanfdBlinkerStalk: 1 left, 2 right (0x3C1 replay)
     # CanfdBvmView: 0 off, 1 left, 2 right, 3 both. Spoofs the cluster camera view status (0x400 byte4) so the
@@ -296,7 +297,7 @@ class CarController(CarControllerBase):
     self.stalk_values = None
     self.stalk_press_side = 0   # 1/2 while the lever is being held/tapped
     self.stalk_press_frame = 0
-    self.aprk_state, self.aprk_frame, self.aprk_nanos = APRK_IDLE, 0, 0
+    self.aprk_state, self.aprk_frame, self.aprk_nanos, self.aprk_acked = APRK_IDLE, 0, 0, False
     self.lane_crossing, self.blinker_side, self.blinker_pulse_end = LaneCrossing(), 0, 0
     self.yellow_until = [0, 0]  # left, right
     self.standstill_frame = -1e6
@@ -435,10 +436,18 @@ class CarController(CarControllerBase):
         ret += [CanData(APRK_ADDR, APRK_COM_DISABLE, bus) for bus in self.aprk_buses]
         self.aprk_state, self.aprk_frame = APRK_WAIT_QUIET, self.frame
       elif self.frame - self.aprk_frame >= APRK_REPLY_FRAMES:
-        return give_back()  # no answer: the stock stream is still on the bus, sending would collide
+        if spas or self.blinker_kick_mode == 0:
+          return give_back()  # steering next to the ECU's own SPAS1 is not tried; mode 0 blinks only after an ack
+        # No answer (this car: 0 of ~180 requests, 10-24..11-05): the stock stream stays on the bus. Mode 1: panda holds
+        # each of our SPAS frames and sends it right behind the stock one (hyundai_canfd_rx_tx_hook), so the same id
+        # never starts twice at once - 10-30..11-02 that collision made error frames in 78/111 kicks and bus-off in 33.
+        # Modes 2/3 (CANFD_SPAS_DIRECT): frames are queued as they come, at 25 Hz / 100 Hz - fewer / the old collisions.
+        self.aprk_state, self.aprk_frame, self.aprk_nanos, self.aprk_acked = APRK_ACTIVE, self.frame, now, False
+        if pulse and self.blinker_test not in (1, 2):
+          self.blinker_pulse_end = self.frame + BLINKER_PULSE_FRAMES
     elif self.aprk_state == APRK_WAIT_QUIET:
       if self.frame - self.aprk_frame >= APRK_QUIET_NANOS // 10_000_000 and now - stock >= APRK_QUIET_NANOS:
-        self.aprk_state, self.aprk_frame, self.aprk_nanos = APRK_ACTIVE, self.frame, now
+        self.aprk_state, self.aprk_frame, self.aprk_nanos, self.aprk_acked = APRK_ACTIVE, self.frame, now, True
         if spas:
           self.spas_angle = CS.out.steeringAngleDeg
         elif pulse and self.blinker_test not in (1, 2):
@@ -446,7 +455,7 @@ class CarController(CarControllerBase):
       elif self.frame - self.aprk_frame >= APRK_REPLY_FRAMES:
         return give_back()
     elif self.aprk_state == APRK_ACTIVE:
-      if stock > self.aprk_nanos:
+      if self.aprk_acked and stock > self.aprk_nanos:
         return give_back()  # the ECU came back: stop before our frames collide with its own
       if self.frame % 100 == 0:
         ret += [make_tester_present_msg(APRK_ADDR, bus, suppress_response=True) for bus in self.aprk_buses]
@@ -456,6 +465,8 @@ class CarController(CarControllerBase):
         mode = 4 if self.frame - self.aprk_frame <= SPAS_STEER_ASK_FRAMES else 5
         return ret + hyundaicanfd.create_spas_steer(self.packer, self.CAN, mode, self.spas_angle)
       # every frame (100 Hz), twice APRK's 50 Hz: 10-26 APRK stayed on, so its BLINKER_CONTROL 0 frames interleave with ours
+      if not self.aprk_acked and self.blinker_kick_mode == 2 and self.frame % 4:
+        return ret  # direct 25 Hz: a quarter of the frames, a quarter of the collision chances
       left = (pulse and self.blinker_side == 3) or self.blinker_test == 1
       right = (pulse and self.blinker_side == 4) or self.blinker_test == 2
       ret.extend(hyundaicanfd.create_spas_messages(self.packer, self.CAN, self.frame, left, right, getattr(CS, "spas2", None)))
@@ -514,6 +525,7 @@ class CarController(CarControllerBase):
       self.soft_hold_mode = 1 if params.get_int("AutoCruiseControl") > 1 else 2
       self.depart_jerk = params.get_int("StopGoAssist") >= 2
       self.blinker_control = params.get_bool("CanfdBlinkerKick")
+      self.blinker_kick_mode = params.get_int("CanfdBlinkerKickMode")
       self.blinker_test = params.get_int("CanfdBlinkerMenuTest")
       self.blinker_stalk = params.get_int("CanfdBlinkerStalk")
       self.bvm_view = params.get_int("CanfdBvmView")
