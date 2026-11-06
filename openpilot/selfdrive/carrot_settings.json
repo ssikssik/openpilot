@@ -118,6 +118,13 @@
               ]
             },
             {
+              "id": "STEER_MODEL_WIDE",
+              "ko": "광각 모델 입력",
+              "en": "Wide Model Input",
+              "zh": "广角模型输入",
+              "params": ["ModelWideFov"]
+            },
+            {
               "id": "STEER_CENTER",
               "ko": "중앙 보정",
               "en": "Centering",
@@ -681,6 +688,47 @@
     }
   ],
   "params": [
+    {
+      "group": "조향일반",
+      "name": "ModelWideFov",
+      "title": "모델 광각 시야 (실험)",
+      "descr": "기본 약 59°. 보정된 광각 카메라를 사용할 때 콤마와 Jetson의 광각 모델 입력에 약 0.25초 내 반영됩니다. 일반각 입력은 그대로입니다. 조향·감속이 달라질 수 있으며 실차 동작은 검증 전입니다.",
+      "egroup": "LAT",
+      "etitle": "Model Wide FOV (Experimental)",
+      "edescr": "Defaults to about 59°. With a calibrated wide camera, changes apply to the wide model input on comma and Jetson in about 0.25 seconds. Narrow input is unchanged. Steering and braking may differ; vehicle behavior is unvalidated.",
+      "cgroup": "转向",
+      "ctitle": "模型广角视野（实验）",
+      "cdescr": "默认约 59°。使用已校准的广角摄像头时，约 0.25 秒内应用于 comma 和 Jetson 的广角模型输入。窄角输入不变。转向和减速可能改变，尚未进行实车验证。",
+      "control": "select",
+      "risk": "high",
+      "min": 0,
+      "max": 4,
+      "default": 0,
+      "unit": 1,
+      "options": {
+        "ko": [
+          "기본 (약 59°)",
+          "65°",
+          "70°",
+          "75°",
+          "80°"
+        ],
+        "en": [
+          "Stock (about 59°)",
+          "65°",
+          "70°",
+          "75°",
+          "80°"
+        ],
+        "zh": [
+          "默认（约 59°）",
+          "65°",
+          "70°",
+          "75°",
+          "80°"
+        ]
+      }
+    },
     {
       "group": "조향일반",
       "name": "PathOffset",
