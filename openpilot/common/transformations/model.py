@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 
 from openpilot.common.transformations.orientation import rot_from_euler
@@ -38,6 +40,20 @@ sbigmodel_intrinsics = np.array([
   [sbigmodel_fl,  0.0,  0.5 * SBIGMODEL_INPUT_SIZE[0]],
   [0.0,  sbigmodel_fl,      0.5 * (256 + MEDMODEL_CY)],
   [0.0,  0.0,                                     1.0]])
+
+WIDE_MODEL_FOV_CHOICES = (65, 70, 75, 80)
+
+
+def wide_model_input_warp(stock_warp: np.ndarray, selection: int, *, calibrated: bool, has_wide_camera: bool) -> np.ndarray:
+  """Widen only calibrated wide input, preserving the stock optical center."""
+  if not calibrated or not has_wide_camera or not 1 <= selection <= len(WIDE_MODEL_FOV_CHOICES):
+    return stock_warp.astype(np.float32)
+  fov = WIDE_MODEL_FOV_CHOICES[selection - 1]
+  intrinsics = sbigmodel_intrinsics.copy()
+  focal = SBIGMODEL_INPUT_SIZE[0] / (2 * math.tan(math.radians(fov / 2)))
+  intrinsics[0, 0] = intrinsics[1, 1] = focal
+  return (stock_warp @ sbigmodel_intrinsics @ np.linalg.inv(intrinsics)).astype(np.float32)
+
 
 DM_INPUT_SIZE = (1440, 960)
 dmonitoringmodel_fl = _ar_ox_fisheye.focal_length
