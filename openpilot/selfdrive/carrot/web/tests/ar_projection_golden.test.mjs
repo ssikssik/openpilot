@@ -35,7 +35,18 @@ test("projection fixture stays generated from canonical openpilot Python transfo
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.deepEqual(JSON.parse(result.stdout), fixture);
+  const generated = JSON.parse(result.stdout);
+  const expected = structuredClone(fixture);
+  // Floating-point projection can vary in the last decimal across platforms.
+  for (const [caseIndex, sample] of expected.cases.entries()) {
+    for (const [pointIndex, point] of sample.points.entries()) {
+      const pixel = generated.cases[caseIndex].points[pointIndex].pixel;
+      assert.equal(pixel.length, point.pixel.length);
+      point.pixel.forEach((coordinate, axis) => nearlyEqual(pixel[axis], coordinate));
+      point.pixel = pixel;
+    }
+  }
+  assert.deepEqual(generated, expected);
   assert.equal(fixture.schemaVersion, 1);
   assert.deepEqual(fixture.coordinateContract.frdFromFlu, [
     [1, 0, 0],
