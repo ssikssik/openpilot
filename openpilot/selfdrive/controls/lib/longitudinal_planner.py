@@ -438,12 +438,13 @@ class LongitudinalPlanner:
     a_target = self.output_a_target
     if mode >= 1:
       a_target = stop_guard(a_target, cs.vEgo, lead, carrot.stop_distance)
-    if mode >= 3:
+    tesla_stop_active = self.tesla_traffic_decision is not None and self.tesla_traffic_decision.active
+    if mode >= 3 and not tesla_stop_active:
       a_target = soft_stop(a_target, cs.vEgo, lead)
     # No go toward a red light / signal stop. A lead pulling away overrides the MPC's own shouldStop (it holds us while
     # the gap is under the stop distance, 10-28 §28). Only together with the stop guard: replays with the lead braking
     # hard after a boosted start stay at the baseline minimum gap only when the guard is on (02_logs §24).
-    if (mode >= 2 and carrot.v_cruise > 0
+    if (mode >= 2 and not tesla_stop_active and carrot.v_cruise > 0
         and carrot.xState.name not in ('e2eStop', 'e2eStopped') and carrot.trafficState.name != 'red'
         and departure_go(cs.vEgo, lead, self.since_standstill, lead_track_frames[0] >= LEAD_ACCEL_MIN_TRACK_FRAMES)):
       self.output_should_stop = False

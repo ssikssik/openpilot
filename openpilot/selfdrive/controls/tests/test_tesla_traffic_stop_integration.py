@@ -93,6 +93,7 @@ def planner_factory(native, monkeypatch):
     planner = module.LongitudinalPlanner(cp, init_v=speed)
     carrot = carrot_for(mode)
     carrot.soft_hold_active = False
+    carrot.stopGoAssist = 0
     carrot.get_carrot_accel = lambda v: 1.6
     carrot.aChangeCostStarting = 10.
     carrot.start_decision = carrot.prepare_decision = None

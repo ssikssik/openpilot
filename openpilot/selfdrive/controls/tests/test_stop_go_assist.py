@@ -99,8 +99,9 @@ def planner_hook():
   return namespace['apply_stop_go_assist']
 
 
-def run_hook(mode, xstate='lead', traffic='off', should_stop=False, v=0.0, a=0.2, lead_=None, standstill=False):
-  planner = SimpleNamespace(since_standstill=0.5, dt=0.05, mpc=SimpleNamespace(mode='acc'), output_a_target=a,
+def run_hook(mode, xstate='lead', traffic='off', should_stop=False, v=0.0, a=0.2, lead_=None, standstill=False, tesla_stop_active=False):
+  planner = SimpleNamespace(tesla_traffic_decision=SimpleNamespace(active=True) if tesla_stop_active else None,
+                            since_standstill=0.5, dt=0.05, mpc=SimpleNamespace(mode='acc'), output_a_target=a,
                             output_should_stop=should_stop, output_v_target_now=v, a_desired=a)
   cs = SimpleNamespace(standstill=standstill, gasPressed=False, brakePressed=False, vEgo=v)
   sm = {'carState': cs, 'radarState': SimpleNamespace(leadOne=lead_ or lead(3.9, vLead=0.5, aLeadK=0.6))}
@@ -121,7 +122,7 @@ def test_hook_departure_overrides_the_mpc_stop_inside_the_stop_distance():
 
 
 @pytest.mark.parametrize('kw', (
-  dict(mode=0), dict(mode=1), dict(mode=2, traffic='red'), dict(mode=2, xstate='e2eStopped'), dict(mode=2, xstate='e2eStop'),
+  dict(mode=0), dict(mode=1), dict(mode=2, tesla_stop_active=True), dict(mode=2, traffic='red'), dict(mode=2, xstate='e2eStopped'), dict(mode=2, xstate='e2eStop'),
 ))
 def test_hook_departure_gates(kw):
   p = run_hook(should_stop=True, **kw)
@@ -138,6 +139,11 @@ def test_hook_stop_guard_lowers_pid_target():
 def test_hook_soft_stop_only_at_level_3(mode, expected):
   p = run_hook(mode, v=0.5, a=-1.2, lead_=lead(STOP + 1.0))
   assert p.output_a_target == pytest.approx(expected) and p.a_desired == pytest.approx(expected)
+
+
+def test_hook_tesla_stop_preserves_braking():
+  p = run_hook(3, v=0.5, a=-1.2, lead_=lead(STOP + 1.0), tesla_stop_active=True)
+  assert p.output_a_target == p.a_desired == -1.2
 
 
 def test_hook_tracks_time_since_standstill():
