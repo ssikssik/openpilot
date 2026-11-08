@@ -294,6 +294,23 @@ struct CarState {
   laneLineInfoMonoTime @112 :UInt64; # exact OEM lane type/colour CAN observation; zero means unknown, manual indicator only
   naviTunnel @113 :Bool; # 0x4A3 TunnelExist in a tunnel the stock navigation announced as no-lane-change (0x162 SIGNS 16; TunnelLaneChangeHold)
   naviRoundabout @114 :Bool; # stock cluster 0x162 SIGNS=24 rose in the last 20 s and below 60 km/h (RoundaboutLaneChangeHold): no Kick or auto lane change
+  teslaTrafficControl @115 :TeslaTrafficControl;
+
+  struct TeslaTrafficControl {
+    available @0 :Bool;
+    valid @1 :Bool;
+    sampleMonoTime @2 :UInt64;
+    stopLineDistance @3 :Float32; # APP_trafficControl metres; legacy DAS_road is not supported
+    light @4 :Light;
+    status @5 :Text;
+
+    enum Light {
+      unknown @0;
+      red @1;
+      green @2;
+      yellow @3;
+    }
+  }
   struct VehicleGps {
     available @0 :Bool;
     valid @1 :Bool; # receive/continuity checks, not a decoded satellite fix flag
