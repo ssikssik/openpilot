@@ -298,6 +298,7 @@ struct CarState {
   naviRoundabout @115 :Bool; # stock cluster 0x162 SIGNS=24 rose in the last 20 s and below 60 km/h (RoundaboutLaneChangeHold): no Kick or auto lane change
   paddleStopActive @116 :Bool; # joongyu01: card still owns a paddle stop (slowing or handed to a light); the + paddle clears it
   stockSccFault @117 :Bool; # original Casper FCA failure, before outgoing fault suppression
+  naviMotorway @118 :Bool; # joongyu01: fresh stock HDA 0x4A3 LinkClass 1 (motorway); road-class fallback when carrotNavi cannot say
 
   struct TeslaTrafficControl {
     available @0 :Bool;
