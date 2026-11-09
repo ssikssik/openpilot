@@ -297,6 +297,7 @@ struct CarState {
   naviTunnel @114 :Bool; # 0x4A3 TunnelExist in a tunnel the stock navigation announced as no-lane-change (0x162 SIGNS 16; TunnelLaneChangeHold)
   naviRoundabout @115 :Bool; # stock cluster 0x162 SIGNS=24 rose in the last 20 s and below 60 km/h (RoundaboutLaneChangeHold): no Kick or auto lane change
   paddleStopActive @116 :Bool; # joongyu01: card still owns a paddle stop (slowing or handed to a light); the + paddle clears it
+  stockSccFault @117 :Bool; # original Casper FCA failure, before outgoing fault suppression
 
   struct TeslaTrafficControl {
     available @0 :Bool;
@@ -515,6 +516,7 @@ struct CarControl {
 
     jerk @9: Float32;  # m/s^3
     aTarget @10: Float32;  # m/s^2
+    stopObjectActive @11 :Bool; # synthetic signal-stop object included in the generated SCC packet
 
     enum LongControlState @0xe40f3a917d908282{
       off @0;
@@ -562,6 +564,7 @@ struct CarControl {
     latHudState @25: UInt8;  # 0=lat off, 1=laneless, 2=lane mode, 3=angle error > 3 deg for 0.3 s, 4=saturated
     desiredDistance @26: Float32;  # longitudinalPlan.desiredDistance (m): the gap openpilot keeps, cluster target ring
     alertType @27: Text;  # selfdriveState.alertType ("eventName/eventType"): cluster text popups
+    signalStopObject @28 :Bool; # request only; final SCC interlocks own application
 
     # not used with the dash, TODO: separate structs for dash UI and device UI
     audibleAlert @5: AudibleAlert;
