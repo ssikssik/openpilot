@@ -50,6 +50,14 @@ static void ready(uint32_t now, uint64_t stock, int counter) {
   CHECK(safety_rx_hook(&w));
 }
 
+// Direct mode accepts the frame without buffering it for a stock frame.
+static bool direct_tx(uint32_t now, uint64_t data) {
+  timer.CNT = now;
+  CANPacket_t p = msg(0x541, data);
+  safety_tx_buffered_for_fwd = false;
+  return safety_tx_hook(&p) && !safety_tx_buffered_for_fwd;
+}
+
 // parked test and driving kick alike: accepted but held for the rx_tx hook (sent right behind the next stock CGW1)
 static bool held(uint32_t now, uint64_t data) {
   timer.CNT = now;
@@ -200,9 +208,9 @@ int main(void) {
   CANPacket_t door = msg(0x541, stock ^ (1ULL << 8)); timer.CNT = 820000; CHECK(safety_rx_hook(&door)); CHECK(!safety_rx_tx_hook(&door, &out));
   relay_malfunction = true; CHECK(held(550000, stock | left) == false); relay_malfunction = false;
   // CANFD_SPAS_DIRECT (1024, CanfdBlinkerKickMode 2/3): queued directly even while driving
-  init(32768 | 1024); timer.CNT = 0; CHECK(safety_rx_hook(&c)); CHECK(held(30000, stock | left));
+  init(32768 | 1024); timer.CNT = 0; CHECK(safety_rx_hook(&c)); CHECK(direct_tx(30000, stock | left));
   CHECK(!safety_rx_tx_hook(&in, &out));
-  // the parked test is never held
+  // Without direct mode, the parked test also waits for the next stock frame.
   init(32768); ready(0, stock, 0); CHECK(held(0, stock | left));
   printf("Palisade CGW production safety: %u checks passed\n", checks);
   return 0;
