@@ -50,6 +50,14 @@ static void ready(uint32_t now, uint64_t stock, int counter) {
   CHECK(safety_rx_hook(&w));
 }
 
+// Direct mode accepts the frame without buffering it for a stock frame.
+static bool direct_tx(uint32_t now, uint64_t data) {
+  timer.CNT = now;
+  CANPacket_t p = msg(0x541, data);
+  safety_tx_buffered_for_fwd = false;
+  return safety_tx_hook(&p) && !safety_tx_buffered_for_fwd;
+}
+
 // parked test and driving kick alike: accepted but held for the rx_tx hook (sent right behind the next stock CGW1)
 static bool held(uint32_t now, uint64_t data) {
   timer.CNT = now;
@@ -213,11 +221,9 @@ int main(void) {
   CANPacket_t door = msg(0x541, stock ^ (1ULL << 8)); timer.CNT = 820000; CHECK(safety_rx_hook(&door)); CHECK(!safety_rx_tx_hook(&door, &out));
   relay_malfunction = true; CHECK(held(550000, stock | left) == false); relay_malfunction = false;
   // CANFD_SPAS_DIRECT (1024, CanfdBlinkerKickMode 2/3): queued directly even while driving
-  init(32768 | 1024); timer.CNT = 0; CHECK(safety_rx_hook(&c));
-  timer.CNT = 30000; { CANPacket_t d = msg(0x541, stock | left); safety_tx_buffered_for_fwd = false;
-    CHECK(safety_tx_hook(&d) && !safety_tx_buffered_for_fwd); }  // accepted, not held (was asserting held: NDEBUG hid it)
+  init(32768 | 1024); timer.CNT = 0; CHECK(safety_rx_hook(&c)); CHECK(direct_tx(30000, stock | left));
   CHECK(!safety_rx_tx_hook(&in, &out));
-  // the parked test is never held
+  // Without direct mode, the parked test also waits for the next stock frame.
   init(32768); ready(0, stock, 0); CHECK(held(0, stock | left));
   // 0x5B6 lamp trial (K5 DL3): parked only, stock + exactly one side bit in byte 2, direct, 50 ms, 3 s per trial
   const uint64_t L5 = 0x10ULL << 16, R5 = 0x40ULL << 16;
