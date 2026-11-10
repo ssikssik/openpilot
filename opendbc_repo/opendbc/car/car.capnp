@@ -299,6 +299,7 @@ struct CarState {
   paddleStopActive @116 :Bool; # joongyu01: card still owns a paddle stop (slowing or handed to a light); the + paddle clears it
   stockSccFault @117 :Bool; # original Casper FCA failure, before outgoing fault suppression
   naviMotorway @118 :Bool; # joongyu01: fresh stock HDA 0x4A3 LinkClass 1 (motorway); road-class fallback when carrotNavi cannot say
+  cruiseCancelState @119 :Bool; # Carrot cruise CANCEL latch, cleared by SET/RES or +/-.
 
   struct TeslaTrafficControl {
     available @0 :Bool;
