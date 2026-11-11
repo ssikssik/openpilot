@@ -27,7 +27,7 @@ def test_timing_records_usb_and_display_tail_after_unchanged_reply(monkeypatch, 
   monkeypatch.setattr(daemon.time, 'thread_time', lambda: 0.)
   monkeypatch.setattr(runtime_diagnostics.RuntimeDiagnostics, '_schedstat', lambda _: ())
   monkeypatch.setitem(sys.modules, 'openpilot.common.params', NS(Params=lambda: NS(put_bool_nonblocking=lambda *a: None)))
-  monkeypatch.setitem(sys.modules, 'openpilot.common.swaglog', NS(cloudlog=NS(event=lambda *a, **kw: events.append(kw))))
+  monkeypatch.setitem(sys.modules, 'openpilot.common.swaglog', NS(cloudlog=NS(event=lambda name, **fields: events.append((name, fields)))))
   attached = iter([True, True, False, False])
   monkeypatch.setattr(daemon, 'host_attached', lambda: next(attached))
   monkeypatch.setattr(daemon, 'update_affinity', lambda: None)
@@ -56,7 +56,7 @@ def test_timing_records_usb_and_display_tail_after_unchanged_reply(monkeypatch, 
 
   def begin(images, packed, frame, reset, want_state, **options):
     assert options == ({"nav_metadata": (77, 10_000_000_000, 10_500_000_000)} if map_staging is not None else {})
-    assert frame == 42 and reset and not want_state
+    assert frame == 42 and reset and want_state
     assert client.project_output == projection_request
     assert images.shape == link.SPEC.warped_shape and packed.size == link.SPEC.packed_nelem
     step('usb_send', .003)
@@ -87,12 +87,16 @@ def test_timing_records_usb_and_display_tail_after_unchanged_reply(monkeypatch, 
   early = ['hud'] + (['early_media'] if fast_receiver and not map_staging else []) if usb and navigation else []
   tail = (['hud'] if not navigation else ['tail'] if not fast_receiver else []) if usb else []
   assert calls == ['receive', 'usb_send', 'phase', *(['map_stage'] if map_staging is not None else []), *early, 'usb_response', 'reply', *tail, 'wifi']
-  assert len(events) == 1 and events[0]['component'] == 'jetlinkd'
-  assert events[0]['frame_id'] == 42 and events[0]['usb_seq'] == 99
-  metrics = events[0]['metrics']
+  timing, performance = events
+  assert timing[1]['component'] == 'jetlinkd'
+  assert timing[1]['frame_id'] == 42 and timing[1]['usb_seq'] == 99
+  assert performance[0] == 'jetsonPerformance'
+  assert performance[1]['frame_id'] == 42 and performance[1]['usb_seq'] == 99
+  assert performance[1]['status'] == 'unavailable'
+  metrics = timing[1]['metrics']
   assert metrics['map_stage_bytes']['max'] == (map_staging or 0)
   assert metrics['map_deferred_used']['max'] == int(map_staging is not None)
-  peak = events[0]['peak_sample']
+  peak = timing[1]['peak_sample']
   assert peak['context'] == {'frame_id': 42, 'usb_seq': 99}
   assert peak['metrics']['usb_send_ms'] == pytest.approx(3.)
   assert peak['metrics']['server_total_ms'] == pytest.approx(22.)
