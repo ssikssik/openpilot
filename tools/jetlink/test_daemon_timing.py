@@ -56,6 +56,7 @@ def test_timing_records_usb_and_display_tail_after_unchanged_reply(monkeypatch, 
 
   def begin(images, packed, frame, reset, want_state, **options):
     assert options == ({"nav_metadata": (77, 10_000_000_000, 10_500_000_000)} if map_staging is not None else {})
+    # The one-second idle interval requests telemetry even at frame 42.
     assert frame == 42 and reset and want_state
     assert client.project_output == projection_request
     assert images.shape == link.SPEC.warped_shape and packed.size == link.SPEC.packed_nelem
@@ -65,6 +66,8 @@ def test_timing_records_usb_and_display_tail_after_unchanged_reply(monkeypatch, 
   def end(seq):
     assert seq == 99
     step('usb_response', .08)
+    client.last_state = {'carrot_health': {'age_s': .1, 'performance': {
+      'version': 1, 'sample_mono': 123., 'age_s': .1, 'emc': {'clock_mhz': 2133}}}}
     return output
 
   def reply(conn, header, result):
@@ -92,7 +95,8 @@ def test_timing_records_usb_and_display_tail_after_unchanged_reply(monkeypatch, 
   assert timing[1]['frame_id'] == 42 and timing[1]['usb_seq'] == 99
   assert performance[0] == 'jetsonPerformance'
   assert performance[1]['frame_id'] == 42 and performance[1]['usb_seq'] == 99
-  assert performance[1]['status'] == 'unavailable'
+  assert performance[1]['status'] == 'ok'
+  assert performance[1]['sample']['emc']['clock_mhz'] == 2133
   metrics = timing[1]['metrics']
   assert metrics['map_stage_bytes']['max'] == (map_staging or 0)
   assert metrics['map_deferred_used']['max'] == int(map_staging is not None)
