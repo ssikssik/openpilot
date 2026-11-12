@@ -1092,6 +1092,17 @@ def _set_raw_bits(msg, bits, value):
 
 # Clusters that draw no line for the dashed codes (owner reports 10-28~30) keep the solid colour
 NO_DASHED_LANE_CARS = (CAR.HYUNDAI_IONIQ_9, CAR.KIA_EV9)
+# Every CAN-FD car shares one DBC, so a value its VAL_ table names goes to every CCNC cluster. The cluster-test values
+# it does not name (ALERTS_5 9, ALERTS_4 215, 0x162 bit 188) go only to clusters seen to draw them: Ioniq 5 PE (cluster
+# tests 10-29), GN7 / EV4 (owner report 11-12, no log). Older non-DBC values (lane 8/10/14, background 5/8) are unchanged.
+NON_DBC_CLUSTER_VALUE_CARS = (CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_AZERA_7TH_GEN, CAR.KIA_EV4)
+
+
+def _dbc_listed(field, value):
+  if not hasattr(_dbc_listed, "values"):
+    from opendbc.can import CANDefine  # here: opendbc.can imports back into opendbc.car at module load
+    _dbc_listed.values = CANDefine("hyundai_canfd_generated").dv["ADRV_0x161"]  # all CAN-FD platforms (values.py)
+  return value in _dbc_listed.values.get(field, {})
 
 
 def _dashed_lane_line(color, lane_line, car=None):
@@ -1215,6 +1226,31 @@ class CameraSetSpeedSync:
     return 1 if direction > 0 else 2  # Buttons.RES_ACCEL (+) / Buttons.SET_DECEL (-)
 
 
+class CameraGapSync:
+  """The camera's stock SCC keeps its own gap (SCC_CONTROL DISTANCE_SETTING). Driver gap presses reach both, yet the two
+  drifted one step apart (11-08/09 logs: camera = openpilot bars - 1, openpilot 1 <-> camera 4), so a device drop-out
+  handed stock SCC another gap. Press GAP on the camera bus until it equals openpilot's bars (the gap cycles 1..4)."""
+  MAX_PRESSES = 8  # two full cycles; beyond that the camera is not following, so stop for this target
+
+  def __init__(self):
+    self.target = None
+    self.presses = 0
+    self.window = None
+
+  def button(self, target_bars, camera_gap, frame):
+    target, camera = int(target_bars), int(camera_gap)
+    if target != self.target or camera == target:
+      self.target, self.presses = target, 0
+    if camera == target or not (1 <= target <= 4 and 1 <= camera <= 4) or self.presses >= self.MAX_PRESSES:
+      return 0
+    if not 10 < frame % 100 <= 16:  # one short press per second, so the camera's gap updates before the next one
+      return 0
+    if frame // 100 != self.window:
+      self.window = frame // 100
+      self.presses += 1
+    return 3  # Buttons.GAP_DIST
+
+
 def create_alt2_adas_button_request(packer, CAN, frame, CC, CS, stopping, *, keep_stock_scc_main=False):
   # This is a button request for Panda, not a replacement vehicle frame.
   # Panda overlays it on fresh 0x10B input, retaining all unknown fields,
@@ -1262,6 +1298,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
     create_ccnc_messages._set_speed_sync_on = Params().get_int("CameraSetSpeedSync") > 0
   if not hasattr(create_ccnc_messages, '_set_speed_sync'):
     create_ccnc_messages._set_speed_sync = CameraSetSpeedSync()
+    create_ccnc_messages._gap_sync = CameraGapSync()
   lane_line_check = create_ccnc_messages._lane_line_check
   desire, _ = _get_desire_and_lane_changing(md)
 
@@ -1317,6 +1354,10 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
                 (sync_button := create_ccnc_messages._set_speed_sync.button(
                   hud_control.setSpeed * (CV.MS_TO_KPH if CS.is_metric else CV.MS_TO_MPH), CS.scc_control["VSetDis"], frame))):
             values["CRUISE_BUTTONS"] = sync_button
+          elif (create_ccnc_messages._set_speed_sync_on and not driver_pressed and CS.scc_control is not None and
+                (gap_button := create_ccnc_messages._gap_sync.button(
+                  hud_control.leadDistanceBars, CS.scc_control["DISTANCE_SETTING"], frame))):
+            values["CRUISE_BUTTONS"] = gap_button
           else:
             if CS.adrv_0x1ea is not None and CS.adrv_0x1ea["HDA_MODE2"] == 0: # if corner radar is disabled, send main btn
               if 10 < frame % 1000 <= 16 and CS.out.vEgo > 3:
@@ -1422,16 +1463,18 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         if values["ALERTS_5"] in [11] and CS.softHoldActive == 0:
           values["ALERTS_5"] = 0
 
-        # Ioniq 5 PE only: other clusters' ALERTS_5 table is unchecked (IONIQ 9 uses 6 for trailer mode)
+        # ALERTS_5 19/21 are DBC values: every CCNC cluster (IONIQ 9's 6 = trailer is the same DBC value, not another table)
         if cruise_enabled != getattr(create_ccnc_messages, '_was_enabled', cruise_enabled):
           create_ccnc_messages._engage_popup = (ENGAGE_POPUP if cruise_enabled else DISENGAGE_POPUP, frame + ENGAGE_POPUP_FRAMES)
         create_ccnc_messages._was_enabled = cruise_enabled
         popup, popup_until = getattr(create_ccnc_messages, '_engage_popup', (0, 0))
-        is_ioniq5pe = getattr(CP, "carFingerprint", None) == CAR.HYUNDAI_IONIQ_5_PE
-        if is_ioniq5pe and frame < popup_until and values["ALERTS_5"] == 0:
+        non_dbc_ok = getattr(CP, "carFingerprint", None) in NON_DBC_CLUSTER_VALUE_CARS
+        if frame < popup_until and values["ALERTS_5"] == 0:
           values["ALERTS_5"] = popup
         # the alert's own text beats the generic disengage popup; a stock text still wins
-        text = _cluster_alert_text(getattr(hud_control, "alertType", "") or "") if is_ioniq5pe else None
+        text = _cluster_alert_text(getattr(hud_control, "alertType", "") or "")
+        if text and not (non_dbc_ok or _dbc_listed(*text)):
+          text = None
         if text and (values[text[0]] == 0 or (text[0] == "ALERTS_5" and values["ALERTS_5"] == popup and frame < popup_until)):
           values[text[0]] = text[1]
         tunnel = getattr(CS.out, "naviTunnel", False)
@@ -1439,7 +1482,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           create_ccnc_messages._tunnel_refusal_until = 0
         elif tunnel and lat_active and CS.out.leftBlinker != CS.out.rightBlinker:  # one side (not hazards)
           create_ccnc_messages._tunnel_refusal_until = frame + ENGAGE_POPUP_FRAMES
-        if is_ioniq5pe and frame < getattr(create_ccnc_messages, '_tunnel_refusal_until', 0) and values[TUNNEL_REFUSAL_TEXT[0]] == 0:
+        if non_dbc_ok and frame < getattr(create_ccnc_messages, '_tunnel_refusal_until', 0) and values[TUNNEL_REFUSAL_TEXT[0]] == 0:
           values[TUNNEL_REFUSAL_TEXT[0]] = TUNNEL_REFUSAL_TEXT[1]
 
         # curvature 표시(0x161쪽 기존 로직 유지)
@@ -1562,8 +1605,8 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           values["FAULT_DAS"] = 0
 
         msg = _cluster_test_msg(packer, "CCNC_0x162", CAN.ECAN, values, rx_counter, test_field, test_value)
-        # HDP icon while cruise or steering is engaged; Ioniq 5 PE only - other clusters' bit 188 is unchecked
-        if (getattr(CP, "carFingerprint", None) == CAR.HYUNDAI_IONIQ_5_PE and (CC.enabled or lat_active) and
+        # HDP icon while cruise or steering is engaged; bit 188 has no DBC name: checked clusters only
+        if (getattr(CP, "carFingerprint", None) in NON_DBC_CLUSTER_VALUE_CARS and (CC.enabled or lat_active) and
             HDP_ICON_BIT not in CLUSTER_TEST_BITS.get(test_field, ())):
           msg = _set_raw_bits(msg, (HDP_ICON_BIT,), 1)
         ret.append(msg)
