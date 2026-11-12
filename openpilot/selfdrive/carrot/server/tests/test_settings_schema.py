@@ -81,6 +81,24 @@ async def test_legacy_sound_catalog_exposes_and_saves_zero(tmp_path, monkeypatch
     assert param_service._mem_store[name] == "0"
 
 
+def test_tesla_switches_have_a_dedicated_browser_group(settings):
+  _, by_name, _ = group_index(settings)
+  categories = build_menu_categories(settings, by_name)
+  driving = next(category for category in categories if category["id"] == "DRIVING")
+  tesla = next(group for group in driving["groups"] if group["id"] == "TESLA")
+  expected = ["TeslaAutoTurnSignals", "TeslaCanTrafficStop", "TeslaManualLaneSignals",
+              "TeslaModelDesireSignals", "TeslaModelPathSignals", "TeslaAutoSpeedLimit"]
+  assert tesla["count"] == 6
+  assert tesla["sections"][0]["items"] == expected
+  for category in categories:
+    for group in category["groups"]:
+      if group["id"] != "TESLA":
+        assert not set(expected).intersection(name for section in group["sections"] for name in section["items"])
+  wheel = by_name["TeslaAutoSpeedLimit"]
+  assert (wheel["control"], wheel["default"], wheel["min"], wheel["max"]) == ("toggle", 0, 0, 1)
+  assert '{"TeslaAutoSpeedLimit", {PERSISTENT, BOOL, "0"}}' in PARAMS_KEYS_PATH.read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize("maximum", (3, 4))
 def test_gap_cycle_catalog_uses_vehicle_maximum_without_mutating_cache(settings, maximum):
   groups, by_name, groups_list = group_index(settings)
