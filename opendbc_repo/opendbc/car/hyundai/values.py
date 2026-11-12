@@ -2,6 +2,8 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag
 
+import numpy as np
+
 from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds, AngleSteeringLimits
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.structs import CarParams
@@ -1120,3 +1122,10 @@ if __name__ == "__main__":
   cars.sort()
   for c in cars:
     print(c)
+
+
+def steering_angle_max(fingerprint, v_ego_raw, standard_max=CarControllerParams.ANGLE_LIMITS.STEER_ANGLE_MAX):
+  if fingerprint != CAR.KIA_EV4:
+    return standard_max
+  # EV4 keeps the expanded command range through 30 km/h, then tapers to the stock limit.
+  return float(np.interp(v_ego_raw * CV.MS_TO_KPH, (30., 40.), (450., standard_max)))

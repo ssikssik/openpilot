@@ -13,7 +13,7 @@ from opendbc.car.hyundai.palisade_cgw_test import PalisadeCgwTest, cgw_frame
 from opendbc.car.hyundai.steering_handover import SteeringHandover
 from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CAN_GEARS, HyundaiExtFlags
+from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CAN_GEARS, HyundaiExtFlags, steering_angle_max
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.hyundai.values import get_pedal_interceptor_params
@@ -44,10 +44,6 @@ PRE_OVERRIDE_MAX_TORQUE_DELTA = -10.0
 OVERRIDE_COUNT_MIN_FRAMES = int(0.3 / DT_CTRL)
 LOW_SPEED_ANGLE_RATE_RAMP_SPEED = 15.0 * CV.KPH_TO_MS
 MID_SPEED_ANGLE_RATE_LIMIT_SPEED = 40.0 * CV.KPH_TO_MS
-# EV4-only low-speed angle experiment: allow commands beyond the 176.7 deg LFA limit.
-# EPS response above that limit needs vehicle validation; return to 175 deg by 40 km/h.
-LOW_SPEED_ANGLE_MAX = 450.  # deg
-LOW_SPEED_ANGLE_MAX_KPH = (30., 40.)
 # SteerAngleTest range. Non-EV4 LKAS angles stay at STEER_ANGLE_MAX: 10-29 test (20261029_2056) the EPS stopped at
 # ~180 deg and raised steerFaultTemporary whenever asked for more
 STEER_ANGLE_TEST_MAX = 450.  # deg
@@ -251,10 +247,7 @@ def park_assist_active(CS):
 
 class CarController(CarControllerBase):
   def steer_angle_max(self, v_ego_raw):
-    angle_max = self.params.ANGLE_LIMITS.STEER_ANGLE_MAX
-    if self.CP.carFingerprint != CAR.KIA_EV4:
-      return angle_max
-    return float(np.interp(v_ego_raw * CV.MS_TO_KPH, LOW_SPEED_ANGLE_MAX_KPH, [LOW_SPEED_ANGLE_MAX, angle_max]))
+    return steering_angle_max(self.CP.carFingerprint, v_ego_raw, self.params.ANGLE_LIMITS.STEER_ANGLE_MAX)
 
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
