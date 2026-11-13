@@ -169,6 +169,27 @@ def test_each_boot_applies_once_and_failed_boot_retries_after_reboot(board, monk
   assert power.read_status(root / 'run/carrot-jetlink-power.json')['boot_id'] == 'boot2'
 
 
+@pytest.mark.parametrize('module', ['0000', '0001'])
+@pytest.mark.parametrize('mode_name, mode_id, expected', [
+  ('MAXN_SUPER', 0, 'ready'),
+  ('15W', 1, 'super_mode_inactive'),
+])
+def test_orin_nx_reports_current_mode_without_changing_it(board, module, mode_name, mode_id, expected):
+  root, calls, mode = board
+  (root / 'proc/device-tree/model').write_text('NVIDIA Jetson Orin NX Engineering Reference Developer Kit Super\0')
+  (root / 'proc/device-tree/compatible').write_text(
+    f'nvidia,p3768-0000+p3767-{module}-super\0nvidia,p3767-{module}\0nvidia,tegra234\0')
+  (root / 'etc/nvpmodel.conf').unlink()
+  mode[:] = [mode_name, mode_id]
+  result = power.run_once(root)
+  assert result['state'] == expected
+  assert result['selected'] == {'name': mode_name, 'id': mode_id}
+  assert calls == [('/usr/sbin/nvpmodel', '-q')]
+  health = {'severity': 'ok', 'performance': {'power_setup': result}}
+  power_health(health)
+  assert health['severity'] == ('ok' if expected == 'ready' else 'error')
+
+
 def test_wrong_board_is_read_only(board):
   root, calls, _ = board
   (root / 'proc/device-tree/model').write_text('Jetson AGX Orin')
