@@ -16,6 +16,7 @@ def power_health(value):
   setup = (value.get('performance') or {}).get('power_setup') or {}
   state = setup.get('state')
   messages = {
+    'super_mode_inactive': 'Orin NX is running with a power mode other than MAXN_SUPER',
     'super_profile_missing': 'MAXN_SUPER profile missing: check Jetson image / QSPI firmware',
     'super_firmware_required': 'Non-Super boot firmware detected: install matching Orin Nano Super firmware; SD/Git update alone cannot select MAXN_SUPER',
     'unsupported_board': 'Automatic MAXN_SUPER needs the supported Orin Nano board',

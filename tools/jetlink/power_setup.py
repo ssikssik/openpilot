@@ -56,6 +56,10 @@ def apply(root=Path('/')):
     value['board'] = (root / 'proc/device-tree/model').read_text().replace('\x00', '').strip()[:120]
     value['l4t'] = (root / 'etc/nv_tegra_release').read_text().splitlines()[0][:160]
     value['compatible'] = (root / 'proc/device-tree/compatible').read_text().replace('\x00', ' ')[:240]
+    compatible = value['compatible'].split()
+    if 'nvidia,tegra234' in compatible and {'nvidia,p3767-0000', 'nvidia,p3767-0001'}.intersection(compatible):
+      value['selected'] = selected()
+      return {**value, 'state': 'ready' if value['selected']['name'] == 'MAXN_SUPER' else 'super_mode_inactive'}
     if 'tegra234' not in value['compatible'] or 'Orin Nano' not in value['board']:
       return {**value, 'state': 'unsupported_board'}
     config = root / 'etc/nvpmodel.conf'
