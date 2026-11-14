@@ -483,15 +483,15 @@ def test_target_ring_marks_the_target_gap(monkeypatch, enabled, desired, expecte
 
 
 @pytest.mark.parametrize(("car", "enabled", "lat_active", "test_field", "expected"), (
-  ("HYUNDAI_IONIQ_5_PE", True, False, 0, 1),   # cruise engaged
-  ("HYUNDAI_IONIQ_5_PE", False, True, 0, 1),   # steering only
+  ("HYUNDAI_IONIQ_5_PE", True, False, 0, 0),   # cruise engaged
+  ("HYUNDAI_IONIQ_5_PE", False, True, 0, 0),   # steering only
   ("HYUNDAI_IONIQ_5_PE", False, False, 0, 0),
   ("HYUNDAI_IONIQ_5_PE", True, True, 9, 0),    # cluster test on its bit group wins
-  ("HYUNDAI_AZERA_7TH_GEN", True, True, 0, 1),  # GN7 / EV4: owner report 11-12
-  ("KIA_EV4", True, True, 0, 1),
+  ("HYUNDAI_AZERA_7TH_GEN", True, True, 0, 0),  # GN7 / EV4: owner report 11-12
+  ("KIA_EV4", True, True, 0, 0),
   ("KIA_EV9", True, True, 0, 0),               # bit 188 unchecked on EV9
 ))
-def test_hdp_icon_while_engaged(monkeypatch, car, enabled, lat_active, test_field, expected):
+def test_hdp_icon_is_not_forced(monkeypatch, car, enabled, lat_active, test_field, expected):
   monkeypatch.setattr(hyundaicanfd, "Params", lambda: SimpleNamespace(get_int=lambda key: {'ClusterLaneTest': test_field}.get(key, 0)))
   packer = CANPacker("hyundai_canfd_generated")
   definition = packer.dbc.name_to_msg["CCNC_0x162"]
@@ -505,7 +505,7 @@ def test_hdp_icon_while_engaged(monkeypatch, car, enabled, lat_active, test_fiel
   hud = SimpleNamespace(leadDistance=0, leadRadar=0, leadRelSpeed=0)
   (address, data, bus), = hyundaicanfd.create_ccnc_messages(cp, packer, SimpleNamespace(ECAN=0, CAM=2), 0, control, state, hud,
                                                             0, False, False, 0, False, 0, 0)
-  assert (data[hyundaicanfd.HDP_ICON_BIT // 8] >> (hyundaicanfd.HDP_ICON_BIT % 8)) & 1 == expected
+  assert (data[188 // 8] >> (188 % 8)) & 1 == expected
   assert get_raw_value(data, definition.sigs['CHECKSUM']) == hyundaicanfd.hkg_can_fd_checksum(address, None, bytearray(data))
 
 

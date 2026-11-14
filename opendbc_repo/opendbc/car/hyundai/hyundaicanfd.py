@@ -963,8 +963,6 @@ CLUSTER_TEST_SLOTS = sorted({slot for fields, bits in CLUSTER_TEST_MSGS.values()
 CLUSTER_TEST_AUTO_SLOT = -1  # ClusterLaneTest -1: step through ClusterLaneTestFrom..To, one value sweep per field
 
 
-# 0x162 bit 188 (no DBC name; cluster test 9 at 188, 10-29): the HDP icon. Stock never sets it.
-HDP_ICON_BIT = 188
 # 0x1ea bit 104 (no DBC name; cluster test 129, 10-29): exterior hazard lights, ~0.1 s later. Stock never sets it.
 HAZARD_REQUEST_BIT = 104
 # 0x161 ALERTS_5 popups on engage / disengage (cluster test 22, 10-29): 19 "always be ready to drive", 21 "HDP released"
@@ -1618,12 +1616,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           values["FAULT_LSS"] = 0
           values["FAULT_DAS"] = 0
 
-        msg = _cluster_test_msg(packer, "CCNC_0x162", CAN.ECAN, values, rx_counter, test_field, test_value)
-        # HDP icon while cruise or steering is engaged; bit 188 has no DBC name: checked clusters only
-        if (getattr(CP, "carFingerprint", None) in NON_DBC_CLUSTER_VALUE_CARS and (CC.enabled or lat_active) and
-            HDP_ICON_BIT not in CLUSTER_TEST_BITS.get(test_field, ())):
-          msg = _set_raw_bits(msg, (HDP_ICON_BIT,), 1)
-        ret.append(msg)
+        ret.append(_cluster_test_msg(packer, "CCNC_0x162", CAN.ECAN, values, rx_counter, test_field, test_value))
 
     # --- NEW_MSG_4B9 (corner radar keep-alive?) ---
     if enable_corner_radar > 0:
