@@ -876,6 +876,13 @@ def _hide_replaced_adas_service_warning(values):
     values["FAULT_DAS"] = 0
 
 
+def _dashed_lane_line(color, lane_line):
+  # CCNC uses 8 for white dashes and 10 for green dashes.
+  if lane_line // 10 > 0 and lane_line % 10 in (0, 5):
+    return {2: 8, 6: 10}.get(color, color)
+  return color
+
+
 def _select_cluster_background(cruise_enabled, lat_active, paddle_pressed, paddle_mode, turning=False):
   # Reuse the existing flashing-red background to identify an active model turn.
   if (lat_active and turning) or (paddle_mode > 0 and paddle_pressed):
@@ -1126,7 +1133,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           if hud_control.leftLaneDepart:
             values["LANELINE_LEFT"] = 4 if (frame // 50) % 2 == 0 else 1
           else:
-            values["LANELINE_LEFT"] = lane_color if hud_control.leftLaneVisible else 0
+            values["LANELINE_LEFT"] = _dashed_lane_line(lane_color, CS.out.leftLaneLine) if hud_control.leftLaneVisible else 0
 
           lane_color = 6 if md is not None and md.meta.laneChangeAvailableRight else 2
           if lane_line_check >= 1:
@@ -1137,7 +1144,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           if hud_control.rightLaneDepart:
             values["LANELINE_RIGHT"] = 4 if (frame // 50) % 2 == 0 else 1
           else:
-            values["LANELINE_RIGHT"] = lane_color if hud_control.rightLaneVisible else 0
+            values["LANELINE_RIGHT"] = _dashed_lane_line(lane_color, CS.out.rightLaneLine) if hud_control.rightLaneVisible else 0
 
         values["LCA_LEFT_ARROW"] = 2 if CS.out.leftBlinker else 0
         values["LCA_RIGHT_ARROW"] = 2 if CS.out.rightBlinker else 0
