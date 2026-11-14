@@ -1152,10 +1152,6 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         values["LANE_LEFT"] = 0 if trailer_lane_change_blocked else 1 if desire in (1, 3) else 0
         values["LANE_RIGHT"] = 0 if trailer_lane_change_blocked else 1 if desire in (2, 4) else 0
 
-        if lat_active and not trailer_lane_change_blocked and desire in (3, 4):
-          values["LANE_HIGHLIGHT"] = 1  # CCNC green during the confirmed lane change.
-          values["LANE_HIGHLIGHT_DISTANCE"] = 0.  # Highlight the area around the vehicle.
-
         _apply_driver_monitoring_alert(values, hud_control, CS.adrv_0x161)
         ret.append(packer.make_can_msg("ADRV_0x161", CAN.ECAN, values, rx_counter = rx_counter))
 

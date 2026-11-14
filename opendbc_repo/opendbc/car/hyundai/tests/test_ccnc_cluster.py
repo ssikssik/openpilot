@@ -43,7 +43,6 @@ def test_turn_changes_only_background_in_existing_cluster_frame(monkeypatch, des
   definition = packer.dbc.name_to_msg['ADRV_0x161']
   stock = {key: 0 for key in definition.sigs}
   stock['COUNTER'] = 17
-  stock['LANE_HIGHLIGHT_DISTANCE'] = 150.
   original = stock.copy()
   model = log.ModelDataV2.new_message()
   model.meta.desire = desire
@@ -71,8 +70,6 @@ def test_turn_changes_only_background_in_existing_cluster_frame(monkeypatch, des
   assert values['BACKGROUND'] == (6 if lat_active and desire in (1, 2) else 1)
   assert {k: v for k, v in values.items() if k not in ('BACKGROUND', 'CHECKSUM')} == {
     k: v for k, v in old.items() if k not in ('BACKGROUND', 'CHECKSUM')}
-  assert values['LANE_HIGHLIGHT'] == (1 if lat_active and desire in (3, 4) else 0)
-  assert values['LANE_HIGHLIGHT_DISTANCE'] == (0 if lat_active and desire in (3, 4) else 1500)
   assert values['CHECKSUM'] == hyundaicanfd.hkg_can_fd_checksum(0x161, None, bytearray(actual[0][1]))
   assert stock == original
 
