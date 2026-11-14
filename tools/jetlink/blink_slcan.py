@@ -1,4 +1,5 @@
 """CANable 2.0 SLCAN transport using the verified Carrot firmware."""
+import binascii
 import os
 from pathlib import Path
 import select
@@ -7,6 +8,12 @@ import sys
 import time
 
 PRODUCTS = (('16d0', '117e'), ('ad50', '60c4'))
+WEACT_PRODUCT = ('0483', '5740')
+WEACT_NAME = 'USB2CANV1 Carrot ComPort'
+WEACT_FIRMWARE = b'carrot-weact-b1-slcan-1 '
+EV4_TX = b'carrot-weact-ev4-tx-bench-1'
+EV4_SYNC = b'carrot-weact-ev4-tx-sync-1'
+EV4_FIRMWARE = (b'carrot-weact-ev4-rx-1', b'carrot-weact-ev4-rx-2', EV4_TX, EV4_SYNC)
 REMOTE = b'github.com/normaldotcom/canable2.git'
 FIRMWARE = b'carrot-b1-slcan-2 '
 
@@ -21,9 +28,12 @@ def identity(port):
   for parent in device.parents:
     if (parent/'idVendor').is_file():
       product = tuple((parent/name).read_text().strip() for name in ('idVendor', 'idProduct'))
-      if product not in PRODUCTS:
+      firmware = FIRMWARE
+      if product == WEACT_PRODUCT and (parent/'product').read_text().strip() == WEACT_NAME:
+        firmware = WEACT_FIRMWARE
+      elif product not in PRODUCTS:
         break
-      return str(device), (parent/'serial').read_text().strip(), path.stat().st_rdev
+      return str(device), (parent/'serial').read_text().strip(), path.stat().st_rdev, firmware
   raise ValueError('Expected a supported CANable 2.0 USB identity')
 
 
@@ -73,6 +83,8 @@ class Bus:
     self.sock, self.watch, self.transmit = None, None, False
     self.version, self.version_count = b'', 0
     self.report, self.report_count = None, 0
+    self.receive_only = self.ev4 = self.ev4_tx = False
+    self.ev4_override = False
     self.next_lease = 0.
     self.lock = (CONFIG.parent/'blinker.lock').open('a')
     try:
@@ -83,8 +95,11 @@ class Bus:
       self.watch = subprocess.Popen([sys.executable, '-c', WATCHDOG, str(self.sock)], pass_fds=(self.sock,),
                                     stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
       self._command(b'C\rV\r')
-      if self.version != FIRMWARE+REMOTE:
-        raise ValueError('CANable requires carrot-b1-slcan-2 firmware with verified mode and arbitration/error reporting')
+      self.ev4 = self.index[3] == WEACT_FIRMWARE and self.version in EV4_FIRMWARE
+      self.ev4_tx = self.ev4 and self.version in (EV4_TX, EV4_SYNC)
+      self.receive_only = self.ev4 and not self.ev4_tx
+      if not self.ev4 and self.version != self.index[3]+REMOTE:
+        raise ValueError('USB CAN adapter requires matching Carrot firmware with hardware mode and TX reporting')
       self.mode(False)
     except BaseException:
       self.close()
@@ -113,6 +128,16 @@ class Bus:
     # S6=500k, M1=silent, A0=disable automatic retransmission. The mode
     # commands are issued while closed as required by the CANable firmware.
     self.transmit = False
+    if getattr(self, 'ev4', False):
+      if transmit and not self.ev4_tx:
+        raise ValueError('EV4 adapter supports receive only')
+      if transmit:
+        self.ev4_override = False
+      self._command(b'C\rS6\rY1\r'+(b'K1\r' if transmit and self.version == EV4_SYNC else b'')+(b'M0\r' if transmit else b'M1\r')+b'O\rQ\r', report=True)
+      if self.report[0] != (b'T' if transmit else b'L'):
+        raise ValueError('EV4 hardware mode mismatch')
+      self.transmit = transmit
+      return
     self._command(b'C\rS6\rA0\r'+(b'M0\r' if transmit else b'M1\r')+b'O\rQ\r', report=True)
     if self.report[0] != (b'T' if transmit else b'L'):
       raise ValueError('CANable hardware mode did not match the bounded transmission contract')
@@ -140,9 +165,21 @@ class Bus:
           self.report = (bytes(line[1:2]), int(line[2:3]), int(line[3:7], 16))
           self.diagnostics = tuple(int(line[i:i+8], 16) for i in (7, 15, 23))
           self.report_count += 1
-        elif line.endswith(REMOTE):
+        elif line.endswith(REMOTE) or line in EV4_FIRMWARE:
           self.version, self.version_count = bytes(line), self.version_count+1
         else:
+          if getattr(self, 'ev4', False):
+            if len(line) == 37 and line[:1] in (b'b', b'd') and line[4:5] == b'A' and line[1:4] in (b'3E3', b'35A', b'35B'):
+              try:
+                data = bytes.fromhex(line[5:].decode('ascii'))
+              except ValueError:
+                continue
+              address = int(line[1:4], 16)
+              if len(data) == 16 and int.from_bytes(data[:2], 'little') == binascii.crc_hqx(data[2:]+address.to_bytes(2, 'little'), 0) ^ 0x041d:
+                self.latest[address] = (time.monotonic(), data)
+                if address == 0x3e3 and data[9] != 1:
+                  self.ev4_override = True
+            continue
           parsed = frame(line)
           if parsed:
             self.latest[parsed[0]] = (time.monotonic(), parsed[1])
@@ -153,11 +190,20 @@ class Bus:
       self.next_lease = now+.1
 
   def neutral(self, now):
+    if getattr(self, 'ev4', False):
+      if any(k not in self.latest or not 0 <= now-self.latest[k][0] < .4 for k in (0x3e3, 0x35a, 0x35b)):
+        return None
+      original = self.latest[0x3e3][1]
+      if original[9] == 1 and original[11] == 0 and all(self.latest[k][1][5] == 0x30 for k in (0x35a, 0x35b)):
+        return original
+      return None
     from blink_can import Bus as SocketBus
     return SocketBus.neutral(self, now)
 
   def send(self, data):
-    if not self.transmit or len(data) != 8:
+    ev4_tx = getattr(self, 'ev4_tx', False)
+    prefix = b'b3E3A' if ev4_tx else b't3C18'
+    if not self.transmit or len(data) != (16 if ev4_tx else 8):
       raise ValueError('CANable transmission is not armed')
     deadline = time.monotonic()+.015
     # FDCAN DAR cancels a request after lost arbitration too. Re-submit only
@@ -168,7 +214,9 @@ class Bus:
       remaining = deadline-time.monotonic()
       if remaining <= 0:
         raise TimeoutError('CANable CAN transmission completion timeout')
-      self._command(b't3C18'+data.hex().upper().encode('ascii')+b'\rQ\r', report=True, timeout=remaining)
+      if ev4_tx and self.ev4_override:
+        raise ValueError('EV4 driver override')
+      self._command(prefix+data.hex().upper().encode('ascii')+b'\rQ\r', report=True, timeout=remaining)
       while True:
         mode, state, sequence = self.report
         if mode != b'T' or sequence != expected:
