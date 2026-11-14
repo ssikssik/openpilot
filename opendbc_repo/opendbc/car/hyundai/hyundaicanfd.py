@@ -965,10 +965,8 @@ CLUSTER_TEST_AUTO_SLOT = -1  # ClusterLaneTest -1: step through ClusterLaneTestF
 
 # 0x1ea bit 104 (no DBC name; cluster test 129, 10-29): exterior hazard lights, ~0.1 s later. Stock never sets it.
 HAZARD_REQUEST_BIT = 104
-# 0x161 ALERTS_5 popups on engage / disengage (cluster test 22, 10-29): 19 "always be ready to drive", 21 "HDP released"
-ENGAGE_POPUP, DISENGAGE_POPUP = 19, 21
-ENGAGE_POPUP_FRAMES = int(2.0 / DT_CTRL)
 # A lane change asked for in a tunnel waits for driver torque (desire_helper): say why on the cluster, at least 2 s
+TUNNEL_REFUSAL_FRAMES = int(2.0 / DT_CTRL)
 TUNNEL_REFUSAL_TEXT = ("ALERTS_4", 215)  # "this tunnel is not operable" (cluster test 21, 10-29)
 # openpilot alert -> cluster text (0x161 ALERTS_4 = cluster test 21, ALERTS_5 = 22; 10-29 videos), keyed by event name.
 # Not mirrored on purpose (user 11-13): cruise released and the R-gear disengage.
@@ -1457,20 +1455,12 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         if values["ALERTS_5"] in [11] and CS.softHoldActive == 0:
           values["ALERTS_5"] = 0
 
-        # ALERTS_5 19/21 are DBC values: every CCNC cluster (IONIQ 9's 6 = trailer is the same DBC value, not another table)
-        if cruise_enabled != getattr(create_ccnc_messages, '_was_enabled', cruise_enabled):
-          create_ccnc_messages._engage_popup = (ENGAGE_POPUP if cruise_enabled else DISENGAGE_POPUP, frame + ENGAGE_POPUP_FRAMES)
-        create_ccnc_messages._was_enabled = cruise_enabled
-        popup, popup_until = getattr(create_ccnc_messages, '_engage_popup', (0, 0))
         non_dbc_ok = getattr(CP, "carFingerprint", None) in NON_DBC_CLUSTER_VALUE_CARS
-        if frame < popup_until and values["ALERTS_5"] == 0:
-          values["ALERTS_5"] = popup
-        # the alert's own text beats the generic disengage popup; a stock text still wins
         text = _cluster_alert_text(getattr(hud_control, "alertType", "") or "")
         if text and not (non_dbc_ok or _dbc_listed(*text)):
           text = None
         shown = None
-        if text and (values[text[0]] == 0 or (text[0] == "ALERTS_5" and values["ALERTS_5"] == popup and frame < popup_until)):
+        if text and values[text[0]] == 0:
           values[text[0]] = text[1]
           shown = text
         if shown == CHIME_TEXT and getattr(create_ccnc_messages, '_chime_shown', None) != shown:
@@ -1493,7 +1483,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         if desire in (3, 4):  # the change started (driver torque): nothing refused any more
           create_ccnc_messages._tunnel_refusal_until = 0
         elif tunnel and lat_active and CS.out.leftBlinker != CS.out.rightBlinker:  # one side (not hazards)
-          create_ccnc_messages._tunnel_refusal_until = frame + ENGAGE_POPUP_FRAMES
+          create_ccnc_messages._tunnel_refusal_until = frame + TUNNEL_REFUSAL_FRAMES
         if non_dbc_ok and frame < getattr(create_ccnc_messages, '_tunnel_refusal_until', 0) and values[TUNNEL_REFUSAL_TEXT[0]] == 0:
           values[TUNNEL_REFUSAL_TEXT[0]] = TUNNEL_REFUSAL_TEXT[1]
 
