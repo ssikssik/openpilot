@@ -28,7 +28,7 @@ def vehicle_ready(sm, now, fingerprint, spas=False):
   valid = all(sm.valid[k] and sm.alive[k] and
               0 <= now-sm.recv_time[k] < (.75 if k == 'pandaStates' else .35) for k in ('carState', 'carControl', 'selfdriveState', 'pandaStates'))
   c = sm['carState']
-  return ((spas or fingerprint == 'HYUNDAI_IONIQ_5_PE') and valid and c.canValid and finite(c.vEgo) and str(c.gearShifter) != 'unknown' and
+  return ((spas or fingerprint in ('HYUNDAI_IONIQ_5_PE', 'KIA_EV4')) and valid and c.canValid and finite(c.vEgo) and str(c.gearShifter) != 'unknown' and
           len(sm['pandaStates']) > 0)
 
 
@@ -97,7 +97,7 @@ def main(fd, spas=False, ble=False):
       from opendbc.car.hyundai.values import HyundaiFlags
       if cp.brand != 'hyundai' or not cp.flags & HyundaiFlags.CANFD_SPAS_BLINKERS or cp.passive:
         return
-  if not spas and not ble and json.loads(PACKAGE_CONFIG.read_text()).get('fingerprint') != fingerprint:
+  if not spas and not ble and fingerprint not in (json.loads(PACKAGE_CONFIG.read_text()).get('fingerprint'), 'KIA_EV4'):
     return
   sock = socket.socket(fileno=fd)
   sock.setblocking(False)

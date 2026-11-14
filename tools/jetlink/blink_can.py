@@ -1,4 +1,6 @@
 """Experimental PEAK/B1 manual one-touch output. Fresh input/CAN guard, no retries."""
+import binascii
+from bisect import bisect_right
 import json
 import os
 from pathlib import Path
@@ -197,6 +199,8 @@ class Controller:
       if (now-self.started < .6 or self.guard_deadline <= now or not finite(expires) or
           not 0 < expires-now <= .4 or event.get('direction') not in TIMINGS):
         continue
+      if self.pending and getattr(self.bus, 'ev4_tx', False):
+        continue
       if self.pending or self.unchanged(now):
         # Keep only the newest fresh intention while our previous one-touch ends.
         # Driver input, disconnect or stale vehicle state revokes this local wait.
@@ -208,6 +212,17 @@ class Controller:
   def begin(self, event, now):
     original = self.bus.neutral(now)
     if original is None:
+      return
+    if getattr(self.bus, 'ev4_tx', False):
+      self.bus.mode(True)
+      start = self.clock()
+      if start >= min(event.get('until', event['deadline']), self.guard_deadline):
+        self.bus.mode(False)
+        return
+      self.pending = dict(start=start, direction=event['direction'], id=event['id'],
+                          next_send=start, fields=None, counter=original[2],
+                          last_oem=None)
+      self.status.update(state='sending', direction=event['direction'], accepted_id=None)
       return
     counter = original[1] >> 4
     try:
@@ -236,6 +251,50 @@ class Controller:
     self.pending = self.queued = self.owned = None
     self.status.update(state=reason, ready=False, accepted_id=None)
 
+  def tick_ev4(self, now, pending):
+    latest = self.bus.latest
+    if (self.bus.ev4_override or any(k not in latest or not 0 <= now-latest[k][0] < .4
+                                     for k in (0x3e3, 0x35a, 0x35b)) or
+        latest[0x3e3][1][9] != 1):
+      self.abort('driver_override_or_stale_ev4')
+      return
+    elapsed = now - pending['start']
+    left = pending['direction'] == 'left'
+    other = 0x35b if left else 0x35a
+    if latest[other][1][5] != 0x30:
+      self.abort('opposite_lamp_active')
+      return
+    transitions = ((0., .450, .900, 1.350, 1.799, 2.250, 2.700) if left
+                   else (0., .448, .898, 1.349, 1.800, 2.248, 2.698))
+    finished = elapsed >= transitions[-1]
+    if finished:
+      fields = (1, 0x24, 0, 0)
+    else:
+      on = (bisect_right(transitions, elapsed) - 1) % 2 == 0
+      lamp = (0x24 if left else 0x90) if on else (0x22 if left else 0x88)
+      lever = (0x45 if left else 0x11) if elapsed < (.199647 if left else .208046) else 1
+      fields = (lever, 0x25 if lever == 0x11 else 0x24, lamp, 2)
+    oem_stamp, original = latest[0x3e3]
+    firmware_sync = getattr(self.bus, 'version', None) == b'carrot-weact-ev4-tx-sync-1'
+    correction = not firmware_sync and fields[2] in (0x24, 0x90) and oem_stamp != pending['last_oem']
+    if now < pending['next_send'] and not correction and fields == pending['fields']:
+      return
+    if not correction and abs(now - (oem_stamp + .2)) < .006:
+      return
+    if fields != pending['fields']:
+      pending['counter'] = (pending['counter'] + 1) & 0xff
+    data = bytearray(original)
+    data[2] = pending['counter']
+    data[9:13] = bytes(fields)
+    data[:2] = (binascii.crc_hqx(data[2:] + b'\xe3\x03', 0) ^ 0x041d).to_bytes(2, 'little')
+    self.bus.send(bytes(data))
+    self.status['sent'] += 1
+    pending.update(fields=fields, last_oem=oem_stamp, next_send=now+.04)
+    if finished:
+      self.bus.mode(False)
+      self.pending = None
+      self.status.update(state='waiting', accepted_id=pending['id'])
+
   def tick(self):
     now = self.clock()
     if now >= self.guard_deadline:
@@ -245,6 +304,12 @@ class Controller:
       self.abort('driver_override')
       return
     p = self.pending
+    if p is not None and getattr(self.bus, 'ev4_tx', False):
+      self.tick_ev4(now, p)
+      self.status['ready'] = self.pending is None and self.bus.neutral(self.clock()) is not None
+      if self.status['ready']:
+        self.status['state'] = 'ready'
+      return
     if p is not None:
       offset, data = p['schedule'][p['index']]
       if now >= p['start']+offset:
@@ -284,6 +349,7 @@ def main(fd, token):
     next_status = next_config = next_scan = 0.
     generation, error = '', None
     failed, can_seen = {}, 0.
+    ev4_previous = {}
     while True:
       now = time.monotonic()
       if bus is None and now >= next_scan:
@@ -296,9 +362,11 @@ def main(fd, token):
               bus = SerialBus(config['interface'])
             else:
               bus = Bus(config['interface'])
-            controller = Controller(bus, token, CONFIG.parent/'blinker-counter.json')
+            if not getattr(bus, 'receive_only', False):
+              controller = Controller(bus, token, CONFIG.parent/'blinker-counter.json')
             generation, error = secrets.token_hex(8), None
             can_seen = now
+            ev4_previous = {}
           except (OSError, ValueError, subprocess.SubprocessError) as exc:
             error = str(exc)[:200]
             failed[config['interface']] = now+5
@@ -324,12 +392,33 @@ def main(fd, token):
       if bus is not None:
         try:
           bus.receive()
-          controller.tick()
+          if controller is not None:
+            previous_state = controller.status['state']
+            controller.tick()
+            state = controller.status['state']
+            if getattr(bus, 'ev4_tx', False) and state != previous_state:
+              print(f"WeAct EV4 request state={state} sent={controller.status['sent']}",
+                    file=sys.stderr, flush=True)
           now = time.monotonic()
           if all(k in bus.latest and 0 <= now-bus.latest[k][0] < .4 for k in (0x3c1, 0x413)):
             original = bus.latest[0x3c1][1]
             if len(original) == 8 and crc(original[1:]) == original[0]:
               can_seen = now
+          if getattr(bus, 'ev4', False) and 0x3e3 in bus.latest:
+            can_seen, data = bus.latest[0x3e3]
+            current = (data[9], data[11])
+            if current != ev4_previous.get(0x3e3):
+              print(f"WeAct EV4 CRC-valid 0x3E3: lever=0x{current[0]:02X}, lamp=0x{current[1]:02X}",
+                    file=sys.stderr, flush=True)
+              ev4_previous[0x3e3] = current
+            for address in (0x35a, 0x35b):
+              if address in bus.latest:
+                stamp, lamp_data = bus.latest[address]
+                value = lamp_data[5]
+                if now-stamp < .6 and value != ev4_previous.get(address):
+                  print(f"WeAct EV4 CRC-valid 0x{address:03X}: lamp_byte=0x{value:02X}",
+                        file=sys.stderr, flush=True)
+                  ev4_previous[address] = value
           if now-can_seen >= 2:
             raise ValueError('No fresh matching B1 CAN data; probing another adapter')
           if now >= next_config:
@@ -351,6 +440,14 @@ def main(fd, token):
           available = len(original) == 8 and crc(original[1:]) == original[0]
         status.update(available=available, idle=bool(bus and bus.neutral(now) is not None), generation=generation,
                       adapter=('CANable 2.0' if config and config['interface'].startswith('/dev/') else 'PEAK PCAN-USB'))
+        if getattr(bus, 'ev4', False):
+          stamp, data = bus.latest.get(0x3e3, (0., None))
+          fresh = data is not None and 0 <= now-stamp < .6
+          status.update(adapter='WeAct EV4', ev4_can_fresh=fresh, available=fresh and bus.ev4_tx)
+          if bus.receive_only:
+            status['state'] = 'receive_only'
+          if fresh:
+            status.update(ev4_lever=data[9], ev4_lamp=data[11])
         if error:
           status['error'] = error
         try:
