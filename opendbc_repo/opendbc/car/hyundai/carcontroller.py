@@ -11,7 +11,7 @@ from opendbc.car.hyundai.stopping import CanfdStopping
 from opendbc.car.hyundai.steering_handover import SteeringHandover
 from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CAN_GEARS, HyundaiExtFlags
+from opendbc.car.hyundai.values import HyundaiFlags, Buttons, CarControllerParams, CAR, CAN_GEARS, HyundaiExtFlags, steering_angle_max
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.hyundai.values import get_pedal_interceptor_params
@@ -337,7 +337,7 @@ class CarController(CarControllerBase):
       CC.latActive,
       self.CP.wheelbase,
       self.CP.steerRatio,
-      self.params.ANGLE_LIMITS.STEER_ANGLE_MAX,
+      steering_angle_max(self.CP.carFingerprint, CS.out.vEgoRaw),
       CS.modelV2,
     )
 
