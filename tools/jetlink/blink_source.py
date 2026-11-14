@@ -53,11 +53,15 @@ def turn_heading(sm, now):
                                   pose.orientationNED.valid and finite(pose.orientationNED.z)) else None
 
 
+BLINKER_ACTIONS = {'blinkerLeft': 'left', 'blinkerRight': 'right'}
+LANE_ACTIONS = {'laneLeft': 'left', 'laneRight': 'right'}
+
+
 class Events:
   def __init__(self, started):
     self.started = started
 
-  def read(self, journal, settings, status, learning, cancelled, now):
+  def read(self, journal, settings, status, learning, cancelled, now, actions=BLINKER_ACTIONS):
     if not fresh(status.get('time'), now):
       return []
     result = []
@@ -67,11 +71,11 @@ class Events:
       mac, action = event.get('address'), event.get('action')
       device = settings.get('devices', {}).get(mac, {})
       if (device.get('enabled') is not True or mac not in status.get('grabbed', []) or
-          action not in ('blinkerLeft', 'blinkerRight') or action not in device.get('mapping', {}).values() or
+          action not in actions or action not in device.get('mapping', {}).values() or
           event.get('repeat') or event['time'] <= cancelled.get(mac, 0) or
           (learning.get('address') == mac and learning.get('until', 0) > now)):
         continue
-      result.append({'id': event['id'], 'time': event['time'], 'direction': 'left' if action=='blinkerLeft' else 'right', 'device':mac})
+      result.append({'id': event['id'], 'time': event['time'], 'direction': actions[action], 'device':mac})
     return result[-4:]
 
 
@@ -154,6 +158,13 @@ def main(fd, spas=False, ble=False):
                 action in device.get('mapping', {}).values() and policy.hold['time'] > cancelled.get(mac, 0) and
                 not (learning.get('address') == mac and learning.get('until', 0) > now))
     cs = sm['carState']
+    # EV4 Jetlink needs an explicit physical request for the BLE lane command.
+    # Leave the lane journal intact for DesireHelper and keep its driving gates.
+    if (fingerprint == 'KIA_EV4' and not spas and not ble and ok and
+        str(cs.gearShifter) == 'drive' and sm['carControl'].latActive and
+        not (cs.leftBlinker or cs.rightBlinker)):
+      commands += events.read(read_json(RUNTIME/'lane.json', {}), settings, status,
+                              learning, cancelled, now, actions=LANE_ACTIONS)
     mode = params.get_int('AutoBlinkerControl')
     mode = mode if mode in (0, 1, 2) else 0
     # Physical lever and explicit Bluetooth taps/holds keep their normal behavior.

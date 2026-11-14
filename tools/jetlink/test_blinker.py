@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import blink_protocol as protocol
 from blink_can import Controller, frames, crc
 import blink_can
-from blink_source import Events, vehicle_ready
+from blink_source import Events, LANE_ACTIONS, vehicle_ready
 
 
 class Bus:
@@ -310,3 +310,15 @@ def test_source_uses_time_after_receiving_vehicle_messages(monkeypatch, ble, fin
   assert len(sent) == 1 and sent[0]['ok'] is True
   assert sent[0]['stamp'] == clock[0]
   assert sent[0]['b1_hold'] == ble
+
+
+def test_ev4_lane_journal_uses_mapped_fresh_commands():
+  reader = Events(10.)
+  event = {'id': 'lane', 'address': 'A', 'time': 11., 'action': 'laneRight'}
+  settings = {'devices': {'A': {'enabled': True, 'mapping': {'right': 'laneRight'}}}}
+  status = {'time': 11., 'grabbed': ['A']}
+  journal = {'events': [event, {**event, 'id': 'repeat', 'repeat': True},
+                        {**event, 'id': 'wrong', 'action': 'laneLeft'}]}
+  assert reader.read(journal, settings, status, {}, {}, 11.1) == []
+  result = reader.read(journal, settings, status, {}, {}, 11.1, actions=LANE_ACTIONS)
+  assert [(item['id'], item['direction']) for item in result] == [('lane', 'right')]
