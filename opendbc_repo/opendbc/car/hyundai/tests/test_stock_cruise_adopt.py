@@ -42,3 +42,12 @@ def test_window_closes_after_startup():
   cs.stock_adopt_frames = STOCK_ADOPT_FRAMES
   cs._update_stock_adopt(True, 80 * CV.KPH_TO_MS)
   assert not cs.stock_adopt_pending and cs.stock_adopt_kph == 0
+
+
+def test_cancel_or_main_ends_the_hand_over():
+  # car CANCEL / MAIN, or an openpilot cancel / off request (remote, Carrot): stop waiting, never take the cruise over
+  cs = state()
+  cs._update_stock_adopt(True, 80 * CV.KPH_TO_MS, off_requested=True)
+  assert not cs.stock_adopt_pending and cs.stock_adopt_kph == 0 and cs.manual_main_off_latched
+  cs._update_stock_adopt(True, 80 * CV.KPH_TO_MS)  # the camera still reports cruising: no re-arm
+  assert not cs.stock_adopt_pending and cs.stock_adopt_kph == 0

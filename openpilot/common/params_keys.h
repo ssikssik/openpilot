@@ -351,8 +351,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"CanfdBvmAltTime", {PERSISTENT, INT, "10"}},
     {"PalisadeBlinkerTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"PaddleSignalPriority", {PERSISTENT, INT, "1"}},
-    {"StockCruiseAdopt", {PERSISTENT, INT, "1"}},
-    {"CameraSetSpeedSync", {PERSISTENT, INT, "1"}},
     {"FingerPrints", {PERSISTENT | CLEAR_ON_MANAGER_START, STRING}},
     {"IsLdwsCar", {PERSISTENT, INT, "0"}},
     {"CanfdHDA2", {PERSISTENT, INT, "0"}},
@@ -381,7 +379,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"TFollowDecelBoost", {PERSISTENT, INT, "0"}},
     {"SpeedTFFactor", {PERSISTENT, INT, "10"}},
     {"AChangeCostStarting", {PERSISTENT, INT, "10"}},
-    {"StopGoAssist", {PERSISTENT, INT, "0"}},
+    {"StopGoLongAssist", {PERSISTENT, INT, "0"}},
     {"TrafficStopDistanceAdjust", {PERSISTENT, INT, "-150"}},
 
     {"HapticFeedbackWhenSpeedCamera", {PERSISTENT, INT, "0"}},

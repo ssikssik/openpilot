@@ -1196,41 +1196,81 @@ def _apply_ccnc_lead(values, radar_state, enabled, model_v2=None, hud_lateral=No
 
 
 class CameraSetSpeedSync:
-  """CameraSetSpeedSync: while engaged the camera's stock SCC is kept cruising in the background (RES pulses below), so
-  when the device drops out the car continues at the camera's own VSetDis. Nudge it toward openpilot's set speed with
-  short +/- presses on the camera bus. If a press overshoots (a car whose short press steps by more than 1), stop
-  for that target instead of toggling."""
-  # shortcut: stock SCC set range assumed 30..180 (km/h or mph units); a target outside is clamped to it
+  """Keep the camera's stock SCC set speed (SCC_CONTROL VSetDis) equal to the driver's cruise set speed.
+
+  Purpose:
+    With openpilot longitudinal on a camera-SCC CAN-FD car, the camera's stock SCC keeps cruising in the background
+    (create_ccnc_messages keeps it active with SET_DECEL pulses) while its output is replaced by ours. When the device
+    drops out (reboot, crash, panda loss) panda stops replacing it and the car continues on the camera's OWN VSetDis,
+    which only follows the driver's physical +/- presses. After openpilot changed the set speed by itself (road limit,
+    navigation, RES+ restore), a drop-out therefore handed the car a different speed. This class presses +/- on the
+    camera bus until the two agree.
+
+  Scope:
+    - Hand-over only: it never changes openpilot's set speed, our SCC_CONTROL output, or how the car is driven while
+      engaged. The presses go to the camera bus only (CAN.CAM).
+    - The target is the driver's cruise set speed (CarState.vCruiseCluster), not hudControl.setSpeed: the latter is
+      the displayed speed, which follows the planned speed at a red light and temporary curve/navigation speeds.
+    - Called only through CameraSync (see its gates); always on for camera-SCC CAN-FD with openpilot longitudinal on
+      the CRUISE_BUTTONS / CRUISE_BUTTONS_ALT path. 0x10B ALT2 cars use create_alt2_adas_button_request, which has
+      no sync.
+
+  Rules (each one prevents a specific, observed or code-proven failure):
+    - target outside MIN..MAX (stock set range) = no press: an unreachable target would otherwise be pressed forever,
+      and clamping would move a camera that already matches (e.g. 25 mph raised to 30).
+    - camera 0 or >= 255 = no valid set speed (255 = MAIN off on the Ioniq 5 PE): no press.
+    - overshoot -> `done` for this target: on cars whose short press steps by 5/10 units, alternating +/- would never
+      settle. A new target clears it.
+    - jump guard: while the car is faster than VSetDis, a stock +/- press SETS VSetDis to the current speed instead of
+      stepping it (Ioniq 5 PE route 00000089 seg20: 81 -> 127). Press + only if that jump cannot pass the target
+      (speed <= target); press - only if no jump can happen (speed <= camera). Otherwise wait. The speed is the
+      cluster speed (integer CLU_SPEED), rounded so the comparison is exact.
+    - one short press per 0.3 s (frame % 30 window), so the camera always sees separate short presses (a long press
+      steps by 10).
+    - `busy` (pressing or waiting on the jump guard) makes the gap sync wait."""
+  # shortcut: stock SCC set range assumed 30..180 (km/h or mph units); a target outside is left alone
   MIN, MAX = 30, 180
 
   def __init__(self):
     self.target = None
     self.direction = 0
     self.done = False
+    self.busy = False  # still working toward the target (pressing or waiting on the jump guard): gap sync waits
 
-  def button(self, target_speed, camera_speed, frame):
-    target = int(round(min(max(target_speed, self.MIN), self.MAX)))
+  def button(self, target_speed, camera_speed, frame, v_ego=0.):
+    """target_speed, camera_speed and v_ego in the cluster unit (km/h or mph). Returns 1 (+), 2 (-) or 0 (no press)."""
+    target = int(round(target_speed))
     if target != self.target:
       self.target, self.direction, self.done = target, 0, False
     camera = int(camera_speed)
     if camera == target:
-      self.direction = 0
-    if self.done or camera <= 0 or camera == target:
+      self.direction = 0  # reached: a later mismatch (driver press) is a new approach, not an overshoot
+    self.busy = (not self.done and self.MIN <= target <= self.MAX and 0 < camera < 255 and camera != target)
+    if not self.busy:
       return 0
     direction = 1 if target > camera else -1
     if self.direction and direction != self.direction:
-      self.done = True  # overshot: this car's short press is not a single unit
+      self.done, self.busy = True, False  # overshot: this car's short press is not a single unit; stop, do not toggle
       return 0
+    if round(v_ego) > (target if direction > 0 else camera):
+      return 0  # jump guard (class docstring)
     self.direction = direction
-    if not 10 < frame % 30 <= 16:  # one short press every 0.3 s (same cadence as the RES pulse)
+    if not 10 < frame % 30 <= 16:  # one short press every 0.3 s
       return 0
     return 1 if direction > 0 else 2  # Buttons.RES_ACCEL (+) / Buttons.SET_DECEL (-)
 
 
 class CameraGapSync:
-  """The camera's stock SCC keeps its own gap (SCC_CONTROL DISTANCE_SETTING). Driver gap presses reach both, yet the two
-  drifted one step apart (11-08/09 logs: camera = openpilot bars - 1, openpilot 1 <-> camera 4), so a device drop-out
-  handed stock SCC another gap. Press GAP on the camera bus until it equals openpilot's bars (the gap cycles 1..4)."""
+  """Keep the camera's stock SCC gap (SCC_CONTROL DISTANCE_SETTING) equal to openpilot's leadDistanceBars.
+
+  Purpose: the same drop-out hand-over as CameraSetSpeedSync. Driver GAP presses reach both, yet the two drifted one
+  step apart on the Ioniq 5 PE (11-08/09 logs: camera = bars - 1, openpilot 1 <-> camera 4), so a drop-out handed stock
+  SCC another gap. The stock gap cycles 1 -> 2 -> 3 -> 4 -> 1 per press, so GAP is pressed until it matches.
+
+  Rules: only 1..4 on both sides are valid; one press per second (frame % 100 window) so the camera's new gap is read
+  back before the next press; at most MAX_PRESSES (two full cycles) per target, after which a camera that does not
+  follow is left alone instead of getting a press every second for the whole drive. A new target clears the count.
+  Runs only when the set speed sync is not busy (see CameraSync)."""
   MAX_PRESSES = 8  # two full cycles; beyond that the camera is not following, so stop for this target
 
   def __init__(self):
@@ -1250,6 +1290,61 @@ class CameraGapSync:
       self.window = frame // 100
       self.presses += 1
     return 3  # Buttons.GAP_DIST
+
+
+# The camera gets the driver's own +/-/GAP press first; openpilot's set speed / bars follow up to ~60 ms later, so a sync
+# press in between is one extra step. A long GAP press (driving mode) or CruiseGapLevels 2/3 change openpilot's bars
+# without the camera following one-to-one. Syncing resumes only after 1 s without any driver button press.
+SYNC_DRIVER_HOLD_FRAMES = 100
+# A different sync button (GAP after +/-, or +/- after GAP) starts only 0.3 s after the last sync press. The camera reads
+# a press on release (its gap changed 83-90 ms after release on the Ioniq 5 PE), so two different buttons back to back
+# without a released frame could merge or drop one.
+SYNC_SWITCH_FRAMES = 30
+
+
+class CameraSync:
+  """Decides the CameraSetSpeedSync / CameraGapSync button for the camera bus each frame (0 = no press).
+
+  Used only from the engaged branch of create_ccnc_messages after the keep-alive branches, i.e. while the camera's stock
+  SCC already cruises. Every gate below only removes presses; none adds one. When a gate is not met the frame carries
+  the driver's own buttons unchanged, exactly as carrot-wip does.
+    - no driver button press in the last SYNC_DRIVER_HOLD_FRAMES (note_driver is called on every button frame).
+    - CS.ACCMode == 1 only (the camera's stock SCC state): 2 = gas override, where a press sets VSetDis to the current
+      speed; 3 = not a plain active state, so it is not touched; 0/4 are handled by the keep-alive branch before.
+    - 0 < VSetDis < 255 (255 = MAIN off / no valid set speed) and a set cruise speed (0 < vCruiseCluster < 255).
+    - moving (vEgo > 3 m/s), like the keep-alive pulses: a stock + press at standstill is a RESUME from hold.
+    - set speed first, gap after: while the set speed sync is busy the gap waits.
+    - SYNC_SWITCH_FRAMES between two different sync buttons, so +/- and GAP never follow each other without a release."""
+
+  def __init__(self):
+    self.speed, self.gap = CameraSetSpeedSync(), CameraGapSync()
+    self.driver_frame = -SYNC_DRIVER_HOLD_FRAMES - 1
+    self.last_button, self.last_frame = 0, -SYNC_SWITCH_FRAMES - 1
+
+  def note_driver(self, frame, driver_pressed):
+    if driver_pressed:
+      self.driver_frame = frame
+
+  def button(self, CS, hud_control, frame):
+    scc = CS.scc_control
+    set_kph = CS.out.vCruiseCluster
+    if (scc is None or frame - self.driver_frame <= SYNC_DRIVER_HOLD_FRAMES or CS.ACCMode != 1 or
+        not 0 < scc["VSetDis"] < 255 or not 0 < set_kph < 255 or CS.out.vEgo <= 3.):
+      return 0
+    recent = frame - self.last_frame <= SYNC_SWITCH_FRAMES
+    if not (recent and self.last_button == 3):
+      kph_to_unit = 1. if CS.is_metric else CV.KPH_TO_MPH
+      button = self.speed.button(set_kph * kph_to_unit, scc["VSetDis"], frame, CS.out.vEgoCluster * CV.MS_TO_KPH * kph_to_unit)
+      if button or self.speed.busy:
+        return self._sent(button, frame)
+    if recent and self.last_button in (1, 2):
+      return 0
+    return self._sent(self.gap.button(hud_control.leadDistanceBars, scc["DISTANCE_SETTING"], frame), frame)
+
+  def _sent(self, button, frame):
+    if button:
+      self.last_button, self.last_frame = button, frame
+    return button
 
 
 def create_alt2_adas_button_request(packer, CAN, frame, CC, CS, stopping, *, keep_stock_scc_main=False):
@@ -1296,10 +1391,8 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
   md = CS.modelV2
   if not hasattr(create_ccnc_messages, '_lane_line_check') or frame % 100 == 0:
     create_ccnc_messages._lane_line_check = Params().get_int("LaneLineCheck")
-    create_ccnc_messages._set_speed_sync_on = Params().get_int("CameraSetSpeedSync") > 0
-  if not hasattr(create_ccnc_messages, '_set_speed_sync'):
-    create_ccnc_messages._set_speed_sync = CameraSetSpeedSync()
-    create_ccnc_messages._gap_sync = CameraGapSync()
+  if not hasattr(create_ccnc_messages, '_camera_sync'):
+    create_ccnc_messages._camera_sync = CameraSync()
   lane_line_check = create_ccnc_messages._lane_line_check
   desire, _ = _get_desire_and_lane_changing(md)
 
@@ -1334,6 +1427,7 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
         driver_pressed = (CS.cruise_buttons_msg["LFA_BTN"] != 0 or CS.cruise_buttons_msg["CRUISE_BUTTONS"] != 0
                           or CS.cruise_buttons_msg.get("ADAPTIVE_CRUISE_MAIN_BTN", 0) != 0
                           or CS.cruise_buttons_msg.get("NORMAL_CRUISE_MAIN_BTN", 0) != 0)
+        create_ccnc_messages._camera_sync.note_driver(frame, driver_pressed)
         if (keep_stock_scc_main and not CC.enabled and not CS.MainMode_ACC and not driver_pressed
             and 10 < frame % 200 <= 16):
           values["ADAPTIVE_CRUISE_MAIN_BTN"] = 1
@@ -1351,14 +1445,8 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           elif CS.scc_control is not None and CS.scc_control["InfoDisplay"] == 4:
             if 10 < frame % 30 <= 16 and not stopping:
               values["CRUISE_BUTTONS"] = 2
-          elif (create_ccnc_messages._set_speed_sync_on and not driver_pressed and CS.scc_control is not None and
-                (sync_button := create_ccnc_messages._set_speed_sync.button(
-                  hud_control.setSpeed * (CV.MS_TO_KPH if CS.is_metric else CV.MS_TO_MPH), CS.scc_control["VSetDis"], frame))):
+          elif sync_button := create_ccnc_messages._camera_sync.button(CS, hud_control, frame):
             values["CRUISE_BUTTONS"] = sync_button
-          elif (create_ccnc_messages._set_speed_sync_on and not driver_pressed and CS.scc_control is not None and
-                (gap_button := create_ccnc_messages._gap_sync.button(
-                  hud_control.leadDistanceBars, CS.scc_control["DISTANCE_SETTING"], frame))):
-            values["CRUISE_BUTTONS"] = gap_button
           else:
             if CS.adrv_0x1ea is not None and CS.adrv_0x1ea["HDA_MODE2"] == 0: # if corner radar is disabled, send main btn
               if 10 < frame % 1000 <= 16 and CS.out.vEgo > 3:
