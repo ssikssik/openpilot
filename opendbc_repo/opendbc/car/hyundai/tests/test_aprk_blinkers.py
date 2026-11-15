@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from opendbc.can import CANPacker
 from opendbc.can.parser import get_raw_value
-from opendbc.car import structs
+from opendbc.car import DT_CTRL, structs
 from opendbc.car.hyundai import carcontroller
 from opendbc.car.hyundai.carcontroller import CarController
 
@@ -45,7 +45,7 @@ class Ecu:
 def make_cc(control=True, test=0, spas=0, ecu=None, mode=1, model=True):
   cc = SimpleNamespace(blinker_control=control, blinker_test=test, blinker_kick_mode=mode, aprk_state=0, aprk_frame=0, aprk_nanos=0, aprk_acked=False,
                          lane_crossing=Crossing(), blinker_side=0, blinker_pulse_end=0, frame=0, yellow_until=[0, 0],
-                         blinker_kick_model=model, lane_change_prev="off", model_pulse=False, blinker_pulse_start=0, model_hold={}, model_flashes=0,
+                         blinker_kick_model=model, lane_change_prev="off", model_pulse=False, blinker_pulse_start=0, model_hold={}, model_flashes=0, cgw_kick=False, cgw_trial=0, cgw_last_tx=-carcontroller.CGW_REARM_FRAMES,
                          CAN=SimpleNamespace(ECAN=0, ACAN=1), packer=CANPacker('hyundai_canfd_generated'), params=SimpleNamespace(STEER_THRESHOLD=250),
                          spas_steer_test=spas, spas_angle=0., aprk_buses=(), ecu=ecu or Ecu())
   cc.kick_pulse = lambda CS: CarController.kick_pulse(cc, CS)
@@ -398,6 +398,115 @@ def test_palisade_counted_flashes_on_cgw1():
   sent = cgw_step(cc, 60, md=RIGHT) + cgw_step(cc, 40, md=fin) + cgw_step(cc, 200, md=OFF)
   lamp = [bool(dat[7] & 0x40) for _, _, dat, _ in sent]  # right lamp bit (cgw_frame)
   assert sum(1 for was, now in zip([False] + lamp, lamp) if now and not was) == 3
+
+
+@pytest.mark.parametrize("flashes", [0, 3, 5, 7])
+def test_driver_crossing_counted_on_classic_only(flashes):
+  # classic: carState reads the stock CGW1, never our lamp -> the driver-crossing pulse may count like a one-touch
+  cc = make_cc()
+  cc.model_flashes, cc.cgw_kick = flashes, True
+  start = cc.frame
+  sent = cgw_step(cc, 800, cross=3)
+  lamp = [bool(dat[2] & 0x08) for _, _, dat, _ in sent]  # left lamp bit (cgw_frame)
+  assert sum(1 for was, now in zip([False] + lamp, lamp) if now and not was) == (flashes or 2)
+  assert cc.blinker_pulse_end - start == (flashes * carcontroller.MODEL_FLASH_FRAMES or carcontroller.BLINKER_PULSE_FRAMES)
+  assert panda_accepts([f for f, *_ in sent])
+  # CAN-FD reads the real lamp back as the driver's blinker: the unowned driver pulse stays 1 s
+  cc = make_cc()
+  cc.model_flashes = flashes
+  step(cc, 5, D, 60, cross=3)
+  assert cc.blinker_pulse_end - cc.blinker_pulse_start == carcontroller.BLINKER_PULSE_FRAMES
+
+
+def panda_accepts(frames, trial_s=5.0):
+  """safety_hyundai.h hyundai_cgw_test_tx timing for the driving kick: a trial runs trial_s from its first frame and
+  rearms only after 1 s without any request. True if panda takes every frame."""
+  trial = last = None
+  for t in (f * DT_CTRL for f in frames):
+    if last is not None and t - last >= 1.0:
+      trial = None
+    last = t
+    if trial is not None and t - trial >= trial_s:
+      return False
+    trial = t if trial is None else trial
+  return True
+
+
+def lamp_edges(sent, byte=2, bit=0x08):
+  lamp = [bool(dat[byte] & bit) for _, _, dat, _ in sent]
+  return sum(1 for was, now in zip([False] + lamp, lamp) if now and not was)
+
+
+def test_classic_back_to_back_kicks_wait_for_panda_to_rearm():
+  # mode 4 (4.9 s) and the 5 s crossing cooldown: the 2nd kick would land < 1 s after the 1st, inside a spent trial
+  cc = make_cc()
+  cc.model_flashes, cc.cgw_kick = 7, True
+  first = cgw_step(cc, 500, cross=3)
+  second = cgw_step(cc, 700, cross=3)
+  assert lamp_edges(first) == 7 and lamp_edges(second) == 7  # paused, then in full
+  assert second[0][0] - first[-1][0] >= int(1.0 / DT_CTRL)  # quiet long enough for panda to rearm
+  assert panda_accepts([f for f, *_ in first + second])
+  # without the host rule every frame of the 2nd pulse is refused
+  assert not panda_accepts([f for f, *_ in first] + [500 + f for f in range(0, 490, carcontroller.CGW_TX_FRAMES)])
+
+
+def runs(sent):
+  """[(first, last)] frames of each TX run (a gap over 2 TX periods splits runs)"""
+  out = []
+  for f, *_ in sent:
+    if out and f - out[-1][1] <= 2 * carcontroller.CGW_TX_FRAMES:
+      out[-1][1] = f
+    else:
+      out.append([f, f])
+  return out
+
+
+def test_classic_kick_inside_a_running_trial_is_never_split():
+  # mode 3: the 2nd change starts 4.3 s into the 1st one's trial; it would not end inside it -> waits, then whole
+  cc = make_cc()
+  cc.model_flashes, cc.cgw_kick = 5, True
+  cgw_step(cc, 20, md=OFF)
+  first = cgw_step(cc, 430, md=RIGHT)
+  assert cgw_step(cc, 1, md=OFF) == []
+  second = cgw_step(cc, 600, md=lc("laneChangeStarting", "left", 1))
+  assert second and len(runs(second)) == 1 and lamp_edges(second) == 5
+  assert panda_accepts([f for f, *_ in first + second])
+  # a short pulse that fits in the rest of the trial rides along at once
+  cc = make_cc()
+  cc.model_flashes, cc.cgw_kick = 3, True
+  a = cgw_step(cc, 50, cross=3)
+  b = cgw_step(cc, 300, cross=4)  # 2.1 s from 0.5 s: ends inside the trial
+  assert b and b[0][0] - a[-1][0] <= carcontroller.CGW_TX_FRAMES and len(runs(b)) == 1 and lamp_edges(b, 7, 0x40) == 3
+
+
+def test_classic_mode0_hold_inside_a_running_trial():
+  # driver kick, then a model hold 1.5 s later: waits for its own trial, stays within 5 s and in one piece
+  cc = make_cc()
+  cc.cgw_kick = True
+  a = cgw_step(cc, 150, cross=3, md=OFF)
+  hold = cgw_step(cc, 900, md=RIGHT)
+  assert len(runs(hold)) == 1 and hold[-1][0] - hold[0][0] < int(5.0 / DT_CTRL)
+  assert panda_accepts([f for f, *_ in a + hold])
+  # the change ends while the hold still waits: nothing is sent late
+  cc = make_cc()
+  cc.cgw_kick = True
+  cgw_step(cc, 100, cross=3, md=OFF)
+  assert cgw_step(cc, 50, md=RIGHT) == [] and cgw_step(cc, 300, md=OFF) == []
+  # ... or the car gets 60 % into the new lane while it waits (Starting goes on): no late flash either
+  cc = make_cc()
+  cc.cgw_kick = True
+  cgw_step(cc, 100, cross=3, md=OFF)
+  waiting = [cgw_step(cc, n, md=lines(*y)) for n, y in ((20, (1.8, 1.8)), (10, (0.5, 3.1)), (10, (3.5, 0.3)))]  # crossing
+  assert waiting == [[], [], []] and cgw_step(cc, 300, md=lines(3.3, 0.5)) == []  # 60 % in before panda rearmed
+
+
+def test_classic_mode0_hold_ends_with_its_panda_trial():
+  cc = make_cc()
+  cc.cgw_kick = True
+  cgw_step(cc, 20, md=OFF)
+  sent = cgw_step(cc, 900, md=RIGHT)  # 9 s of Starting: the hold would run 10 s
+  assert sent[-1][0] - sent[0][0] < int(5.0 / DT_CTRL) and panda_accepts([f for f, *_ in sent])
+  assert cgw_step(cc, 100, md=OFF) == []
 
 
 def test_palisade_model_lane_change_kick_on_cgw1():
