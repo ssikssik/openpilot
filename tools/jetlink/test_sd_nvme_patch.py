@@ -88,7 +88,10 @@ def test_boot_keeps_root_readonly_and_uses_same_disk_data(tmp_path, monkeypatch,
     yield None
   monkeypatch.setattr(storage, 'setup_mount', setup)
   original_path = storage.Path
-  monkeypatch.setattr(storage, 'Path', lambda value: tmp_path / 'efi' if value == '/run/carrot-efi' else original_path(value))
+  hostname = tmp_path / 'hostname'
+  hostname.write_text('carrot-jetson\n')
+  paths = {'/run/carrot-efi': tmp_path / 'efi', '/etc/hostname': hostname}
+  monkeypatch.setattr(storage, 'Path', lambda value: paths.get(value, original_path(value)))
   commands = []
   def run(*args, **kw):
     commands.append(args)
