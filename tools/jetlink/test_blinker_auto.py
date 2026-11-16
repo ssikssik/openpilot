@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from opendbc.car.hyundai.values import HyundaiSafetyFlags
+
 sys.path.insert(0, str(Path(__file__).parent))
 from blink_policy import Policy
 from blink_can import frames, inactive, crc
@@ -284,7 +286,6 @@ def test_audio_cue_schema_roundtrip():
 @pytest.mark.parametrize('stopped_speed', [0., -.003020115/3.6])
 def test_actual_source_loop_starts_from_audio_cue_before_model_turn(monkeypatch, stopped_speed):
   import blink_source as source
-  from opendbc.car.hyundai.values import HyundaiSafetyFlags
   import json
   import types
   from contextlib import nullcontext
@@ -485,12 +486,13 @@ def test_missing_heading_cancels_turn_without_blocking_lane_mode():
   assert a.update(14,2,True,11.,'left','fork left','none','left',heading=None)==('lane','left')
 
 
-@pytest.mark.parametrize('kick', [False, True])
+@pytest.mark.parametrize('kick', [False, pytest.param(True, marks=pytest.mark.skipif(
+  not HyundaiSafetyFlags.CANFD_BLINKER_KICK, reason="This branch uses the Joongyu controller directly for Kick"
+))])
 @pytest.mark.parametrize('initial_ack', [False, True])
 @pytest.mark.parametrize('peer_after', ['driver_override', 'stale', 'error', 'guard_expired'])
 def test_tbt_source_preserves_confirmed_hold_through_receiver_override(monkeypatch, initial_ack, peer_after, kick):
   import blink_source as source
-  from opendbc.car.hyundai.values import HyundaiSafetyFlags
   import json
   import types
   from contextlib import nullcontext

@@ -3,6 +3,8 @@ from types import SimpleNamespace as N
 
 import pytest
 
+from opendbc.car.hyundai.values import HyundaiSafetyFlags
+
 from openpilot.selfdrive.controls.lib.desire_lib.boundary_indicator import BoundaryIndicator
 from openpilot.selfdrive.controls.lib.desire_lib.boundary_lane import MANUAL_INDICATOR_MIN_SPEED
 from blink_observation import allowed as observation_allowed
@@ -217,7 +219,9 @@ def test_lamp_and_synthesized_stalk_feedback_cannot_request_steering(monkeypatch
   assert t.helper.lane_change_state == log.LaneChangeState.laneChangeStarting
 
 
-@pytest.mark.parametrize('transport', ['usb', 'ble', 'kick'])
+@pytest.mark.parametrize('transport', ['usb', 'ble', pytest.param('kick', marks=pytest.mark.skipif(
+  not HyundaiSafetyFlags.CANFD_BLINKER_KICK, reason="This branch uses the Joongyu controller directly for Kick"
+))])
 @pytest.mark.parametrize('atc,state,nav_fresh', [('none', 'off', True), ('atc left', 'preLaneChange', True),
                                                ('fork right', 'preLaneChange', True), ('turn left', 'off', False)])
 @pytest.mark.parametrize('lane_available', [True, False])

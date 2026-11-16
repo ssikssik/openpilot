@@ -287,6 +287,8 @@ These settings describe the car, harness, and device hardware configuration. Do 
 | Vehicle assistance | `MaxAngleFrames`, `SpeedFromPCM` | Steering-angle frames and stock-SCC speed control |
 | Device hardware | `CommaPedalEnabled`, `HardwareC3xLite` | Comma Pedal permission for vehicles without ACC, and C3X Lite hardware configuration |
 
+`CcncLaneTypeDetection` recognizes lane markings for cluster display on HDA1 camera-SCC vehicles at 5, 10 or 20 Hz. `Ioniq9ClusterTest` uses levels 2 and 3 to test dashed lanes on the IONIQ 9.
+
 > [!CAUTION]
 > Incorrect `HyundaiCameraSCC`, `CanfdHDA2`, `EnableRadarTracks`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity`, or `SpeedFromPCM` values can change vehicle identification, SCC, radar, or longitudinal behavior. Confirm the vehicle, model year, HDA generation, harness location, and whether stock ACC is retained.
 
