@@ -141,6 +141,8 @@ jobs:
           python -m pytest -o addopts='' -q \
             openpilot/system/tests/test_build_cache.py \
             openpilot/system/tests/test_rebuild_cleanup.py \
+            openpilot/selfdrive/controls/tests/test_stop_go_assist.py \
+            openpilot/selfdrive/controls/tests/test_lead_close_brake.py \
             opendbc_repo/opendbc/car/hyundai/tests/test_stock_cruise_adopt.py \
             opendbc_repo/opendbc/car/hyundai/tests/test_camera_set_speed_sync.py
       - name: Bosch provider replay regression tests

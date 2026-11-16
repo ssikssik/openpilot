@@ -265,6 +265,10 @@ Deceleration preview operates independently of the response level. During active
 
 `StoppingAccel` is adjustable again: default `-50`, range `-100 to -50`, step `10`. The stored value is multiplied by 0.01, with the same bounds enforced by control. Original stop-entry and braking behavior and vehicle-specific soft hold are restored; changes apply within about one second. See [Stopping and restarting](cruise-gap.md#stop-resume).
 
+<a id="stop-go-assist"></a>
+
+`StopGoLongAssist` defaults to 0 (off). Level 1 adds earlier braking, stop-distance correction, and CAN-FD roll braking after an unconfirmed hold. Level 2 also assists low-speed departure behind a moving lead. Level 3 adds a softer final stop.
+
 `VEgoStopping` has a range of `10–100` and a default of `50`; `10` means `0.10 m/s`. Previously stored values below `10` are automatically raised to `10`, and control enforces the same minimum during driving.
 
 For Hyundai/Kia CANFD openpilot longitudinal control, aReqRaw and aReqValue become zero in the first StopReq frame, so this setting does not change transmitted acceleration while StopReq remains active. Automatic release/retry is removed.
