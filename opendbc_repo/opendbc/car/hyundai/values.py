@@ -91,6 +91,9 @@ class HyundaiSafetyFlags(IntFlag):
   CANFD_SPAS_BLINKERS = 4096
   CANFD_SPAS_DIRECT = 1024  # CanfdBlinkerKickMode 2/3: queue SPAS frames directly, no piggyback
   PALISADE_CGW_TEST = 32768
+  # carrot-wip's Kick harness bit is 32768, which this branch already uses for PALISADE_CGW_TEST, and all 16 safetyParam
+  # bits are taken. Our Kick does not use carrot-wip's KickOutput lease, so its flag is 0 here: never set, never matched.
+  CANFD_BLINKER_KICK = 0
   PEDAL_INTERCEPTOR = 8192
   PEDAL_INTERCEPTOR_RAY = 16384
 
@@ -1046,6 +1049,9 @@ CAN_GEARS = {
 }
 
 CANFD_CAR = CAR.with_flags(HyundaiFlags.CANFD)
+# carrot-wip's Kick models (lamp seen lighting from a driving kick). On this branch Kick is not limited to them; kept for
+# the shared code that names it.
+KICK_CARS = {CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_9, CAR.HYUNDAI_AZERA_7TH_GEN}
 # Steering-wheel buttons are on 0x1CF; a missing 0x1CF at boot is a fault, not the ALT_BUTTONS variant
 CANFD_1CF_BUTTONS_CAR = {CAR.HYUNDAI_IONIQ_5_PE}
 CANFD_RADAR_SCC_CAR = CAR.with_flags(HyundaiFlags.RADAR_SCC)  # TODO: merge with UNSUPPORTED_LONGITUDINAL_CAR
@@ -1112,6 +1118,14 @@ def is_ray_pedal_control(CP) -> bool:
   return (CP.brand == "hyundai" and CP.openpilotLongitudinalControl
           and getattr(CP, "carFingerprint", "") == CAR.KIA_RAY_EV
           and get_pedal_interceptor_params(CP) is not None)
+
+
+def is_hda1_ccnc(CP) -> bool:
+  # HDA1 CCNC: CAN-FD camera SCC without the CANFD_HDA2 flag, which only the CanfdHDA2 setting sets (1 on the HDA2
+  # I5 PE / IONIQ 9 logs, 0 on the HDA1 Tucson / Sonata). These cameras send no lane type/colour (CAM_0x2a4/0x362).
+  flags = int(CP.flags)
+  return (CP.brand == "hyundai" and bool(flags & HyundaiFlags.CANFD) and bool(flags & HyundaiFlags.CAMERA_SCC)
+          and not flags & HyundaiFlags.CANFD_HDA2)
 
 
 if __name__ == "__main__":

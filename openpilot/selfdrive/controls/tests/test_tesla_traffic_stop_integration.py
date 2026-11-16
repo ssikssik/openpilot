@@ -93,7 +93,6 @@ def planner_factory(native, monkeypatch):
     planner = module.LongitudinalPlanner(cp, init_v=speed)
     carrot = carrot_for(mode)
     carrot.soft_hold_active = False
-    carrot.stopGoAssist = 0
     carrot.get_carrot_accel = lambda v: 1.6
     carrot.aChangeCostStarting = 10.
     carrot.start_decision = carrot.prepare_decision = None
@@ -126,6 +125,46 @@ def planner_factory(native, monkeypatch):
       return planner
     return planner, sm, carrot, update
   return create
+
+
+@pytest.mark.parametrize('retired_level', [1, 2, 3])
+@pytest.mark.parametrize('scenario', ['departure', 'stopping', 'following', 'force_decel', 'second_lead'])
+def test_retired_stop_go_levels_preserve_the_original_complete_plan(planner_factory, retired_level, scenario):
+  cases = []
+  speed = {'departure': 0., 'stopping': 1., 'following': 10.}.get(scenario, .5)
+  for mode in (0, retired_level):
+    planner, sm, carrot, update = planner_factory('hyundai', False, speed=speed)
+    # Old saved values or callers carrying the retired field have no effect.
+    carrot.stopGoAssist = mode
+    carrot.xState, carrot.trafficState = NS(name='lead'), NS(name='off')
+    sm['carState'].standstill = speed == 0.
+    radar = log.RadarState.new_message()
+    lead_speed = {'stopping': 0., 'following': 8.}.get(scenario, 1.)
+    radar.leadOne = {'status':True, 'radar':True, 'radarTrackId':1,
+                     'dRel':10. if scenario == 'following' else 3.3,
+                     'vLead':lead_speed, 'vLeadK':lead_speed,
+                     'aLeadK':.4 if scenario == 'departure' else 0., 'aLeadTau':1.5}
+    if scenario == 'second_lead':
+      radar.leadTwo = {'status':True, 'radar':True, 'radarTrackId':2, 'dRel':2.8,
+                       'vLead':0., 'vLeadK':0., 'aLeadTau':1.5}
+    sm['radarState'] = radar.as_reader()
+    sm['controlsState'].forceDecel = scenario == 'force_decel'
+    outputs = []
+    for i in range(20):
+      update(i * .05)
+      assert planner.mpc.solution_status == 0
+      outputs.append({
+        'targets': (planner.output_a_target, planner.output_v_target_now,
+                    planner.output_j_target_now, planner.output_should_stop),
+        'trajectory': np.column_stack((planner.v_desired_trajectory, planner.a_desired_trajectory,
+                                       planner.j_desired_trajectory)),
+        'constraints': planner.mpc.params.copy(),
+        'following': (planner.mpc.t_follow, planner.mpc.a_change_cost),
+      })
+    cases.append(outputs)
+  for original, retired in zip(*cases, strict=True):
+    for field in original:
+      np.testing.assert_array_equal(retired[field], original[field])
 
 
 @pytest.mark.parametrize("brand", ["hyundai", "toyota", "volkswagen", "tesla"])

@@ -552,8 +552,8 @@ def test_hazard_test_sets_0x1ea_bit_104(monkeypatch, hazard, test_field, test_va
   )
   control = SimpleNamespace(latActive=False, enabled=False)
   hud = SimpleNamespace(leadDistance=0, leadRadar=0, leadRelSpeed=0)
-  # CanfdHazardTest only on the Ioniq 5 PE (the only cluster seen to take bit 104); the cluster test sets it on any car
-  for car, want in ((CAR.HYUNDAI_IONIQ_5_PE, expected), (CAR.KIA_EV9, expected if test_field == 129 else 0)):
+  # CanfdHazardTest on every car whose camera sends 0x1ea (Ioniq 5 PE seen; others are the owner's test)
+  for car, want in ((CAR.HYUNDAI_IONIQ_5_PE, expected), (CAR.KIA_EV9, expected)):
     (address, data, bus), = hyundaicanfd.create_ccnc_messages(SimpleNamespace(flags=HyundaiFlags.CAMERA_SCC.value, carFingerprint=car),
                                                               packer, SimpleNamespace(ECAN=0, CAM=2), 0, control, state, hud,
                                                               0, False, False, 0, False, 0, 0)
@@ -720,3 +720,13 @@ def test_dbc_listed_split_matches_the_gates():
   # popups and DBC-named texts go to every CCNC cluster; cluster-test-only values stay gated by NON_DBC_CLUSTER_VALUE_CARS
   assert hyundaicanfd._dbc_listed("ALERTS_3", 18)  # CHECK_SURROUNDINGS
   assert not hyundaicanfd._dbc_listed("ALERTS_5", 9) and not hyundaicanfd._dbc_listed(*hyundaicanfd.TUNNEL_REFUSAL_TEXT)
+
+
+@pytest.mark.parametrize("test, dashed", [(0, False), (1, False), (2, True), (3, True)])
+def test_ioniq9_cluster_test_opens_dashed_lanes_only_on_ioniq9(monkeypatch, test, dashed):
+  # Ioniq9ClusterTest 2/3: the IONIQ 9 gets the dashed codes the confirmed clusters get; other cars never read the key
+  monkeypatch.setattr(hyundaicanfd, "Params", lambda: SimpleNamespace(get_int=lambda key: test))
+  assert hyundaicanfd._dashed_lane_line(2, 10, CAR.HYUNDAI_IONIQ_9) == (8 if dashed else 2)
+  assert hyundaicanfd._dashed_lane_line(2, 10, CAR.KIA_EV9) == 2
+  assert hyundaicanfd._ioniq9_cluster_test(CAR.KIA_EV9) == 0
+  assert bool(hyundaicanfd._ioniq9_cluster_test(CAR.HYUNDAI_IONIQ_9) & 1) == (test in (1, 3))

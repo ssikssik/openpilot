@@ -219,6 +219,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"ClusterLaneTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"ClusterLaneTestValue", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"CanfdHazardTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
+    {"Ioniq9ClusterTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"SteerAngleTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"SpasSteerTest", {CLEAR_ON_MANAGER_START, INT, "0"}},
     {"ClusterLaneTestFrom", {CLEAR_ON_MANAGER_START, INT, "0"}},
@@ -379,7 +380,6 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"TFollowDecelBoost", {PERSISTENT, INT, "0"}},
     {"SpeedTFFactor", {PERSISTENT, INT, "10"}},
     {"AChangeCostStarting", {PERSISTENT, INT, "10"}},
-    {"StopGoLongAssist", {PERSISTENT, INT, "0"}},
     {"TrafficStopDistanceAdjust", {PERSISTENT, INT, "-150"}},
 
     {"HapticFeedbackWhenSpeedCamera", {PERSISTENT, INT, "0"}},
@@ -392,6 +392,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LaneChangeDelay", {PERSISTENT, INT, "0"}},
     {"LaneChangeBsd", {PERSISTENT, INT, "0"}},
     {"LaneLineCheck", {PERSISTENT, INT, "0"}},
+    {"CcncLaneTypeDetection", {PERSISTENT, INT, "0"}},
     {"AutoBlinkerControl", {PERSISTENT, INT, "0"}},
     {"BlinkerLatchedTurn", {PERSISTENT, INT, "0"}},
     {"LaneChangeLeverWait", {PERSISTENT, BOOL, "0"}},

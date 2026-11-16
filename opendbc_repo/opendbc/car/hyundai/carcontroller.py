@@ -57,7 +57,6 @@ STEER_ANGLE_TEST_RATE = 1.0  # deg/tick toward SteerAngleTest
 LARGE_ANGLE_UNWIND_RATE = 1.5  # deg/tick: allow a quicker return from the EPS fault-angle region
 CANFD_JERK_UPPER_MIN = 1.0
 CANFD_JERK_LIMIT_MAX = 5.0
-CANFD_DEPART_JERK_UPPER = 3.0  # StopGoLongAssist departure: no-lead departures already send 2.8-3.3 (02_logs §22)
 # CanfdBlinkerKick: in D at any speed (user 10-27: city lane changes are slow) the parking ECU (APRK, 0x7B1) is silenced
 # around a kick and SPAS2 BLINKER_CONTROL is sent in its place; out of D its default session returns
 APRK_ADDR = 0x7B1
@@ -95,6 +94,8 @@ CGW_REARM_FRAMES = int(1.05 / DT_CTRL)
 # CanfdBlinkerKickModelMode 2/3/4: 3/5/7 flashes like the stock one-touch setting, one stock flash cycle (0.7 s) each
 MODEL_FLASH_FRAMES = 2 * CGW_FLASH_HALF_FRAMES
 MODEL_FLASH_COUNTS = {2: 3, 3: 5, 4: 7}
+# Bluetooth remote blinkerLeft/Right (card reads the 'blinker' channel): one stock one-touch, 3 flashes, in any gear
+REMOTE_FLASHES = 3
 # Every stock lever press starts with one BLINKER + BLINKER_TAP frame before the steady frame (Ioniq 5 3372.9 s:
 # 4280304010000000 tap -> de90304000000000 hold; GV80 82.96 s: 5a10304010000000 tap). The BCM needs that edge -
 # replaying only the steady form (TAP 0) did nothing on either car. GV80's lever is momentary and releases itself.
@@ -116,8 +117,6 @@ def stalk_checksum(body):
     for _ in range(8):
       crc = ((crc << 1) ^ 0x1D) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
   return crc ^ 0x65
-CANFD_DEPART_TIME = 3.0
-CANFD_DEPART_SPEED = 3.0
 CANFD_JERK_ERROR_DELAY = 0.5
 CANFD_JERK_ERROR_FILTER_TIME = 0.4
 CANFD_JERK_ERROR_DEADBAND = 0.25
@@ -292,9 +291,12 @@ class CarController(CarControllerBase):
     self.blinking_signal = False # 1Hz
     self.blinking_frame = int(1.0 / DT_CTRL)
     self.soft_hold_mode = 2
-    self.depart_jerk = False
     self.blinker_control = False
     self.blinker_kick_mode = 1  # CanfdBlinkerKickMode: 0 only after an ack, 1 panda piggyback, 2 direct 25 Hz, 3 direct 100 Hz
+    # set by card's KickOutput only on the CANFD_BLINKER_KICK harness (carrot-wip's KICK_CARS); our Kick does not gate on it
+    self.kick_output_ready = False
+    self.remote_blinker = 0  # card: 3 left / 4 right from a Bluetooth remote blinker press, taken by kick_pulse
+    self.remote_pulse = False  # the running pulse is a remote press: any gear, no CanfdBlinkerKick needed
     self.blinker_kick_model = False  # CanfdBlinkerKickModelMode != 1: also kick on a model lane change start (kick_pulse)
     self.model_flashes = 0  # CanfdBlinkerKickModelMode 2/3/4 -> 3/5/7 flashes; 0 = hold through the change
     self.blinker_test = 0  # CanfdBlinkerMenuTest: 1 left, 2 right (menu test, any speed/gear)
@@ -319,7 +321,6 @@ class CarController(CarControllerBase):
     self.cgw_kick = bool(CP.safetyConfigs) and bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.PALISADE_CGW_TEST)
     self.cgw_trial, self.cgw_last_tx = 0, -CGW_REARM_FRAMES  # frames: our panda CGW1 trial start, last CGW1 request
     self.yellow_until = [0, 0]  # left, right
-    self.standstill_frame = -1e6
 
     self.activateCruise = 0
     self.button_wait = 12
@@ -431,7 +432,11 @@ class CarController(CarControllerBase):
     - Modes 2/3/4 also count the driver-crossing pulse on classic CAN (cgw_kick) only: there carState reads the stock CGW1,
       which never shows our forged lamp (Palisade, K5 P tests). CAN-FD reads the real lamp back as the driver's blinker, so a
       longer unowned pulse there could start a second change: it stays BLINKER_PULSE_FRAMES."""
-    drive = CS.out.gearShifter == structs.CarState.GearShifter.drive
+    # carrot-wip 00d9cae3 gates, kept without its KickOutput lease: no Kick during a cruise CANCEL latch, while the driver
+    # works the lever, or with a trailer
+    drive = (CS.out.gearShifter == structs.CarState.GearShifter.drive and
+             not getattr(CS.out, 'cruiseCancelState', False) and not getattr(CS.out, 'blinkerLever', False) and
+             not getattr(CS.out, 'trailerConnected', False))
     lamp = CS.out.leftBlinker or CS.out.rightBlinker
     # lane changes are banned in a tunnel announced as no-lane-change, and for 20 s after a roundabout sign (carstate)
     tunnel = getattr(CS.out, "naviTunnel", False) or getattr(CS.out, "naviRoundabout", False)
@@ -467,10 +472,20 @@ class CarController(CarControllerBase):
             self.frame - self.blinker_pulse_start < MODEL_HOLD_MAX_FRAMES and
             hyundaicanfd._blink_hold_change(md, self.blinker_side, self.model_hold)):
         self.blinker_pulse_end = max(self.blinker_pulse_end, self.frame + MODEL_HOLD_GAP_FRAMES)
+    # a Bluetooth remote blinker press is the driver's own request, like a lever tap: any gear (P included), no Kick key
+    remote, self.remote_blinker = self.remote_blinker, 0
+    if remote:
+      side = remote
     if side:
       length = self.model_flashes * MODEL_FLASH_FRAMES if self.model_flashes and (model or self.cgw_kick) else BLINKER_PULSE_FRAMES
+      if remote:
+        length = REMOTE_FLASHES * MODEL_FLASH_FRAMES
       self.blinker_side, self.blinker_pulse_end, self.model_pulse = side, self.frame + length, model
-      self.blinker_pulse_start, self.model_hold = self.frame, {}
+      self.blinker_pulse_start, self.model_hold, self.remote_pulse = self.frame, {}, bool(remote)
+    if not drive and not self.remote_pulse:
+      self.blinker_pulse_end, self.model_pulse = min(self.blinker_pulse_end, self.frame), False
+    if self.frame >= self.blinker_pulse_end:
+      self.remote_pulse = False
     return self.frame < self.blinker_pulse_end
 
   def restart_pulse(self):
@@ -485,7 +500,7 @@ class CarController(CarControllerBase):
     No yellow-line / tunnel guard here: classic carstate has no lane colour or navi events."""
     pulse = self.kick_pulse(CS)
     raw = getattr(CS, "cgw_test_raw", b"")
-    if not pulse or CS.out.gearShifter != structs.CarState.GearShifter.drive or len(raw) != 8:
+    if not pulse or (CS.out.gearShifter != structs.CarState.GearShifter.drive and not self.remote_pulse) or len(raw) != 8:
       return []
     if raw[4] & 0x06 or raw[5] & 0x06:  # hazard or the driver's own lever: theirs, not ours
       self.blinker_pulse_end = 0
@@ -517,7 +532,13 @@ class CarController(CarControllerBase):
     # stream with its own counter runs on bus 1 (10-30)
     spas = (self.spas_steer_test != 0 and CS.out.gearShifter == structs.CarState.GearShifter.park and
             CS.out.standstill and not CS.out.steeringPressed)
-    want = self.blinker_test in (1, 2) or (self.blinker_control and drive and pulse) or spas
+    # carrot-wip 00d9cae3: never against the other side's lamp; a Kick that may not run cuts its pulse
+    opposite = CS.out.rightBlinker if self.blinker_side == 3 else CS.out.leftBlinker
+    kick = self.blinker_control and drive and pulse and not opposite
+    remote = self.remote_pulse and pulse
+    if not (kick or remote):
+      self.blinker_pulse_end, self.model_pulse = min(self.blinker_pulse_end, self.frame), False
+    want = self.blinker_test in (1, 2) or kick or remote or spas
     now, stock, ack = getattr(CS, "can_nanos", 0), getattr(CS, "aprk_stock_nanos", 0), getattr(CS, "aprk_ack_nanos", 0)
 
     def give_back():
@@ -623,9 +644,6 @@ class CarController(CarControllerBase):
         self.steerDeltaDownLC = self.steerDeltaDown
 
       self.soft_hold_mode = 1 if params.get_int("AutoCruiseControl") > 1 else 2
-      self.depart_jerk = params.get_int("StopGoLongAssist") >= 2
-      if self.canfd_stopping is not None:
-        self.canfd_stopping.unheld_brake = params.get_int("StopGoLongAssist") >= 1  # stop guard level (stopping.py)
       self.blinker_control = params.get_bool("CanfdBlinkerKick")
       self.blinker_kick_mode = params.get_int("CanfdBlinkerKickMode")
       model_mode = params.get_int("CanfdBlinkerKickModelMode")  # 0 hold, 1 off, 2/3/4: 3/5/7 flashes
@@ -940,7 +958,7 @@ class CarController(CarControllerBase):
                                                            getattr(CS, "spas2", None)))
       # carrot-wip's own SPAS path (CanfdBlinkerControl -> CANFD_SPAS_BLINKERS, card.py) owns APRK/SPAS when it is on
       elif not self.CP.flags & HyundaiFlags.CANFD_SPAS_BLINKERS and (self.blinker_control or self.blinker_test or self.aprk_state or
-                                                                    self.spas_steer_test):
+                                                                    self.spas_steer_test or self.remote_blinker or self.remote_pulse):
         can_sends.extend(self.aprk_blinkers(CC, CS))
 
       if self.camera_scc_params in [2, 3]:
@@ -948,11 +966,6 @@ class CarController(CarControllerBase):
       if self.CP.openpilotLongitudinalControl:
         hud_lateral = self.display_lead_lateral.update(getattr(CS, "radarState", None), getattr(CS, "modelV2", None))
         self.hyundai_jerk.make_jerk(self.CP, CS, accel, actuators, hud_control)
-        if CS.out.standstill:
-          self.standstill_frame = self.frame
-        if (self.depart_jerk and accel > 0.0 and CS.out.vEgo < CANFD_DEPART_SPEED
-            and (self.frame - self.standstill_frame) * DT_CTRL < CANFD_DEPART_TIME):
-          self.hyundai_jerk.jerk_u = max(self.hyundai_jerk.jerk_u, CANFD_DEPART_JERK_UPPER)
         self.hyundai_jerk.check_carrot_cruise(CC, CS, hud_control, stopping, accel, actuators.aTarget)
 
         if True: #not camera_scc:
@@ -1004,7 +1017,7 @@ class CarController(CarControllerBase):
           self.palisade_blinker_test, now_nanos, CS.cgw_test_raw, CS.cgw_test_timestamps,
           parked, not (CC.enabled or CC.latActive or CC.longActive),
         ))
-        if self.blinker_control:
+        if self.blinker_control or self.remote_blinker or self.remote_pulse:
           can_sends.extend(self.cgw_blinkers(CS))
       if CS.lkas11 is not None:
         if self.lkas11_active:

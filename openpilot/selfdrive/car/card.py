@@ -32,8 +32,11 @@ from openpilot.selfdrive.car.tesla_lane_signals import TeslaLaneSignals
 from openpilot.selfdrive.car.hyundai_spas import SpasSignals
 from openpilot.selfdrive.car.aprk_diag import AprkDiag, RESERVED as APRK_DIAG_RESERVED
 from openpilot.system.hardware import HARDWARE
+from openpilot.selfdrive.car.hyundai_kick import KickOutput
+from openpilot.selfdrive.carrot.bluetooth.model import CommandReader
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate
 from openpilot.selfdrive.controls.lib.desire_lib.tesla_turn import turn_signal_context
+from openpilot.selfdrive.carrot.lane_type import marking as lane_marking
 from openpilot.selfdrive.carrot.xiaoge.xiaoge_vision import (
   XiaogeVisionResult,
   apply_xiaoge_vision_result,
@@ -88,7 +91,7 @@ class Car:
   def __init__(self, CI=None) -> None:
     self.can_sock = messaging.sub_sock('can', timeout=20)
     self.sm = messaging.SubMaster(['pandaStates', 'carControl', 'onroadEvents', 'carrotMan', 'longitudinalPlan',
-                                   'radarState', 'modelV2', 'drivingModelData', 'customReservedRawData0',
+                                   'radarState', 'modelV2', 'drivingModelData', 'customReservedRawData0', 'customReservedRawData2',
                                    'liveParameters', 'livePose', 'selfdriveState', 'lateralPlan', 'carrotNavi'])
     self.pm = messaging.PubMaster(['sendcan', 'carState', 'carParams', 'carOutput', 'customReservedRawData1'])
 
@@ -151,6 +154,10 @@ class Car:
     stock_signal = native_indicator(self.CP)
     self.native_voice_indicator = NativeVoiceIndicator(stock_signal) if stock_signal else None
     self.spas_signals = SpasSignals(self.CP, self.params)
+    self.kick_output = KickOutput(self.CP, self.params)
+    # Bluetooth remote blinkerLeft/Right: Hyundai blinks it natively (carcontroller Kick path, any gear). The Jetson
+    # USB2CAN path (tools/jetlink/blink_source.py) reads the same journal on its own; readers do not consume events.
+    self.remote_blinker = CommandReader('blinker') if hasattr(self.CI.CC, 'remote_blinker') else None
     self.spas_signal_status = None
     self.spas_signal_log_at = 0.
     self.aprk_diag = AprkDiag(self.CP, self.params, HARDWARE.get_device_type(), cloudlog.event)
@@ -208,6 +215,7 @@ class Car:
     self.card_diag_can_timeouts = 0
     self.can_parser_result = ""
     self.xiaoge_vision_result: XiaogeVisionResult | None = None
+    self.lane_marking = None  # latest display-only lane marking packet (customReservedRawData2), parsed
     self.xiaoge_blindspot_sources = (False, False, False, False)
     self.xiaoge_blindspot_sources_published = None
     self.xiaoge_blindspot_sources_published_ns = 0
@@ -229,6 +237,15 @@ class Car:
     self.tesla_signal_status = self.tesla_signals.status
     self.tesla_signal_log_ns = now
 
+  def remote_blinker_update(self, now):
+    """Bluetooth remote -> Hyundai carcontroller. blinkerLeft/Right: remote_blinker 3 / 4 (one stock one-touch, any gear).
+    hazard: toggles CanfdHazardTest, the Joongyu Lab hazard lights CAN test (0x1ea bit 104 on cars whose camera sends 0x1ea)."""
+    action = self.remote_blinker.read()
+    if action in ('blinkerLeft', 'blinkerRight'):
+      self.CI.CC.remote_blinker = 3 if action == 'blinkerLeft' else 4
+    elif action == 'hazard':
+      self.params.put_int_nonblocking("CanfdHazardTest", 0 if self.params.get_int("CanfdHazardTest") == 1 else 1)
+
   def state_update(self) -> car.CarState:
     """carState update loop, driven by can"""
 
@@ -249,6 +266,7 @@ class Car:
     self.CI.CS.speedcam_engaged = self.sm['carControl'].enabled
     self.CI.CS.speedcam_v_cruise = self.v_cruise_helper.v_cruise_kph
     CS = self.CI.update(can_list)
+    self.kick_output.observe_driver(can_list, CS, time.monotonic())
     self.spas_signals.observe(can_list, time.monotonic())
     if self.aprk_diag.busy:
       self.aprk_diag.observe(can_list, time.clock_gettime(time.CLOCK_BOOTTIME))
@@ -282,6 +300,13 @@ class Car:
         if sm_done_ns - self.xiaoge_vision_error_log_at_ns >= XIAOGE_LANE_ERROR_LOG_INTERVAL_NS:
           cloudlog.warning(f"invalid Xiaoge vision payload: {error}")
           self.xiaoge_vision_error_log_at_ns = sm_done_ns
+    if self.sm.updated['customReservedRawData2']:
+      # Small JSON at <= 20 Hz; only the newest packet is kept. The CCNC sender checks its expiry.
+      try:
+        self.lane_marking = lane_marking.parse(bytes(self.sm['customReservedRawData2']), sm_done_ns)
+      except (UnicodeDecodeError, ValueError, TypeError):
+        self.lane_marking = None
+    self.CI.CS.ccnc_lane_marking = self.lane_marking
     left_oem, right_oem = bool(CS.leftBlindspot), bool(CS.rightBlindspot)
     left_vision, right_vision = xiaoge_blindspot_vision(self.xiaoge_vision_result, sm_done_ns)
     self.xiaoge_blindspot_sources = (left_oem, right_oem, left_vision, right_vision)
@@ -338,7 +363,7 @@ class Car:
     CS.latEnabled = self.v_cruise_helper._lat_enabled
     CS.useLaneLineSpeed = self.v_cruise_helper.useLaneLineSpeedApply
     CS.carrotCruise = 1 if self.v_cruise_helper.carrot_cruise_active else 0
-    CS.paddleStopActive = self.v_cruise_helper._paddle_decel_active or self.v_cruise_helper._paddle_resume_kph > 0
+    CS.paddleStopActive = bool(self.v_cruise_helper._paddle_decel_active or self.v_cruise_helper._paddle_resume_kph > 0)
 
     self.CI.CS.softHoldActive = CS.softHoldActive
     state_done_ns = time.monotonic_ns()
@@ -460,9 +485,21 @@ class Car:
         CC.leftBlinker = CC.rightBlinker = False
         CC.assistantLaneSignalId = ''
         CC = CC.as_reader()
+      if self.kick_output.configured:
+        kick_valid = (CS.canValid and not impact_reboot and model_v2 is not None and
+                      all(self.sm.valid[k] and self.sm.alive[k] and 0 <= time.monotonic()-self.sm.recv_time[k] < .2
+                          for k in ('carControl', 'modelV2')))
+        kick_now = time.monotonic()
+        self.CI.CC.kick_output_ready = self.kick_output.update(kick_valid, kick_now)
+        self.CI.CC.kick_direction = self.kick_output.request(
+          CS, kick_now, self.initialized_prev, self.CI.CC.kick_output_ready)
+        self.CI.CC.kick_request_id = self.kick_output.request_id
+      if self.remote_blinker is not None:
+        self.remote_blinker_update(time.monotonic())
       self.last_actuators_output, can_sends = self.CI.apply(CC, now_nanos, model_v2, radar_state)
       if self.aprk_diag.busy:
         can_sends = [m for m in can_sends if m[0] not in APRK_DIAG_RESERVED]
+      can_sends = self.kick_output.isolate(can_sends, model_v2, time.monotonic())
       if self.tesla_signals.configured:
         fresh = all(self.sm.seen[s] and self.sm.alive[s] and self.sm.valid[s] and
                     0 <= time.monotonic() - self.sm.recv_time[s] <= 0.2 for s in ('carControl', 'modelV2'))
@@ -480,6 +517,8 @@ class Car:
       apply_done_ns = time.monotonic_ns()
       self.pm.send('sendcan', can_list_to_can_capnp(can_sends, msgtype='sendcan', valid=CS.canValid))
       sendcan_done_ns = time.monotonic_ns()
+      if self.kick_output.configured:
+        self.kick_output.feedback(CS, sendcan_done_ns * 1e-9, can_sends)
       if self.native_voice_indicator is not None:
         self.native_voice_indicator.update(sendcan_done_ns * 1e-9, CC, CS, self.CI.CS, can_sends)
 

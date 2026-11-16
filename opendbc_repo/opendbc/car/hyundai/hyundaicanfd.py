@@ -1,6 +1,8 @@
 import copy
 import math
+import time
 import numpy as np
+from opendbc.car.hyundai import ccnc_lane_marking
 from opendbc.car.hyundai.scalar import clip_float
 from opendbc.car import CanBusBase, DT_CTRL, structs
 from opendbc.car.carlog import carlog
@@ -1099,6 +1101,12 @@ NON_DBC_CLUSTER_VALUE_CARS = (CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_AZERA_7TH_GEN,
 DASHED_LANE_CARS = NON_DBC_CLUSTER_VALUE_CARS
 
 
+def _ioniq9_cluster_test(car):
+  # Ioniq9ClusterTest (Joongyu Lab, IONIQ 9 only, cleared at manager start): 1 HDP icon, 2 dashed lane codes, 3 both, so
+  # the owner can look at values this cluster is not confirmed to draw. Read only on an IONIQ 9.
+  return Params().get_int("Ioniq9ClusterTest") if car == CAR.HYUNDAI_IONIQ_9 else 0
+
+
 def _dbc_listed(field, value):
   if not hasattr(_dbc_listed, "values"):
     from opendbc.can import CANDefine  # here: opendbc.can imports back into opendbc.car at module load
@@ -1108,9 +1116,31 @@ def _dbc_listed(field, value):
 
 def _dashed_lane_line(color, lane_line, car=None):
   # 0x161 dashed codes seen on the Ioniq 5 PE cluster: 8 white, 10 green (no orange dashed)
-  if car in DASHED_LANE_CARS and lane_line // 10 > 0 and lane_line % 10 in (0, 5):  # camera: dashed / DLM inner dashed (color 0 = no lane info)
+  if (car in DASHED_LANE_CARS or _ioniq9_cluster_test(car) & 2) and lane_line // 10 > 0 and lane_line % 10 in (0, 5):  # camera: dashed / DLM inner dashed (color 0 = no lane info)
     return {2: 8, 6: 10}.get(color, color)
   return color
+
+
+def _vision_lane_line(color, side, lane_line, CS, md, desire, prob, frame):
+  # HDA1 CCNC cameras send no lane type/colour (no CAM_0x2a4/0x362: Tucson rlogs 11-16, Sonata per Qualified4), so the
+  # camera dashed codes above never fire there. With CcncLaneTypeDetection on, the display-only StripNet recogniser
+  # (lane_type, from Qualified4 ccnc-hda1) paints white/green as dashed 8/10 and yellow as orange 4; SideDisplay holds a
+  # result through gaps, greys a lapsed one (0) and hides a line until a colour is first confirmed (14). A camera colour
+  # (HDA2) wins, so cars that have one are unchanged. Display only: lane-change permission is not read or written.
+  if create_ccnc_messages._lane_type_mode not in (1, 2, 3) or lane_line // 10 > 0:  # lane_type.marking.RATES: 5/10/20 Hz
+    return color
+  marking = getattr(CS, 'ccnc_lane_marking', None)
+  display = create_ccnc_messages.__dict__.setdefault('_lane_display', {}).setdefault(side, ccnc_lane_marking.SideDisplay())
+  changing = bool(CS.out.leftBlinker or CS.out.rightBlinker or desire in (3, 4) or
+                  (md is not None and str(md.meta.laneChangeState) != 'off'))
+  reset_ns = (marking.get(side) or {}).get('displayResetNs') if marking else None
+  _, _, kind, paint, lapsed, unseen = display.update(frame * DT_CTRL, CS.out.vEgo, False, prob, changing,
+                                                     *ccnc_lane_marking.heads(marking, side, time.monotonic_ns()), True, reset_ns)
+  if color not in (2, 6):  # warning / BSD orange stays
+    return color
+  if unseen:
+    return ccnc_lane_marking.HIDDEN
+  return 0 if lapsed else ccnc_lane_marking.code(color, kind, paint)
 
 
 TRAFFIC_BACKGROUND = {1: 5, 2: 8}  # red light -> steady red, green light -> steady green (Ioniq 5 PE, 10-20)
@@ -1391,6 +1421,10 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
   md = CS.modelV2
   if not hasattr(create_ccnc_messages, '_lane_line_check') or frame % 100 == 0:
     create_ccnc_messages._lane_line_check = Params().get_int("LaneLineCheck")
+  if not hasattr(create_ccnc_messages, '_lane_type_mode') or frame % 100 == 0:
+    # HDA1 only (= values.is_hda1_ccnc here: this runs on CAN-FD camera SCC only): an HDA2 camera has its own lane type,
+    # and a setting restored from another car must not hide its lines
+    create_ccnc_messages._lane_type_mode = 0 if CP.flags & HyundaiFlags.CANFD_HDA2 else Params().get_int("CcncLaneTypeDetection")
   if not hasattr(create_ccnc_messages, '_camera_sync'):
     create_ccnc_messages._camera_sync = CameraSync()
   lane_line_check = create_ccnc_messages._lane_line_check
@@ -1601,6 +1635,8 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           else:
             lane_line_warn_left = CS.out.leftLaneLine // 10 == 2
           lane_color = 4 if lane_line_warn_left or CS.out.leftBlindspot else lane_color
+          lane_color = _vision_lane_line(lane_color, 'left', CS.out.leftLaneLine, CS, md, desire,
+                                         lane_probs[1] if lane_probs is not None else None, frame)
           if hud_control.leftLaneDepart:
             values["LANELINE_LEFT"] = 4 if (frame // 50) % 2 == 0 else 1
           else:
@@ -1612,6 +1648,8 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           else:
             lane_line_warn_right = CS.out.rightLaneLine // 10 == 2
           lane_color = 4 if lane_line_warn_right or CS.out.rightBlindspot else lane_color
+          lane_color = _vision_lane_line(lane_color, 'right', CS.out.rightLaneLine, CS, md, desire,
+                                         lane_probs[2] if lane_probs is not None else None, frame)
           if hud_control.rightLaneDepart:
             values["LANELINE_RIGHT"] = 4 if (frame // 50) % 2 == 0 else 1
           else:
@@ -1669,9 +1707,10 @@ def create_ccnc_messages(CP, packer, CAN, frame, CC, CS, hud_control,
           values["AUTOLANECHANGE_MSG"] = 3
 
         msg = _cluster_test_msg(packer, "ADRV_0x1ea", CAN.ECAN, values, rx_counter, test_field, test_value)
-        # bit 104 (no DBC name) was seen to work on the Ioniq 5 PE only (cluster test 129, 10-29)
-        if (HAZARD_REQUEST_BIT not in CLUSTER_TEST_BITS_1EA.get(test_field, ()) and
-            getattr(CP, "carFingerprint", None) == CAR.HYUNDAI_IONIQ_5_PE and _hazard_test()):
+        # bit 104 (no DBC name): hazard lights on the Ioniq 5 PE (cluster test 129, 10-29). Any car whose camera sends
+        # 0x1ea may try it (user 11-16; it was Ioniq 5 PE only from 11-14): a test setting, cleared at manager start.
+        # panda passes our 0x1ea only in HDA2 mode (CanfdHDA2=1); on HDA1 the frame is dropped there, bit or not
+        if HAZARD_REQUEST_BIT not in CLUSTER_TEST_BITS_1EA.get(test_field, ()) and _hazard_test():
           msg = _set_raw_bits(msg, (HAZARD_REQUEST_BIT,), 1)
         ret.append(msg)
 

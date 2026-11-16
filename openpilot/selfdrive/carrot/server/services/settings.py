@@ -189,6 +189,8 @@ def filter_settings_catalog_for_brand(
   brand: str,
   *,
   ray_pedal_control: bool = False,
+  car_fingerprint: str = "",
+  hda1_ccnc: bool = False,
 ) -> tuple[Dict[str, list], List[Dict[str, Any]], List[Dict[str, Any]] | None, set[str]]:
   """Return a catalog view with brand-restricted settings removed.
 
@@ -208,6 +210,15 @@ def filter_settings_catalog_for_brand(
   }
   if normalized_brand == "hyundai" and ray_pedal_control:
     hidden_names.difference_update(("LongTuningKpV", "LongTuningKiV", "LongTuningKf"))
+  # visible_cars (joongyu01): a car-specific test setting shows only on those fingerprints, hidden while unknown
+  fingerprint = str(car_fingerprint or "").strip().upper()
+  hidden_names.update(
+    str(item.get("name")) for items in groups.values() for item in items
+    if item.get("visible_cars") and fingerprint not in item["visible_cars"]
+  )
+  # visible_hda1 (joongyu01): an HDA1 CCNC-only setting shows only on such a car (current_hda1_ccnc), hidden while unknown
+  if not hda1_ccnc:
+    hidden_names.update(str(item.get("name")) for items in groups.values() for item in items if item.get("visible_hda1"))
   if not hidden_names:
     return dict(groups), list(groups_list), categories, set()
 
@@ -260,6 +271,48 @@ def filter_settings_catalog_for_brand(
       category["groups"] = visible_groups
 
   return filtered_groups, filtered_groups_list, filtered_categories, hidden_names
+
+
+def current_car_fingerprint(params=None) -> str:
+  """Fingerprinted car for visible_cars settings: CarParamsPersistent.carFingerprint, else CarName; '' if unknown."""
+  if params is None:
+    from .params import HAS_PARAMS, Params
+    if not HAS_PARAMS or Params is None:
+      return ""
+    params = Params()
+  try:
+    cp_bytes = params.get("CarParamsPersistent")
+    if cp_bytes:
+      from openpilot.cereal import car
+      with car.CarParams.from_bytes(cp_bytes) as cp:
+        fingerprint = _param_text(cp.carFingerprint).upper()
+        if fingerprint:
+          return fingerprint
+  except Exception:
+    pass
+  try:
+    return _param_text(params.get("CarName")).upper()
+  except Exception:
+    return ""
+
+
+def current_hda1_ccnc(params=None) -> bool:
+  """HDA1 CCNC car (values.is_hda1_ccnc) for visible_hda1 settings, from CarParamsPersistent; False if unknown."""
+  if params is None:
+    from .params import HAS_PARAMS, Params
+    if not HAS_PARAMS or Params is None:
+      return False
+    params = Params()
+  try:
+    cp_bytes = params.get("CarParamsPersistent")
+    if not cp_bytes:
+      return False
+    from openpilot.cereal import car
+    from opendbc.car.hyundai.values import is_hda1_ccnc
+    with car.CarParams.from_bytes(cp_bytes) as cp:
+      return is_hda1_ccnc(cp)
+  except Exception:
+    return False
 
 
 def current_max_gap_levels(params=None) -> int:
