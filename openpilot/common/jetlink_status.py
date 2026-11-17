@@ -146,7 +146,7 @@ def diagnostics():
   if result['severity'] not in ('ok', 'warning', 'error', 'unknown'):
     result['severity'] = 'unknown'
   temperature = health.get('temp_c')
-  if isinstance(temperature, (int, float)) and math.isfinite(temperature) and -20 <= temperature <= 150:
+  if type(temperature) in (int, float) and math.isfinite(temperature) and -20 <= temperature <= 150:
     result['temp_c'] = temperature
   entries = health.get('addresses')
   for entry in (entries[:8] if isinstance(entries, list) else []):
@@ -163,13 +163,36 @@ def diagnostics():
   return result
 
 
+def temperature_badge(health):
+  if not health or not health['fresh'] or health['label'] != 'jetSON' or health['temp_c'] is None:
+    return None
+  temperature = health['temp_c']
+  if temperature >= 80:
+    style = 'error'
+  elif temperature >= 65:
+    style = 'warm'
+  elif temperature > 50:
+    style = 'loading'
+  else:
+    style = 'active'
+  return f'{temperature:.1f}°C', style
+
+
 def badge():
+  return onroad_badges()[0]
+
+
+def onroad_badges():
   link = _fresh(LINK_STATUS, handshake=True)
   model = _fresh(MODEL_STATUS)
+  health = diagnostics()
+  return _status_badge(link, model, health), temperature_badge(health)
+
+
+def _status_badge(link, model, health):
   label = host_label(link.get('peer'), link.get('transport', 'usb'))
   if link.get('state') == 'updating' and label == 'jetSON':
     return update_badge(link.get('host_update') or {})
-  health = diagnostics()
   if health:
     label = health['label']
     if health['state'] == 'waiting' and health['severity'] == 'unknown':

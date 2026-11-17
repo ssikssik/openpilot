@@ -325,10 +325,13 @@ class HudRenderer(Widget):
   def _draw_egpu_badge(self, rect: rl.Rectangle) -> None:
     # Keep runtime state visible while the shared USB hub re-enumerates; a
     # transient missing sysfs sample must not hide loading or failure details.
+    right, top = rect.x + rect.width - 24, rect.y + 12
+    temperature = getattr(ui_state, 'jetlink_temperature_badge', None)
     if not (getattr(ui_state, 'jetlink_badge', None) or getattr(ui_state, 'usbgpu_delivery_badge', None) or
             ui_state.usbgpu_present or ui_state.usbgpu_active or
             ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed):
-      self._draw_can_badge(rect, None)  # drawn here: it sits left of the eGPU badge when there is one
+      badge = self._draw_runtime_badge(*temperature, right, top) if temperature else None
+      self._draw_can_badge(rect, badge)
       return
 
     state = usbgpu_badge_state(ui_state.usbgpu_compiled, ui_state.usbgpu_loading,
@@ -342,36 +345,32 @@ class HudRenderer(Widget):
       text, state = ui_state.jetlink_badge
     if getattr(ui_state, 'usbgpu_recovery_badge', None) and not ui_state.usbgpu_active:
       text, state = ui_state.usbgpu_recovery_badge
-    font = gui_app.font(FontWeight.DISPLAY) if not text.isascii() else self._font_semi_bold
-    font_size = 22
-    text_size = measure_text_cached(font, text, font_size)
-    pad_x, pad_y = 10, 5
-    badge_w = text_size.x + pad_x * 2
-    badge = rl.Rectangle(
-      rect.x + rect.width - badge_w - 24,
-      rect.y + 12,
-      badge_w,
-      text_size.y + pad_y * 2,
-    )
+    badge = self._draw_runtime_badge(text, state, right, top)
+    if temperature:
+      badge = self._draw_runtime_badge(*temperature, right, badge.y + badge.height + 8)
+    self._draw_can_badge(rect, badge)
+
+  def _draw_runtime_badge(self, text, state, right, top) -> rl.Rectangle:
     color = {
       "active": rl.Color(0, 255, 0, 230),
       "loading": rl.Color(255, 255, 0, 230),
       "error": rl.Color(255, 0, 0, 230),
       "compile_pending": rl.Color(255, 165, 0, 230),
       "not_compiled": rl.Color(255, 165, 0, 230),
+      "warm": rl.Color(255, 165, 0, 230),
       "ready": rl.Color(255, 255, 255, 210),
     }[state]
+    numeric_or_ascii = text.isascii() or text.endswith('°C')
+    font = self._font_semi_bold if numeric_or_ascii else gui_app.font(FontWeight.DISPLAY)
+    font_size = 22
+    text_size = measure_text_cached(font, text, font_size)
+    pad_x, pad_y = 10, 5
+    width = text_size.x + pad_x * 2
+    badge = rl.Rectangle(right - width, top, width, text_size.y + pad_y * 2)
     rl.draw_rectangle_rounded(badge, 0.35, 8, rl.Color(0, 0, 0, 150))
     rl.draw_rectangle_rounded_lines_ex(badge, 0.35, 8, 2, color)
-    rl.draw_text_ex(
-      font,
-      text,
-      rl.Vector2(badge.x + pad_x, badge.y + pad_y),
-      font_size,
-      0,
-      color,
-    )
-    self._draw_can_badge(rect, badge)
+    rl.draw_text_ex(font, text, rl.Vector2(badge.x + pad_x, badge.y + pad_y), font_size, 0, color)
+    return badge
 
   def _draw_can_badge(self, rect: rl.Rectangle, egpu) -> None:  # egpu: the drawn eGPU badge or None (pyray Rectangle is a factory, no `| None`)
     # Small yellow "CAN" while the Jetson's USB CAN adapter is connected to this comma (ui_state.can_link)
