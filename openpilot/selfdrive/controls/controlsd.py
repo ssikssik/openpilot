@@ -238,22 +238,26 @@ class Controls:
     if (self.shoulder_avoid_margin_m > 0.0 and CC.latActive and not CS.steeringPressed and
         not CS.leftBlindspot and not CS.leftBlinker and not CS.rightBlinker and
         model_v2.meta.laneChangeState == log.LaneChangeState.off and
-        3.0 <= CS.vEgo <= 20.0):
+        5.0 <= CS.vEgo <= 20.0):
       radar_state = self.sm['radarState']
       for lead in (radar_state.leadOne, radar_state.leadTwo):
-        if (lead.status and 3.0 <= lead.dRel <= 30.0 and lead.vLead <= 4.0 and
-            -2.6 <= lead.yRel <= -0.9):
+        if (lead.status and 3.0 <= lead.dRel <= 30.0 and lead.vLead <= 2.0 and
+            -2.6 <= lead.yRel <= -1.1):
           lookahead = max(10.0, CS.vEgo * 1.2)
-          target_avoid_bias = -min(0.015, (2.0 * self.shoulder_avoid_margin_m) / (lookahead * lookahead))
+          target_avoid_bias = -min(0.005, (2.0 * self.shoulder_avoid_margin_m) / (lookahead * lookahead))
           break
     self.shoulder_avoid_bias = smooth_value(target_avoid_bias, self.shoulder_avoid_bias, 0.35)
-    new_desired_curvature += self.shoulder_avoid_bias
 
     self.desired_curvature, curvature_limited = clip_curvature(
       CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll, car_fingerprint=self.CP.carFingerprint,
     )
+    output_desired_curvature, bias_limited = clip_curvature(
+      CS.vEgo, self.desired_curvature, self.desired_curvature + self.shoulder_avoid_bias, lp.roll,
+      car_fingerprint=self.CP.carFingerprint,
+    )
+    curvature_limited = curvature_limited or bias_limited
 
-    actuators.curvature = float(self.desired_curvature)
+    actuators.curvature = float(output_desired_curvature)
 
     # VW MEB 폐루프 곡률 보정 = infiniteCable2 LatControlCurvature.update() 정확 복제.
     # carrot엔 곡률 전용 횡제어기가 없어 모델 목표곡률을 open-loop로 보내면 EPS가 명령만큼 안 꺾여
@@ -287,7 +291,7 @@ class Controls:
     # 주의: MEB는 위 곡률 PID가 실제 조향을 만들고, 아래 LaC(LatControlAngle)와 lac_log는
     # 파이프라인 형식 유지를 위한 더미임 (로그의 angleState는 실제 제어 상태가 아님).
     steer, steeringAngleDeg, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
-                                                       self.steer_limited_by_safety, self.desired_curvature,
+                                                       self.steer_limited_by_safety, output_desired_curvature,
                                                        CC, curvature_limited,
                                                        model_data=self.sm['modelV2'])
     actuators.torque = float(steer)
