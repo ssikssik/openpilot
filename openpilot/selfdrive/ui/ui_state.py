@@ -124,6 +124,7 @@ class UIState:
     self.usbgpu_active: bool = False
     self.usbgpu_startup_failed: bool = False
     self.jetlink_badge = None
+    self.jetlink_temperature_badge = None
     self.can_link = False  # Jetson USB CAN connected to this comma (openpilot.common.can_link)
 
     self.update_params()
@@ -244,8 +245,8 @@ class UIState:
     self.usbgpu_active = self.params.get_bool("UsbGpuActive")
     self.usbgpu_startup_failed = self.params.get_bool("UsbGpuStartupFailed")
     self.usbgpu_recovery_badge = recovery_badge(read_egpu_recovery())
-    from openpilot.common.jetlink_status import badge
-    self.jetlink_badge = badge()
+    from openpilot.common.jetlink_status import onroad_badges
+    self.jetlink_badge, self.jetlink_temperature_badge = onroad_badges()
     from openpilot.common.can_link import connected
     self.can_link = connected()
 

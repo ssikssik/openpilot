@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent))
 from host_health import thermal_health
 from openpilot.common import jetlink_status as status
@@ -50,7 +52,7 @@ def test_expiry_and_error_override_active_model(tmp_path, monkeypatch):
               'addresses': [{'address': '192.168.0.199'}, {'address': '<script>'}, {'address': '127.0.0.1'}]}}}
   link.write_text(json.dumps(record))
   assert status.diagnostics()['addresses'] == ['192.168.0.199']
-  assert status.badge() == ('jetSON HOT', 'loading')
+  assert status.onroad_badges() == (('jetSON HOT', 'loading'), ('87.0°C', 'error'))
   model.write_text(json.dumps({'updated': 20., 'active': False, 'error': 'inference timeout'}))
   assert status.badge() == ('jetSON ERROR', 'error')
   assert status.diagnostics()['reason'] == 'inference timeout'
@@ -59,7 +61,7 @@ def test_expiry_and_error_override_active_model(tmp_path, monkeypatch):
   link.write_text(json.dumps(record))
   assert status.diagnostics()['addresses'] == []
   assert status.diagnostics()['temp_c'] is None
-  assert status.badge() == ('jetSON DATA?', 'loading')
+  assert status.onroad_badges() == (('jetSON DATA?', 'loading'), None)
   record.update(state='retrying', error='engine failed')
   link.write_text(json.dumps(record))
   assert status.badge() == ('jetSON ERROR', 'error')
@@ -75,3 +77,12 @@ def test_hello_telemetry_never_becomes_current_health(tmp_path, monkeypatch):
   assert status.diagnostics()['temp_c'] is None
   monkeypatch.setattr(status.time, 'monotonic', lambda: 15.)
   assert status.badge() == ('jetSON ERROR', 'error')
+
+
+@pytest.mark.parametrize('value, style', [(50, 'active'), (50.1, 'loading'), (64.9, 'loading'),
+                                          (65, 'warm'), (79.9, 'warm'), (80, 'error')])
+def test_temperature_badge_uses_onroad_thresholds(value, style):
+  health = {'fresh': True, 'label': 'jetSON', 'temp_c': value}
+  assert status.temperature_badge(health) == (f'{value:.1f}°C', style)
+  assert status.temperature_badge({**health, 'label': 'MAC'}) is None
+  assert status.temperature_badge({**health, 'fresh': False}) is None
