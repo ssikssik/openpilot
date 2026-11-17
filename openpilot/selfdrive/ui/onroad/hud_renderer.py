@@ -377,9 +377,8 @@ class HudRenderer(Widget):
     return badge
 
   def _draw_can_badge(self, rect: rl.Rectangle, egpu) -> None:  # egpu: the drawn eGPU badge or None (pyray Rectangle is a factory, no `| None`)
-    # Small yellow "CAN" while the Jetson's USB CAN adapter is connected to this comma (ui_state.can_link)
-    if not getattr(ui_state, 'can_link', False):
-      return
+    colors = {'connected': COLORS.GREEN_210, 'problem': COLORS.ORANGE_230}
+    color = colors.get(getattr(ui_state, 'can_link', 'disconnected'), COLORS.RED_210)
     font_size, pad_x, pad_y = 30, 12, 6
     text_size = measure_text_cached(self._font_semi_bold, "CAN", font_size)
     width, height = text_size.x + pad_x * 2, text_size.y + pad_y * 2
@@ -390,8 +389,8 @@ class HudRenderer(Widget):
       center_y = rect.y + 24 + (38 + 16) / 2  # the eGPU badge row
     badge = rl.Rectangle(right - width, center_y - height / 2, width, height)
     rl.draw_rectangle_rounded(badge, 0.35, 8, rl.Color(0, 0, 0, 150))
-    rl.draw_rectangle_rounded_lines_ex(badge, 0.35, 8, 3, COLORS.YELLOW_210)
-    rl.draw_text_ex(self._font_semi_bold, "CAN", rl.Vector2(badge.x + pad_x, badge.y + pad_y), font_size, 0, COLORS.YELLOW_210)
+    rl.draw_rectangle_rounded_lines_ex(badge, 0.35, 8, 3, color)
+    rl.draw_text_ex(self._font_semi_bold, "CAN", rl.Vector2(badge.x + pad_x, badge.y + pad_y), font_size, 0, color)
 
   def _draw_set_speed(self, rect: rl.Rectangle) -> None:
     """Draw the MAX speed indicator box."""
