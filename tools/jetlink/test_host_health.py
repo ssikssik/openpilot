@@ -52,7 +52,7 @@ def test_expiry_and_error_override_active_model(tmp_path, monkeypatch):
               'addresses': [{'address': '192.168.0.199'}, {'address': '<script>'}, {'address': '127.0.0.1'}]}}}
   link.write_text(json.dumps(record))
   assert status.diagnostics()['addresses'] == ['192.168.0.199']
-  assert status.onroad_badges() == (('jetSON HOT', 'loading'), ('87.0°C', (255, 38, 0)))
+  assert status.onroad_badges() == (('jetSON HOT', 'loading'), ('87.0°C', (255, 50, 0)))
   model.write_text(json.dumps({'updated': 20., 'active': False, 'error': 'inference timeout'}))
   assert status.badge() == ('jetSON ERROR', 'error')
   assert status.diagnostics()['reason'] == 'inference timeout'
@@ -80,8 +80,9 @@ def test_hello_telemetry_never_becomes_current_health(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('value, rgb', [(45, (0, 255, 0)), (50, (0, 255, 0)),
-                                        (60, (128, 255, 0)), (70, (255, 255, 0)),
-                                        (80, (255, 128, 0)), (90, (255, 0, 0)), (100, (255, 0, 0))])
+                                        (57.5, (128, 255, 0)), (65, (255, 255, 0)),
+                                        (72.5, (255, 210, 0)), (80, (255, 165, 0)),
+                                        (85, (255, 82, 0)), (90, (255, 0, 0)), (100, (255, 0, 0))])
 def test_temperature_badge_uses_onroad_gradient(value, rgb):
   health = {'fresh': True, 'label': 'jetSON', 'temp_c': value}
   assert status.temperature_badge(health) == (f'{value:.1f}°C', rgb)

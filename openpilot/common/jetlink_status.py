@@ -167,9 +167,10 @@ def temperature_badge(health):
   if not health or not health['fresh'] or health['label'] != 'jetSON' or health['temp_c'] is None:
     return None
   temperature = health['temp_c']
-  # Green to yellow (50–70°C), then yellow to red (70–90°C).
-  red = round(255 * max(0., min(1., (temperature - 50) / 20)))
-  green = round(255 * max(0., min(1., (90 - temperature) / 20)))
+  # Interpolate green (50), yellow (65), orange (80), and red (90).
+  t = max(50., min(90., temperature))
+  red = round(255 * min(1., (t - 50) / 15))
+  green = round(255 - 6 * max(0., t - 65)) if t <= 80 else round(165 * (90 - t) / 10)
   return f'{temperature:.1f}°C', (red, green, 0)
 
 
