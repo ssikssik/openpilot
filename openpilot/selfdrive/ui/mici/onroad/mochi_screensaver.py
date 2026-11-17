@@ -35,12 +35,18 @@ class MochiScreensaver(Widget):
     self._engage_until = 0.0
     self._disengage_until = 0.0
     self._launch_until = 0.0
+    self._wake_until = 0.0
     self._start_time = time.monotonic()
+
+  def wake(self, duration: float = 10.0):
+    self._wake_until = time.monotonic() + duration
 
   def is_active(self, alert_visible: bool) -> bool:
     self._frame += 1
     if self._frame == 1 or self._frame % 30 == 0:
       self._enabled_param = ui_state.params.get_bool("MochiScreensaver")
+    if time.monotonic() < self._wake_until:
+      return False
     return bool(self._enabled_param and ui_state.started and not alert_visible)
 
   def _detect_state(self, now: float) -> str:

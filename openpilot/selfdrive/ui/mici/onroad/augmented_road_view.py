@@ -217,6 +217,9 @@ class AugmentedRoadView(CameraView):
       self._offroad_label.set_text("start the car to\nuse openpilot")
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
+    if self._mochi_screensaver.is_active(False):
+      self._mochi_screensaver.wake(10.0)
+      return
     # Don't trigger click callback if bookmark was triggered
     if not self._bookmark_icon.interacting():
       super()._handle_mouse_release(mouse_pos)
