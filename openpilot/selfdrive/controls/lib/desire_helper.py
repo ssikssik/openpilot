@@ -89,6 +89,8 @@ class DesireHelper:
     self.next_lane_change = False
 
     # auto overtake & return (60+ kph, 15% speed drop for 15s -> left; return right when clear)
+    self.autoOvertakeEnabled = True
+    self.autoOvertakeReturnEnabled = True
     self.auto_overtake_slow_timer = 0.0
     self.auto_overtake_cooldown = 0.0
     self.auto_overtake_in_progress = False
@@ -169,6 +171,9 @@ class DesireHelper:
           now-stamp < 20 and type(direction) is int and direction in (1, 2, 3)):
         self.boundary_indicator.own(now, direction)
         self.indicator_journal_time = stamp
+    if self.frame == 1 or self.frame % 100 == 0:
+      self.autoOvertakeEnabled = self.params.get_bool("AutoOvertakeEnabled")
+      self.autoOvertakeReturnEnabled = self.params.get_bool("AutoOvertakeReturnEnabled")
     if self.frame % 100 == 0:
       self.laneChangeNeedTorque = self.params.get_int("LaneChangeNeedTorque")
       self.laneChangeBsd = self.params.get_int("LaneChangeBsd")
@@ -268,6 +273,14 @@ class DesireHelper:
                             carrotMan, radarState, driver_enabled, stalk_press, remote):
     self.auto_overtake_cooldown = max(0.0, self.auto_overtake_cooldown - DT_MDL)
 
+    if not self.autoOvertakeEnabled:
+      self.auto_overtake_slow_timer = 0.0
+      self.auto_overtake_return_clear_timer = 0.0
+      self.auto_overtake_return_wait_timer = 0.0
+      self.auto_overtake_in_progress = False
+      self.auto_overtake_return_pending = False
+      return
+
     if driver_enabled or stalk_press != BLINKER_NONE or not lateral_active or trailer_maneuver_blocked or \
        not getattr(carstate.cruiseState, "enabled", False):
       self.auto_overtake_slow_timer = 0.0
@@ -287,6 +300,11 @@ class DesireHelper:
       return
 
     if self.auto_overtake_return_pending:
+      if not self.autoOvertakeReturnEnabled:
+        self.auto_overtake_return_pending = False
+        self.auto_overtake_return_wait_timer = 0.0
+        self.auto_overtake_return_clear_timer = 0.0
+        return
       self.auto_overtake_return_wait_timer += DT_MDL
       if self.right.lane_change_available:
         self.auto_overtake_return_clear_timer += DT_MDL

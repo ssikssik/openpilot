@@ -182,7 +182,9 @@
                 "AutoTurnControl",
                 "AutoTurnControlSpeedTurn",
                 "AutoTurnControlTurnEnd",
-                "AutoTurnMapChange"
+                "AutoTurnMapChange",
+                "AutoOvertakeEnabled",
+                "AutoOvertakeReturnEnabled"
               ]
             },
             {
@@ -1762,6 +1764,38 @@
       "min": 0,
       "max": 1,
       "default": 0,
+      "unit": 1
+    },
+    {
+      "group": "조향일반",
+      "name": "AutoOvertakeEnabled",
+      "title": "자동 추월(좌측 차선변경)(1)",
+      "descr": "60km/h 이상 주행 중 앞차로 인해 설정속도 대비 15% 이상 감속이 15초 지속되면 좌측 차선이 비었을 때 자동 추월 (쿨다운 45초)",
+      "egroup": "LATSET",
+      "etitle": "Auto Overtake (Left)(1)",
+      "edescr": "Auto lane change left when slowed >=15% below cruise (>=60kph) for 15s (45s cooldown)",
+      "cgroup": "转向设置",
+      "ctitle": "自动超车(左变道)(1)",
+      "cdescr": "60km/h以上巡航因前车减速15%持续15秒且左侧空闲时自动左变道超车(冷却45秒)",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": 1
+    },
+    {
+      "group": "조향일반",
+      "name": "AutoOvertakeReturnEnabled",
+      "title": "추월 후 하위차선 복귀(1)",
+      "descr": "자동 추월 완료 후 우측 차선이 비어있으면 자동으로 하위차선으로 복귀",
+      "egroup": "LATSET",
+      "etitle": "Auto Return Right After Overtake(1)",
+      "edescr": "Automatically return to the right lane after auto overtake when right lane is clear",
+      "cgroup": "转向设置",
+      "ctitle": "超车后自动回右车道(1)",
+      "cdescr": "自动超车完成后若右侧车道空闲则自动返回右侧车道",
+      "min": 0,
+      "max": 1,
+      "default": 1,
       "unit": 1
     },
     {
