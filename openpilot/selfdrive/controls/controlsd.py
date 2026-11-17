@@ -87,6 +87,8 @@ class Controls:
                                                       pos_limit=MEB_CURVATURE_MAX, neg_limit=-MEB_CURVATURE_MAX)
                               if self.is_vw_meb else None)
     self.atc_turn_speed = self.params.get_int("AutoTurnControlSpeedTurn")
+    self.shoulder_avoid_bias = 0.0
+    self.shoulder_avoid_enabled = True
 
     self.pose_calibrator = PoseCalibrator()
     self.calibrated_pose: Pose | None = None
@@ -228,6 +230,24 @@ class Controls:
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
     else:      
       new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
+
+    if self.sm.frame == 1 or self.sm.frame % 100 == 0:
+      self.shoulder_avoid_enabled = self.params.get_bool("ShoulderAvoidMargin")
+
+    target_avoid_bias = 0.0
+    if (self.shoulder_avoid_enabled and CC.latActive and not CS.steeringPressed and
+        not CS.leftBlindspot and not CS.leftBlinker and not CS.rightBlinker and
+        model_v2.meta.laneChangeState == log.LaneChangeState.off and
+        3.0 <= CS.vEgo <= 20.0):
+      radar_state = self.sm['radarState']
+      for lead in (radar_state.leadOne, radar_state.leadTwo):
+        if (lead.status and 3.0 <= lead.dRel <= 30.0 and lead.vLead <= 4.0 and
+            -2.6 <= lead.yRel <= -0.9):
+          lookahead = max(10.0, CS.vEgo * 1.2)
+          target_avoid_bias = -min(0.008, (2.0 * 0.30) / (lookahead * lookahead))
+          break
+    self.shoulder_avoid_bias = smooth_value(target_avoid_bias, self.shoulder_avoid_bias, 0.35)
+    new_desired_curvature += self.shoulder_avoid_bias
 
     self.desired_curvature, curvature_limited = clip_curvature(
       CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll, car_fingerprint=self.CP.carFingerprint,
