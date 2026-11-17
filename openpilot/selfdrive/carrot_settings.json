@@ -1819,18 +1819,18 @@
     {
       "group": "조향일반",
       "name": "ShoulderAvoidMargin",
-      "title": "갓길 장애물 여유 회피(1)",
-      "descr": "시내 주행 시 우측 갓길 정차 차량을 피할 때 좌측으로 약 30cm 여유 마진을 추가해 아슬아슬한 통과 완화",
+      "title": "갓길 장애물 여유 거리(cm)(30)",
+      "descr": "시내 주행 시 우측 갓길 정차 차량 회피 시 좌측 추가 여유 거리 (0: 끔, cm 단위)",
       "egroup": "LATSET",
-      "etitle": "Shoulder Obstacle Avoid Margin(1)",
-      "edescr": "Add ~30cm leftward margin when passing parked/slow vehicles on the right shoulder",
+      "etitle": "Shoulder Obstacle Avoid Margin cm(30)",
+      "edescr": "Extra leftward margin (cm) when passing parked/slow vehicles on the right shoulder (0: off)",
       "cgroup": "转向设置",
-      "ctitle": "路边车辆安全余量避让(1)",
-      "cdescr": "市区行驶避让右侧路边停放/低速车辆时增加约30cm左侧安全余量",
+      "ctitle": "路边车辆避让余量(cm)(30)",
+      "cdescr": "市区避让右侧路边车辆时增加的左侧安全余量(cm, 0为关闭)",
       "min": 0,
-      "max": 1,
-      "default": 1,
-      "unit": 1
+      "max": 80,
+      "default": 30,
+      "unit": 5
     },
     {
       "group": "버튼설정",

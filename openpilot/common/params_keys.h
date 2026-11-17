@@ -254,7 +254,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"AutoOvertakeEnabled", {PERSISTENT, BOOL, "1"}},
     {"AutoOvertakeReturnEnabled", {PERSISTENT, BOOL, "1"}},
     {"CenterlineReturnGuard", {PERSISTENT, BOOL, "1"}},
-    {"ShoulderAvoidMargin", {PERSISTENT, BOOL, "1"}},
+    {"ShoulderAvoidMargin", {PERSISTENT, INT, "30"}},
 
     {"AutoNaviSpeedCtrlEnd", {PERSISTENT, INT, "7"}},
     {"AutoNaviRearCameraHoldDistance", {PERSISTENT, INT, "100"}},
