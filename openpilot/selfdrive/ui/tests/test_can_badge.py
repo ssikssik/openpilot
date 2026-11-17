@@ -1,4 +1,4 @@
-# Jetson USB CAN status badge wiring and import-time guards for both onroad HUDs
+# Runtime badge wiring and import-time guards for both onroad HUDs
 import ast
 from pathlib import Path
 
@@ -11,14 +11,12 @@ def _hud(path):
   return tree, next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "HudRenderer")
 
 
-def test_both_huds_draw_the_can_badge_from_the_egpu_badge():
+def test_both_huds_keep_temperature_without_can_badge():
   for path in HUD_PATHS:
     _, cls = _hud(path)
     methods = {n.name: n for n in cls.body if isinstance(n, ast.FunctionDef)}
-    calls = [n for n in ast.walk(methods["_draw_egpu_badge"])
-             if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "_draw_can_badge"]
-    assert len(calls) == 2, path  # with and without an eGPU badge
-    assert "can_link" in ast.unparse(methods["_draw_can_badge"])
+    assert "_draw_can_badge" not in methods
+    assert "jetlink_temperature_badge" in ast.unparse(methods["_draw_egpu_badge"])
 
 
 def test_no_pyray_union_annotation_evaluated_at_import():
