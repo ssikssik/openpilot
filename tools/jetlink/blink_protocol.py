@@ -257,11 +257,11 @@ class Sender:
       self.anchor = state['clock']
       self.offset = self.anchor - now
       self.clock_received = now
-    available = (state.get('token') == self.token and state.get('available') is True and
-                 now-self.clock_received < .5)
-    if self.params is not None:  # comma side: the HUD shows a small yellow CAN badge while this stays True
-      from openpilot.common.can_link import publish
-      publish(now, available)
+    current_receiver = state.get('token') == self.token and now-self.clock_received < .5
+    available = current_receiver and state.get('available') is True
+    if self.params is not None:
+      from openpilot.common.can_link import publish, receiver_problem
+      publish(now, available, problem=current_receiver and receiver_problem(state, available))
     if self.params is not None:
       available = available and external_output_allowed(self.params)
     generation = state.get('generation')

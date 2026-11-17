@@ -1,4 +1,4 @@
-# Yellow CAN badge on both onroad HUDs (Jetson USB CAN connected): wiring and an import-time guard
+# Jetson USB CAN status badge wiring and import-time guards for both onroad HUDs
 import ast
 from pathlib import Path
 
