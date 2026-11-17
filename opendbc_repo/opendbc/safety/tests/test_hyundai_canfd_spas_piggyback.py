@@ -127,3 +127,24 @@ def test_hazards_is_a_blinker_command_other_values_stay_refused():
   data[16] = 2 << 5
   data[:2] = checksum(SPAS2, data).to_bytes(2, 'little')
   assert not d.s.safety_tx_hook(libsafety_py.make_CANPacket(SPAS2, 0, bytes(data)))
+
+
+def test_hda1_allows_the_parking_ecu_and_spas_ids():
+  # 11-17: HDA1 (camera SCC + long, no HDA2) takes 0x7B1 and SPAS1/SPAS2 like HDA2; before only the piggyback copy left
+  d = Device(4 | 8)
+  uds = libsafety_py.make_CANPacket(0x7B1, 0, bytes([0x02, 0x10, 0x03, 0, 0, 0, 0, 0]))
+  assert d.s.safety_tx_hook(uds)  # extended session request
+  bad = libsafety_py.make_CANPacket(0x7B1, 0, bytes([0x02, 0x11, 0x01, 0, 0, 0, 0, 0]))
+  assert not d.s.safety_tx_hook(bad)  # ECU reset stays refused
+  d.stock(SPAS2, 1)
+  assert d.tx(SPAS2, 10, "hazards") == (True, True)  # piggyback as before, now also allowed by the list
+  direct = Device(4 | 8 | 1024)
+  assert direct.tx(SPAS2, 10, "left") == (True, False)  # KickMode 2/3: queued directly
+
+
+def test_hda1_without_camera_scc_long_does_not_queue_native_spas():
+  for param in (0, 4, 8, 8 | 1024):
+    d = Device(param)
+    d.stock(SPAS2, 1)
+    assert d.tx(SPAS2, 10, "hazards") == (False, False)
+    assert d.stock(SPAS2, 2) is None
