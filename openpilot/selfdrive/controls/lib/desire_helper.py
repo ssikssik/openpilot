@@ -88,6 +88,14 @@ class DesireHelper:
     self.auto_lane_change_enable = False
     self.next_lane_change = False
 
+    # auto overtake & return (60+ kph, 15% speed drop for 15s -> left; return right when clear)
+    self.auto_overtake_slow_timer = 0.0
+    self.auto_overtake_cooldown = 0.0
+    self.auto_overtake_in_progress = False
+    self.auto_overtake_return_pending = False
+    self.auto_overtake_return_wait_timer = 0.0
+    self.auto_overtake_return_clear_timer = 0.0
+
     # turn-signal lever presses (carState.*BlinkerStalkCount): an explicit request for the next lane change
     self.stalk_counts = None
     self.queued_lane_change = BLINKER_NONE
@@ -255,6 +263,65 @@ class DesireHelper:
     if counts[1] != last[1]:
       return BLINKER_RIGHT
     return BLINKER_NONE
+
+  def _update_auto_overtake(self, carstate, lateral_active, below_lane_change_speed, trailer_maneuver_blocked,
+                            carrotMan, radarState, driver_enabled, stalk_press, remote):
+    self.auto_overtake_cooldown = max(0.0, self.auto_overtake_cooldown - DT_MDL)
+
+    if driver_enabled or stalk_press != BLINKER_NONE or not lateral_active or trailer_maneuver_blocked or \
+       not getattr(carstate.cruiseState, "enabled", False):
+      self.auto_overtake_slow_timer = 0.0
+      self.auto_overtake_return_clear_timer = 0.0
+      self.auto_overtake_return_wait_timer = 0.0
+      self.auto_overtake_in_progress = False
+      self.auto_overtake_return_pending = False
+      return
+
+    if below_lane_change_speed or remote or self.turn_desire_state or \
+       getattr(carrotMan, "atcType", "") not in ("", "none", "none prepare", "straight", "straight prepare"):
+      self.auto_overtake_slow_timer = 0.0
+      self.auto_overtake_return_clear_timer = 0.0
+      return
+
+    if self.lane_change_state != LaneChangeState.off or self.carrot_lane_change_count > 0:
+      return
+
+    if self.auto_overtake_return_pending:
+      self.auto_overtake_return_wait_timer += DT_MDL
+      if self.right.lane_change_available:
+        self.auto_overtake_return_clear_timer += DT_MDL
+      else:
+        self.auto_overtake_return_clear_timer = 0.0
+
+      if self.auto_overtake_return_wait_timer >= 5.0 and self.auto_overtake_return_clear_timer >= 3.0:
+        self.carrot_lane_change_count = int(0.2 / DT_MDL)
+        self.carrot_blinker_state = BLINKER_RIGHT
+        self.auto_overtake_return_pending = False
+        self.auto_overtake_return_wait_timer = 0.0
+        self.auto_overtake_return_clear_timer = 0.0
+        self.auto_overtake_cooldown = 45.0
+      return
+
+    if self.auto_overtake_cooldown > 0.0 or self.auto_overtake_in_progress:
+      return
+
+    v_cruise_kph = float(getattr(carrotMan, "vCruise", 0.0))
+    v_cruise_ms = v_cruise_kph * CV.KPH_TO_MS if v_cruise_kph > 0.0 else float(getattr(carstate.cruiseState, "speed", 0.0))
+    lead_one = getattr(radarState, "leadOne", None)
+    lead_active = bool(lead_one is not None and getattr(lead_one, "status", False))
+
+    if v_cruise_ms >= 60.0 * CV.KPH_TO_MS and lead_active and carstate.vEgo <= v_cruise_ms * 0.85:
+      self.auto_overtake_slow_timer += DT_MDL
+    else:
+      self.auto_overtake_slow_timer = 0.0
+
+    if self.auto_overtake_slow_timer >= 15.0 and self.left.lane_change_available:
+      self.carrot_lane_change_count = int(0.2 / DT_MDL)
+      self.carrot_blinker_state = BLINKER_LEFT
+      self.auto_overtake_slow_timer = 0.0
+      self.auto_overtake_in_progress = True
+      self.auto_overtake_return_pending = False
+      self.auto_overtake_cooldown = 45.0
 
   def _update_atc_blinker(self, carrotMan, driver_blinker_state, remote=None):
     atc_type = carrotMan.atcType
@@ -529,6 +596,8 @@ class DesireHelper:
       assistant_direction = None
     if self.tesla_auto_signals:
       self._update_auto_app_request(carstate, lateral_active, carrotMan, remote, driver_st, stalk_press)
+    self._update_auto_overtake(carstate, lateral_active, below_lane_change_speed, trailer_maneuver_blocked,
+                               carrotMan, radarState, driver_enabled, stalk_press, remote)
     atc_st, atc_enabled = self._update_atc_blinker(carrotMan, driver_st, remote)
 
     desire_enabled = driver_enabled or atc_enabled
@@ -893,6 +962,17 @@ class DesireHelper:
       elif self.lane_change_state == LaneChangeState.laneChangeStarting and atc_lane_change_only:
         self.auto_turn_signal = self.lane_change_direction
         self.auto_turn_signal_lane_change = True
+
+    if self.auto_overtake_in_progress and self.lane_change_state == LaneChangeState.off:
+      if prev_lane_change_state in (LaneChangeState.laneChangeStarting, LaneChangeState.laneChangeFinishing):
+        self.auto_overtake_in_progress = False
+        self.auto_overtake_return_pending = True
+        self.auto_overtake_return_wait_timer = 0.0
+        self.auto_overtake_return_clear_timer = 0.0
+        self.auto_overtake_cooldown = 45.0
+      elif prev_lane_change_state == LaneChangeState.preLaneChange:
+        self.auto_overtake_in_progress = False
+
     return self.desire
 
   def _update_auto_signal(self, carstate, carrot_man, lateral_active, atc_enabled, atc_st, driver_st, previous,

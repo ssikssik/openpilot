@@ -18,9 +18,9 @@ import numpy as np
 
 
 BODY_CLEARANCE_M = 2.5  # combined half widths plus uncertainty; not lane centres
-MAX_CREDIT_S = 0.25
-MAX_CREDIT_M = 4.0
-MIN_RETAINED_RATIO = 0.80
+MAX_CREDIT_S = 0.50
+MAX_CREDIT_M = 8.0
+MIN_RETAINED_RATIO = 0.55
 CHECK_TIMES = np.linspace(0.0, 3.0, 61)
 
 
@@ -91,7 +91,7 @@ class LaneChangeGapPlan:
           return empty
     amount = min(MAX_CREDIT_M, MAX_CREDIT_S * v_ego,
                  (1.0 - max(MIN_RETAINED_RATIO, ratio)) * t_follow * v_ego) * self.confidence
-    return amount * np.clip((horizons - self.clearance_s - 0.35) / 0.5, 0.0, 1.0)
+    return amount * np.clip((horizons - 0.15) / 0.5, 0.0, 1.0)
 
 
 class LaneChangeGapTracker:
