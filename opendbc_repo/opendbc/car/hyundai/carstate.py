@@ -217,7 +217,7 @@ class CarState(CarStateBase):
     self.ccnc_signs_prev, self.roundabout_frames = 0, 0
     self.tunnel_notice_frames, self.tunnel_banned = 0, False
     self.motorway_frames = 0
-    self.canfd_wrapped_navi = CP.carFingerprint == CAR.KIA_PV5
+    self.canfd_wrapped_navi = CP.carFingerprint in (CAR.KIA_PV5, CAR.KIA_EV4)
     self.navi_profile_msg = CANFD_NAVI_PROFILE_MSG if self.canfd_wrapped_navi else "NEW_MSG_4BE"
     self.vehicleNaviZoneControlSupported = not self.canfd_wrapped_navi  # Legacy kind-7 profile zones only
     self.hda_info_4a3 = None
@@ -1233,7 +1233,8 @@ class CarState(CarStateBase):
     if self.canfd_wrapped_navi:
       self._update_pv5_navi_section(cp, cp_alt)
     profile_timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_profile_msg)
-    self.vehicleNaviAvailable = self.vehicleNaviAvailable or profile_timestamp > 0 or self.vehicleNaviSpeedZoneActive
+    hda_timestamp = self._vehicle_navi_message_timestamp(cp, CANFD_HDA_INFO_MSG) if self.canfd_wrapped_navi else 0
+    self.vehicleNaviAvailable = self.vehicleNaviAvailable or profile_timestamp > 0 or hda_timestamp > 0 or self.vehicleNaviSpeedZoneActive
     ret.vehicleNaviAvailable = self.vehicleNaviAvailable
     self._update_tunnel(ret)
     self._update_roundabout(ret)
