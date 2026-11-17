@@ -317,7 +317,7 @@ class DesireHelper:
         self.auto_overtake_return_pending = False
         self.auto_overtake_return_wait_timer = 0.0
         self.auto_overtake_return_clear_timer = 0.0
-        self.auto_overtake_cooldown = 45.0
+        self.auto_overtake_cooldown = 30.0
       return
 
     if self.auto_overtake_cooldown > 0.0 or self.auto_overtake_in_progress:
@@ -339,7 +339,7 @@ class DesireHelper:
       self.auto_overtake_slow_timer = 0.0
       self.auto_overtake_in_progress = True
       self.auto_overtake_return_pending = False
-      self.auto_overtake_cooldown = 45.0
+      self.auto_overtake_cooldown = 30.0
 
   def _update_atc_blinker(self, carrotMan, driver_blinker_state, remote=None):
     atc_type = carrotMan.atcType
@@ -987,7 +987,7 @@ class DesireHelper:
         self.auto_overtake_return_pending = True
         self.auto_overtake_return_wait_timer = 0.0
         self.auto_overtake_return_clear_timer = 0.0
-        self.auto_overtake_cooldown = 45.0
+        self.auto_overtake_cooldown = 30.0
       elif prev_lane_change_state == LaneChangeState.preLaneChange:
         self.auto_overtake_in_progress = False
 
