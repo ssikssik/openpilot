@@ -167,15 +167,10 @@ def temperature_badge(health):
   if not health or not health['fresh'] or health['label'] != 'jetSON' or health['temp_c'] is None:
     return None
   temperature = health['temp_c']
-  if temperature >= 80:
-    style = 'error'
-  elif temperature >= 65:
-    style = 'warm'
-  elif temperature > 50:
-    style = 'loading'
-  else:
-    style = 'active'
-  return f'{temperature:.1f}°C', style
+  # Green to yellow (50–70°C), then yellow to red (70–90°C).
+  red = round(255 * max(0., min(1., (temperature - 50) / 20)))
+  green = round(255 * max(0., min(1., (90 - temperature) / 20)))
+  return f'{temperature:.1f}°C', (red, green, 0)
 
 
 def badge():

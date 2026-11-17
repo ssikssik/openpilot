@@ -355,13 +355,12 @@ class HudRenderer(Widget):
       self._draw_runtime_badge(*temperature, right, badge.y + badge.height + 8)
 
   def _draw_runtime_badge(self, text, state, right, top) -> rl.Rectangle:
-    color = {
+    color = rl.Color(*state, 230) if isinstance(state, tuple) else {
       "active": COLORS.GREEN_210,
       "loading": COLORS.YELLOW_210,
       "error": COLORS.RED_210,
       "compile_pending": COLORS.ORANGE_230,
       "not_compiled": COLORS.ORANGE_230,
-      "warm": COLORS.ORANGE_230,
       "ready": COLORS.WHITE_210,
     }[state]
     numeric_or_ascii = text.isascii() or text.endswith('°C')
