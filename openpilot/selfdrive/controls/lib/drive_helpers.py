@@ -1,5 +1,6 @@
 import numpy as np
 from openpilot.cereal import log
+from opendbc.car.hyundai.values import CAR as HYUNDAI_CAR
 from opendbc.car.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
 from openpilot.common.realtime import DT_CTRL, DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
@@ -82,8 +83,9 @@ def smooth_value(val, prev_val, tau, dt=DT_MDL):
   alpha = 1 - np.exp(-dt/tau) if tau > 0 else 1
   return alpha * val + (1 - alpha) * prev_val
 
-def clip_curvature(v_ego, prev_curvature, new_curvature, roll):
-  # This function respects ISO lateral jerk and acceleration limits + a max curvature
+def clip_curvature(v_ego, prev_curvature, new_curvature, roll, *, car_fingerprint=""):
+  # EV4 uses a wider target envelope while keeping the common jerk limit.
+  lateral_limit_scale = 2.0 if car_fingerprint == HYUNDAI_CAR.KIA_EV4 else 1.0
   v_ego = max(v_ego, MIN_SPEED)
   max_curvature_rate = MAX_LATERAL_JERK / (v_ego ** 2)  # inexact calculation, check https://github.com/commaai/openpilot/pull/24755
   new_curvature = np.clip(new_curvature,
@@ -98,11 +100,13 @@ def clip_curvature(v_ego, prev_curvature, new_curvature, roll):
     [80 / 3.6, 120 / 3.6],
     [MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED, MAX_LATERAL_ACCEL_NO_ROLL],
   ))
+  max_lateral_accel_no_roll *= lateral_limit_scale
   max_lat_accel = max_lateral_accel_no_roll + roll_compensation
   min_lat_accel = -max_lateral_accel_no_roll + roll_compensation
   new_curvature, limited_accel = clamp(new_curvature, min_lat_accel / v_ego ** 2, max_lat_accel / v_ego ** 2)
 
-  new_curvature, limited_max_curv = clamp(new_curvature, -MAX_CURVATURE, MAX_CURVATURE)
+  max_curvature = MAX_CURVATURE * lateral_limit_scale
+  new_curvature, limited_max_curv = clamp(new_curvature, -max_curvature, max_curvature)
   return float(new_curvature), limited_accel or limited_max_curv
 
 

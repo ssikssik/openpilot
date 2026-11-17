@@ -229,7 +229,9 @@ class Controls:
     else:      
       new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
 
-    self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
+    self.desired_curvature, curvature_limited = clip_curvature(
+      CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll, car_fingerprint=self.CP.carFingerprint,
+    )
 
     actuators.curvature = float(self.desired_curvature)
 
