@@ -195,7 +195,7 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
                                      steer_sw_max_deg: float,
                                      model_v2=None) -> float:
   max_lat_accel = 8.5   # m/s^2
-  max_lat_jerk  = 4.0   # m/s^3
+  max_lat_jerk  = 6.0   # m/s^3
   y_std_1s = 0.1
   if model_v2 is not None and len(model_v2.position.yStd) > 10:
     model_y_std_1s = float(model_v2.position.yStd[10])
@@ -222,7 +222,7 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
   rw_max = float(np.degrees(rw_max_rad))
 
   # --- jerk -> rate limit ---
-  sec2 = 1.2
+  sec2 = 1.0
   max_drw_dt = (max_lat_jerk * wheelbase_m) / (v * v * sec2)     # rad/s
   max_drw_per_tick = max_drw_dt * DT_CTRL                        # rad/tick
   max_drw_per_tick_deg = float(np.degrees(max_drw_per_tick))

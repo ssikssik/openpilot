@@ -20,10 +20,10 @@ CAR_ROTATION_RADIUS = 0.0
 MAX_CURVATURE = 0.2
 MAX_VEL_ERR = 5.0  # m/s
 
-# EU guidelines
-MAX_LATERAL_JERK = 5.0  # m/s^3
-MAX_LATERAL_ACCEL_NO_ROLL = 3.0  # m/s^2
-MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED = 4.5  # m/s^2
+# EU guidelines (relaxed slightly for smoother high-speed curve authority)
+MAX_LATERAL_JERK = 6.5  # m/s^3
+MAX_LATERAL_ACCEL_NO_ROLL = 5.0  # m/s^2
+MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED = 5.5  # m/s^2
 
 def apply_deadzone(error, deadzone):
   if error > deadzone:
