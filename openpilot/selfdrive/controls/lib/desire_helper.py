@@ -98,6 +98,12 @@ class DesireHelper:
     self.auto_overtake_return_wait_timer = 0.0
     self.auto_overtake_return_clear_timer = 0.0
 
+    # centerline wrong-way return guard (yellow line on right -> return right when safe)
+    self.centerlineReturnGuard = True
+    self.centerline_wrong_way_timer = 0.0
+    self.centerline_return_active = False
+    self.centerline_guard_cooldown = 0.0
+
     # turn-signal lever presses (carState.*BlinkerStalkCount): an explicit request for the next lane change
     self.stalk_counts = None
     self.queued_lane_change = BLINKER_NONE
@@ -174,6 +180,7 @@ class DesireHelper:
     if self.frame == 1 or self.frame % 100 == 0:
       self.autoOvertakeEnabled = self.params.get_bool("AutoOvertakeEnabled")
       self.autoOvertakeReturnEnabled = self.params.get_bool("AutoOvertakeReturnEnabled")
+      self.centerlineReturnGuard = self.params.get_bool("CenterlineReturnGuard")
     if self.frame % 100 == 0:
       self.laneChangeNeedTorque = self.params.get_int("LaneChangeNeedTorque")
       self.laneChangeBsd = self.params.get_int("LaneChangeBsd")
@@ -340,6 +347,41 @@ class DesireHelper:
       self.auto_overtake_in_progress = True
       self.auto_overtake_return_pending = False
       self.auto_overtake_cooldown = 30.0
+
+  def _update_centerline_return_guard(self, carstate, lateral_active, below_lane_change_speed, trailer_maneuver_blocked,
+                                      carrotMan, driver_enabled, stalk_press, remote):
+    self.centerline_guard_cooldown = max(0.0, self.centerline_guard_cooldown - DT_MDL)
+
+    if not self.centerlineReturnGuard or driver_enabled or stalk_press != BLINKER_NONE or \
+       not lateral_active or trailer_maneuver_blocked or below_lane_change_speed or \
+       remote or self.turn_desire_state or \
+       getattr(carrotMan, "atcType", "") not in ("", "none", "none prepare", "straight", "straight prepare"):
+      self.centerline_wrong_way_timer = 0.0
+      self.centerline_return_active = False
+      return
+
+    left_yellow = (int(getattr(carstate, "leftLaneLine", 0)) // 10) == 2
+    right_yellow = (int(getattr(carstate, "rightLaneLine", 0)) // 10) == 2
+
+    if self.lane_change_state != LaneChangeState.off:
+      if not right_yellow:
+        self.centerline_return_active = False
+      return
+
+    self.centerline_return_active = False
+    if right_yellow and not left_yellow:
+      self.centerline_wrong_way_timer += DT_MDL
+    else:
+      self.centerline_wrong_way_timer = 0.0
+
+    right_clear = (not self.right.side_object_detected) and (self.right.bsd_hold_counter == 0) and (not carstate.rightBlindspot)
+    if self.centerline_wrong_way_timer >= 0.4 and self.centerline_guard_cooldown <= 0.0 and \
+       self.carrot_lane_change_count == 0 and right_clear:
+      self.carrot_lane_change_count = int(0.2 / DT_MDL)
+      self.carrot_blinker_state = BLINKER_RIGHT
+      self.centerline_wrong_way_timer = 0.0
+      self.centerline_return_active = True
+      self.centerline_guard_cooldown = 5.0
 
   def _update_atc_blinker(self, carrotMan, driver_blinker_state, remote=None):
     atc_type = carrotMan.atcType
@@ -616,6 +658,8 @@ class DesireHelper:
       self._update_auto_app_request(carstate, lateral_active, carrotMan, remote, driver_st, stalk_press)
     self._update_auto_overtake(carstate, lateral_active, below_lane_change_speed, trailer_maneuver_blocked,
                                carrotMan, radarState, driver_enabled, stalk_press, remote)
+    self._update_centerline_return_guard(carstate, lateral_active, below_lane_change_speed, trailer_maneuver_blocked,
+                                         carrotMan, driver_enabled, stalk_press, remote)
     atc_st, atc_enabled = self._update_atc_blinker(carrotMan, driver_st, remote)
 
     desire_enabled = driver_enabled or atc_enabled
@@ -646,7 +690,10 @@ class DesireHelper:
     if desire_enabled and side is not None and not trailer_maneuver_blocked:
       # carrot_lane_change_count>0이면 강제 허용
       if self.carrot_lane_change_count > 0 or (self.tesla_auto_signals and self._auto_app_direction):
-        auto_lane_change_trigger = side.lane_change_available
+        if self.centerline_return_active and side is self.right:
+          auto_lane_change_trigger = (not side.side_object_detected) and (side.bsd_hold_counter == 0) and (not carstate.rightBlindspot)
+        else:
+          auto_lane_change_trigger = side.lane_change_available
       else:
         # 기존 조건: edge_available + (trigger or appeared) + not side_object_detected
         auto_lane_change_trigger = (
