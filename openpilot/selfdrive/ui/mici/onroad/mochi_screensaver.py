@@ -73,47 +73,49 @@ class MochiScreensaver(Widget):
     gear = str(cs.gearShifter)
     if gear == 'reverse':
       return 'reverse'
+    if gear == 'park':
+      return 'disengage'
 
     # Emergency braking / FCW
     fcw = bool(cc.hudControl.visualAlert == car.CarControl.HUDControl.VisualAlert.fcw)
-    if fcw or cs.aEgo < -3.2 or cc.actuators.accel < -3.0:
+    if fcw or (cs.vEgo > 1.0 and (cs.aEgo < -3.2 or (engaged and cc.actuators.accel < -3.0))):
       return 'emergency'
 
     # Hard deceleration
-    if cs.aEgo < -1.5 or cc.actuators.accel < -1.8:
+    if cs.vEgo > 2.0 and (cs.aEgo < -1.5 or (engaged and cc.actuators.accel < -1.8)):
       return 'decel'
 
     # Hard acceleration
-    if cs.aEgo > 1.3 or cc.actuators.accel > 1.3:
+    if cs.vEgo > 2.0 and (cs.aEgo > 1.4 or (engaged and cc.actuators.accel > 1.4)):
       return 'accel'
 
     # Lane change
     lc_state = md.meta.laneChangeState
-    if lc_state in (log.LaneChangeState.laneChangeStarting, log.LaneChangeState.laneChangeFinishing):
+    if engaged and lc_state in (log.LaneChangeState.laneChangeStarting, log.LaneChangeState.laneChangeFinishing):
       if md.meta.laneChangeDirection == log.LaneChangeDirection.left:
         return 'laneLeft'
       if md.meta.laneChangeDirection == log.LaneChangeDirection.right:
         return 'laneRight'
 
-    # Blinkers
+    # Blinkers (single side only; ignore hazard lights)
     if cs.leftBlinker and not cs.rightBlinker:
       return 'blinkLeft'
     if cs.rightBlinker and not cs.leftBlinker:
       return 'blinkRight'
 
     # Launch from stop
-    if now < self._launch_until:
+    if now < self._launch_until and gear == 'drive':
       return 'start'
-
-    # Waiting at red light / standstill
-    if standstill:
-      return 'waiting'
 
     # Engage / Disengage transition
     if now < self._engage_until and engaged:
       return 'engage'
     if now < self._disengage_until and not engaged:
       return 'disengage'
+
+    # Waiting at red light / standstill (only when engaged in Drive)
+    if engaged and gear == 'drive' and standstill:
+      return 'waiting'
 
     return 'driving' if engaged else 'disengage'
 
