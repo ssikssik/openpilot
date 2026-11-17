@@ -53,6 +53,7 @@ class DesireHelper:
     self.indicator_journal_time = 0.
     self.bluetooth_commands = CommandReader('lane')
     self.assistant_lane = AssistantLane(fingerprint=fingerprint, native_signal=native_voice_signal)
+    self.manual_indicator_minimum = 0.  # carrot-wip a31a59ca: only with kick_supported (False on this branch)
     self.frame = 0
 
     # FSM core
