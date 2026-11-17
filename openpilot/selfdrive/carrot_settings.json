@@ -603,7 +603,8 @@
             "ShowLaneInfo",
             "ShowRadarInfo",
             "ShowRouteInfo",
-            "ShowPlotMode"
+            "ShowPlotMode",
+            "MochiScreensaver"
           ]
         },
         {
@@ -1831,6 +1832,22 @@
       "max": 80,
       "default": 30,
       "unit": 5
+    },
+    {
+      "group": "화면표시",
+      "name": "MochiScreensaver",
+      "title": "모찌 화면보호기(0)",
+      "descr": "C4 주행 화면 대신 검은 화면에 주행 상태별 모찌 캐릭터(13종) 표시 (경고 시 주행 화면 복귀)",
+      "egroup": "DISP",
+      "etitle": "Mochi Screensaver(0)",
+      "edescr": "Show 13-expression Mochi screensaver on C4 instead of road view (auto hides on alerts)",
+      "cgroup": "显示设置",
+      "ctitle": "Mochi 屏保(0)",
+      "cdescr": "在C4上用13种驾驶状态Mochi表情代替行车画面(警报时自动恢复)",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1
     },
     {
       "group": "버튼설정",

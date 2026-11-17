@@ -10,6 +10,7 @@ from openpilot.system.ui.lib import native_draw, native_geometry, native_text
 from openpilot.selfdrive.ui.mici.onroad import SIDE_PANEL_WIDTH
 from openpilot.selfdrive.ui.mici.onroad.alert_renderer import AlertRenderer
 from openpilot.selfdrive.ui.onroad.driver_preview import DriverPreview
+from openpilot.selfdrive.ui.mici.onroad.mochi_screensaver import MochiScreensaver
 from openpilot.selfdrive.ui.mici.onroad.hud_renderer import HudRenderer
 from openpilot.selfdrive.ui.mici.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.mici.onroad.vision_renderer import VisionRenderer
@@ -171,6 +172,7 @@ class AugmentedRoadView(CameraView):
     self._vision_renderer = VisionRenderer()
     self._alert_renderer = AlertRenderer()
     self._driver_state_renderer = DriverPreview(compact=True)
+    self._mochi_screensaver = MochiScreensaver()
     self._confidence_ball = ConfidenceBall()
     self._traffic_light = TrafficLight()
     self._offroad_label = UnifiedLabel("start the car to\nuse openpilot", 54, FontWeight.DISPLAY,
@@ -309,6 +311,9 @@ class AugmentedRoadView(CameraView):
       self._confidence_ball.render(self.rect)
 
     self._bookmark_icon.render(self.rect)
+
+    if self._mochi_screensaver.is_active(alert_to_render is not None):
+      self._mochi_screensaver.render(self._content_rect)
 
     # Draw darkened background and text if not onroad
     if not ui_state.started:
