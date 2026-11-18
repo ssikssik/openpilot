@@ -47,6 +47,32 @@ def get_driving_mode_comfort_brake_factor(driving_mode: DrivingMode) -> float:
   """Keep Eco efficient while giving Safe a modestly earlier braking profile."""
   return 0.9 if driving_mode == DrivingMode.Safe else 1.0
 
+
+COMFORT_BRAKE_DEFAULT = 2.4
+COMFORT_BRAKE_MIN = 1.0
+COMFORT_BRAKE_MAX = 5.0
+
+
+def read_comfort_brake(params):
+  """ej 탭 ComfortBrake 파라미터(0.1 단위 정수)를 m/s²로 읽는다.
+
+  파일이 없거나(최초 설치) 구 빌드(미등록 키)에서는 기본값 2.4를 쓴다.
+  0 이하 값은 v²/(2·CB) 안전거리 계산을 망가뜨리므로 1.0~5.0으로 클립한다.
+  """
+  try:
+    value = params.get("ComfortBrake", return_default=True)
+  except Exception:
+    return COMFORT_BRAKE_DEFAULT
+  if value is None:
+    return COMFORT_BRAKE_DEFAULT
+  try:
+    brake = float(value) * 0.1
+  except (TypeError, ValueError):
+    return COMFORT_BRAKE_DEFAULT
+  if not np.isfinite(brake):
+    return COMFORT_BRAKE_DEFAULT
+  return float(np.clip(brake, COMFORT_BRAKE_MIN, COMFORT_BRAKE_MAX))
+
 class TrafficState(Enum):
   off = 0
   red = 1
@@ -131,7 +157,7 @@ class CarrotPlanner:
 
     self.stop_distance = 6.0
     self.trafficStopDistanceAdjust = 2.5 #params.get_float("TrafficStopDistanceAdjust") / 100.
-    self.comfortBrake = 2.4
+    self.comfortBrake = read_comfort_brake(self.params)
     self.comfort_brake = self.comfortBrake
 
     self.soft_hold_active = 0
@@ -234,6 +260,7 @@ class CarrotPlanner:
       self.cruiseMaxVals5 = self.params.get_float("CruiseMaxVals5") / 100.
       self.cruiseMaxVals6 = self.params.get_float("CruiseMaxVals6") / 100.
     elif self.params_count == 40:
+      self.comfortBrake = read_comfort_brake(self.params)
       self.stop_distance = self.params.get_float("StopDistanceCarrot") / 100.
       self.eco_over_speed = self.params.get_int("CruiseEcoControl")
       self.autoNaviSpeedDecelRate = float(self.params.get_int("AutoNaviSpeedDecelRate")) * 0.01

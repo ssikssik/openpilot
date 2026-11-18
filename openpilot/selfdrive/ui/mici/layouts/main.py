@@ -5,6 +5,8 @@ from openpilot.selfdrive.ui.mici.layouts.settings.settings import SettingsLayout
 from openpilot.selfdrive.ui.mici.layouts.offroad_alerts import MiciOffroadAlerts
 from openpilot.selfdrive.ui.mici.onroad.augmented_road_view import AugmentedRoadView
 from openpilot.selfdrive.ui.mici.onroad import SIDE_PANEL_WIDTH
+from openpilot.selfdrive.ui.mici.onroad.alert_renderer import AlertRenderer as MiciAlertRenderer
+from openpilot.selfdrive.ui.onroad.robot_face import RobotFaceView
 from openpilot.selfdrive.ui.ui_state import device, ui_state
 from openpilot.selfdrive.ui.b1_badge import draw as draw_b1_badge
 from openpilot.selfdrive.ui.widgets.carrot_web_dialog import CarrotWebDialog
@@ -36,6 +38,12 @@ class MiciMainLayout(Scroller):
     self._debug_layout = DebugPlot()
     self._show_plot_mode = 0
     self._in_plot_mode = False
+
+    # 로봇 페이스 UI (ej): 토글이 켜지면 얼굴 화면을 보여준다 (onroad·offroad 모두).
+    # 콤마4(mici)는 BIG_UI MainLayout이 아니라 이 MiciMainLayout을 쓰므로
+    # 얼굴 연동이 여기에도 필요하다 (없으면 토글을 켜도 얼굴이 안 뜬다).
+    # 알림은 mici용 AlertRenderer로 그린다 (폰트·아이콘이 작은 화면용).
+    self._robot_face = RobotFaceView(alert_renderer_cls=MiciAlertRenderer)
 
     # Initialize widget rects
     for widget in (self._home_layout, self._settings_layout, self._alerts_layout, self._onroad_layout, self._debug_layout):
@@ -139,8 +147,20 @@ class MiciMainLayout(Scroller):
         self._scroller.scroll_to(self._rect.width)
       self._setup = True
 
-    # Render
-    super()._render(self._rect)
+    # 로봇 얼굴 (ej): 토글/테스트가 켜져 있으면 스크로러 대신 얼굴을 보여준다.
+    # 설정·온보딩 화면이 위에 떠 있을 때는 얼굴을 가려 토글을 끌 수 있게 한다.
+    face_mode = (self._robot_face.is_face_mode
+                 and not gui_app.widget_in_stack(self._settings_layout)
+                 and not gui_app.widget_in_stack(self._onboarding_window))
+    # 얼굴 표시 중에는 화면이 꺼지지 않도록 유지한다. ui_state.py가 구버전이면
+    # (부분 동기화) 메서드가 없을 수 있으니 getattr로 확인한다.
+    set_face_active = getattr(device, "set_face_active", None)
+    if set_face_active is not None:
+      set_face_active(face_mode)
+    if face_mode:
+      self._robot_face.render(self._rect)
+    else:
+      super()._render(self._rect)
     # The runtime badge occupies y=12..48 in the HUD content area. Keep the
     # S3 link on a second row, aligned with it and clear of the side panel.
     draw_b1_badge(self._rect, top=52, right_margin=SIDE_PANEL_WIDTH + 24)

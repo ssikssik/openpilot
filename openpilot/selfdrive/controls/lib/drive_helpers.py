@@ -86,12 +86,13 @@ def smooth_value(val, prev_val, tau, dt=DT_MDL):
   alpha = 1 - np.exp(-dt/tau) if tau > 0 else 1
   return alpha * val + (1 - alpha) * prev_val
 
-def clip_curvature(v_ego, prev_curvature, new_curvature, roll, *, car_fingerprint="",
+def clip_curvature(v_ego, prev_curvature, new_curvature, roll,
                    max_lat_accel_low=MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED,
                    max_lat_accel_high=MAX_LATERAL_ACCEL_NO_ROLL,
                    max_lat_jerk=MAX_LATERAL_JERK):
-  # EV4 uses a wider target envelope while keeping the common jerk limit.
-  lateral_limit_scale = 2.0 if car_fingerprint == HYUNDAI_CAR.KIA_EV4 else 1.0
+  # This function respects ISO lateral jerk and acceleration limits + a max curvature.
+  # The limits default to the EU-guideline constants; controlsd overrides them with
+  # the LatAccelMaxLow/High and LatJerkMax params (ej tab, real-time adjustable).
   v_ego = max(v_ego, MIN_SPEED)
   max_curvature_rate = max_lat_jerk / (v_ego ** 2)  # inexact calculation, check https://github.com/commaai/openpilot/pull/24755
   new_curvature = np.clip(new_curvature,
@@ -106,13 +107,11 @@ def clip_curvature(v_ego, prev_curvature, new_curvature, roll, *, car_fingerprin
     [80 / 3.6, 120 / 3.6],
     [max_lat_accel_low, max_lat_accel_high],
   ))
-  max_lateral_accel_no_roll *= lateral_limit_scale
   max_lat_accel = max_lateral_accel_no_roll + roll_compensation
   min_lat_accel = -max_lateral_accel_no_roll + roll_compensation
   new_curvature, limited_accel = clamp(new_curvature, min_lat_accel / v_ego ** 2, max_lat_accel / v_ego ** 2)
 
-  max_curvature = MAX_CURVATURE * lateral_limit_scale
-  new_curvature, limited_max_curv = clamp(new_curvature, -max_curvature, max_curvature)
+  new_curvature, limited_max_curv = clamp(new_curvature, -MAX_CURVATURE, MAX_CURVATURE)
   return float(new_curvature), limited_accel or limited_max_curv
 
 
@@ -121,10 +120,10 @@ def read_lat_accel_limits(params):
 
   단위: 파라미터 값은 0.1 m/s^2 (횡가속) / 0.1 m/s^3 (저크) 단위의 정수.
   예: LatAccelMaxLow=45 -> 4.5 m/s^2.
-  - 값 파일이 없으면 params_keys.h에 등록된 기본값(저속 65 / 고속 45 / 저크 70)을 쓴다.
+  - 값 파일이 없으면 params_keys.h에 등록된 기본값(저속 45 / 고속 30 / 저크 50)을 쓴다.
   - 키가 등록되지 않은 구 빌드(UnknownKeyName)나 읽기 오류 시 상수 기본값으로 폴백한다.
   - 0 이하나 비정상 값은 안전 범위로 클립한다. 한도가 0이 되면 곡률이 0으로 잘려
-    조향이 안 되므로, 하한 2.0과 carrot-dev 기존 상한을 적용한다.
+    조향이 안 되므로, 하한 0.5 m/s^2를 둔다.
   """
   try:
     low = params.get("LatAccelMaxLow", return_default=True)
@@ -141,9 +140,9 @@ def read_lat_accel_limits(params):
     high = MAX_LATERAL_ACCEL_NO_ROLL
   if not math.isfinite(jerk):
     jerk = MAX_LATERAL_JERK
-  return (float(np.clip(low, 2.0, MAX_LATERAL_ACCEL_NO_ROLL_LOW_SPEED)),
-          float(np.clip(high, 2.0, MAX_LATERAL_ACCEL_NO_ROLL)),
-          float(np.clip(jerk, 2.0, MAX_LATERAL_JERK)))
+  return (float(np.clip(low, 0.5, 10.0)),
+          float(np.clip(high, 0.5, 10.0)),
+          float(np.clip(jerk, 0.5, 20.0)))
 
 
 # 최소거리 클램프의 레인리스 조향 보정 (ClampSteerCorrector)
@@ -216,17 +215,6 @@ class ClampSteerCorrector:
     self._prev_time = None
     # 불감대 게이트 상태: 위반이 20cm를 넘으면 True, 10cm 아래로 떨어지면 False.
     self._correction_active = False
-
-  def reset(self):
-    self.left_active = False
-    self.right_active = False
-    self.last_correction = 0.0
-    self._correction_active = False
-    self._prev_kappa = 0.0
-    self._prev_time = None
-    if self.alert_active:
-      self.alert_active = False
-      self._alert_cooldown_until = time.monotonic() + CLAMP_STEER_ALERT_COOLDOWN_SEC
 
   def _read_settings(self):
     """(enabled, min_dist_lane_m, min_dist_edge_m, gain)을 읽는다.
@@ -308,8 +296,6 @@ class ClampSteerCorrector:
     stale로 남지 않는다.
     """
     kappa = self._update_impl(md, v_ego, lane_changing)
-    if lane_changing:
-      self._prev_kappa = 0.0
     kappa = self._slew_limit(kappa)
     self.last_correction = kappa
     self._update_alert(kappa)
