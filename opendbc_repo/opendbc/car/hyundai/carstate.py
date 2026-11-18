@@ -220,11 +220,10 @@ class CarState(CarStateBase):
     self.tunnel_notice_frames, self.tunnel_banned = 0, False
     self.motorway_frames = 0
     self.canfd_wrapped_navi = CP.carFingerprint == CAR.KIA_PV5
-    self.canfd_wrapped_navi_full = CP.carFingerprint == CAR.KIA_EV4
-    self.hda_info_msg = CANFD_HDA_INFO_MSG if (self.canfd_wrapped_navi or self.canfd_wrapped_navi_full) else "HDA_INFO_4A3"
-    self.navi_position_msg = CANFD_NAVI_POSITION_MSG if self.canfd_wrapped_navi_full else "NEW_MSG_4B4"
-    self.navi_segment_msg = CANFD_NAVI_SEGMENT_MSG if self.canfd_wrapped_navi_full else "NEW_MSG_4B9"
-    self.navi_profile_msg = CANFD_NAVI_PROFILE_MSG if (self.canfd_wrapped_navi or self.canfd_wrapped_navi_full) else "NEW_MSG_4BE"
+    self.canfd_ev4_navi = CP.carFingerprint == CAR.KIA_EV4
+    self.hda_info_msg = CANFD_HDA_INFO_MSG if (self.canfd_wrapped_navi or self.canfd_ev4_navi) else "HDA_INFO_4A3"
+    self.navi_segment_msg = CANFD_NAVI_SEGMENT_MSG if self.canfd_ev4_navi else "NEW_MSG_4B9"
+    self.navi_profile_msg = CANFD_NAVI_PROFILE_MSG if (self.canfd_wrapped_navi or self.canfd_ev4_navi) else "NEW_MSG_4BE"
     self.vehicleNaviZoneControlSupported = not self.canfd_wrapped_navi  # Legacy kind-7 profile zones only
     self.hda_info_4a3 = None
     self.navi_position_4b4 = None
@@ -545,7 +544,7 @@ class CarState(CarStateBase):
               add_and_cache(self.cp_alt, CANFD_NAVI_STATUS_MSG, "navi_status_380")
           else:
             add_and_cache(self.cp, self.hda_info_msg, "hda_info_4a3")
-            add_and_cache(self.cp, self.navi_position_msg, "navi_position_4b4")
+            add_and_cache(self.cp, "NEW_MSG_4B4", "navi_position_4b4")
             add_and_cache(self.cp, self.navi_segment_msg, "navi_segment_4b9")
             add_and_cache(self.cp, self.navi_profile_msg, "navi_profile_4be")
           add_and_cache(self.cp, "STEER_TOUCH_2AF", "steer_touch_2af")
@@ -1239,7 +1238,7 @@ class CarState(CarStateBase):
     if self.canfd_wrapped_navi:
       self._update_pv5_navi_section(cp, cp_alt)
     profile_timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_profile_msg)
-    hda_timestamp = self._vehicle_navi_message_timestamp(cp, self.hda_info_msg) if (self.canfd_wrapped_navi or self.canfd_wrapped_navi_full) else 0
+    hda_timestamp = self._vehicle_navi_message_timestamp(cp, self.hda_info_msg) if self.canfd_ev4_navi else 0
     self.vehicleNaviAvailable = self.vehicleNaviAvailable or profile_timestamp > 0 or hda_timestamp > 0 or self.vehicleNaviSpeedZoneActive
     ret.vehicleNaviAvailable = self.vehicleNaviAvailable
     self._update_tunnel(ret)
@@ -1269,7 +1268,11 @@ class CarState(CarStateBase):
 
     if self.navi_segment_4b9 is not None:
       timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_segment_msg)
-      if timestamp > self.vehicleNaviSegmentTimestamp and not all(int(self.navi_segment_4b9.get(f"BYTE_{i + 1}", 0)) == 0xff for i in range(8)):
+      # EV4 wraps padding after sparse route updates. Padding supplies no new
+      # route evidence and must not renew the existing route timeout.
+      empty_wrapped_segment = self.canfd_ev4_navi and all(
+        int(self.navi_segment_4b9.get(f"BYTE_{i + 1}", 0)) == 0xff for i in range(8))
+      if timestamp > self.vehicleNaviSegmentTimestamp and not empty_wrapped_segment:
         self.vehicleNaviSegmentTimestamp = timestamp
         segment = self._decode_vehicle_navi_segment(self.navi_segment_4b9)
         previous_route_state = self.vehicleNaviRouteState
@@ -1806,13 +1809,12 @@ class CarState(CarStateBase):
     # Register stock-navigation position/route/profile messages as optional
     # from startup so dynamic fingerprint timing cannot miss sparse profiles.
     wrapped_navi = CP.carFingerprint == CAR.KIA_PV5
-    wrapped_navi_full = CP.carFingerprint == CAR.KIA_EV4
+    ev4_navi = CP.carFingerprint == CAR.KIA_EV4
     if wrapped_navi:
       msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan)]
       alt_msgs = [(CANFD_NAVI_STATUS_MSG, math.nan)]
-    elif wrapped_navi_full:
-      msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_POSITION_MSG, math.nan),
-              (CANFD_NAVI_SEGMENT_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan)]
+    elif ev4_navi:
+      msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_SEGMENT_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan)]
       alt_msgs = []
     else:
       msgs = [("NEW_MSG_4B4", math.nan), ("NEW_MSG_4B9", math.nan), ("NEW_MSG_4BE", math.nan)]

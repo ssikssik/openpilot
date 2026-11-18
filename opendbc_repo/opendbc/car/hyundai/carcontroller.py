@@ -13,7 +13,7 @@ from opendbc.car.hyundai.palisade_cgw_test import PalisadeCgwTest, cgw_frame
 from opendbc.car.hyundai.steering_handover import SteeringHandover
 from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import HyundaiFlags, HyundaiSafetyFlags, Buttons, CarControllerParams, CAR, CAN_GEARS, HyundaiExtFlags, steering_angle_max
+from opendbc.car.hyundai.values import HyundaiFlags, HyundaiSafetyFlags, canfd_kick_enabled, Buttons, CarControllerParams, CAR, CAN_GEARS, HyundaiExtFlags, steering_angle_max
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.hyundai.values import get_pedal_interceptor_params
@@ -57,9 +57,10 @@ STEER_ANGLE_TEST_RATE = 1.0  # deg/tick toward SteerAngleTest
 LARGE_ANGLE_UNWIND_RATE = 2.2  # deg/tick: allow a quicker return from the EPS fault-angle region
 CANFD_JERK_UPPER_MIN = 1.0
 CANFD_JERK_LIMIT_MAX = 5.0
-CANFD_DEPART_JERK_UPPER = 3.0  # StopGoLongAssist departure: no-lead departures already send 2.8-3.3 (02_logs §22)
-# CanfdBlinkerKick: in D at any speed (user 10-27: city lane changes are slow) the parking ECU (APRK, 0x7B1) is silenced
-# around a kick and SPAS2 BLINKER_CONTROL is sent in its place; out of D its default session returns
+CANFD_DEPART_JERK_UPPER = 3.0  # StopGoLongAssist departure
+# CanfdBlinkerKick (verified SPAS/stalk protocol on the camera-SCC harness, CAN-FD): in D at any speed the parking ECU (APRK, 0x7B1) is
+# asked to go quiet around a kick and SPAS2 BLINKER_CONTROL is sent in its place; its default session is restored right
+# after the kick
 APRK_ADDR = 0x7B1
 APRK_EXT_SESSION = bytes([0x02, 0x10, 0x03, 0, 0, 0, 0, 0])
 APRK_COM_DISABLE = bytes([0x03, 0x28, 0x83, 0x01, 0, 0, 0, 0])
@@ -297,7 +298,7 @@ class CarController(CarControllerBase):
     self.depart_jerk = False
     self.blinker_control = False
     self.blinker_kick_mode = 1  # CanfdBlinkerKickMode: 0 only after an ack, 1 panda piggyback, 2 direct 25 Hz, 3 direct 100 Hz
-    # set by card's KickOutput only on the CANFD_BLINKER_KICK harness (carrot-wip's KICK_CARS); our Kick does not gate on it
+    # Set by card's KickOutput for the CAN-FD Kick harness.
     self.kick_output_ready = False
     self.remote_blinker = 0  # card: 3 left / 4 right from a Bluetooth remote blinker press, taken by kick_pulse
     self.remote_pulse = False  # the running pulse is a remote press: any gear, no CanfdBlinkerKick needed
@@ -323,7 +324,8 @@ class CarController(CarControllerBase):
     self.lane_change_prev, self.model_pulse = "off", False  # last modelV2 laneChangeState; pulse from the model trigger
     self.blinker_pulse_start, self.model_hold = 0, {}  # pulse start frame (Palisade flash phase); _blink_hold_change state
     # classic CAN with a stock CGW1 (0x541), any model since 11-14: panda only lets CGW1 out with this flag (interface)
-    self.cgw_kick = bool(CP.safetyConfigs) and bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.PALISADE_CGW_TEST)
+    self.cgw_kick = not CP.flags & HyundaiFlags.CANFD and bool(CP.safetyConfigs) and bool(
+      CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.PALISADE_CGW_TEST)
     self.cgw_trial, self.cgw_last_tx = 0, -CGW_REARM_FRAMES  # frames: our panda CGW1 trial start, last CGW1 request
     self.yellow_until = [0, 0]  # left, right
     self.standstill_frame = -1e6
@@ -540,7 +542,7 @@ class CarController(CarControllerBase):
             CS.out.standstill and not CS.out.steeringPressed)
     # carrot-wip 00d9cae3: never against the other side's lamp; a Kick that may not run cuts its pulse
     opposite = CS.out.rightBlinker if self.blinker_side == 3 else CS.out.leftBlinker
-    kick = self.blinker_control and drive and pulse and not opposite
+    kick = self.blinker_control and self.kick_output_ready and drive and pulse and not opposite
     remote = self.remote_pulse and pulse
     if not (kick or remote):
       self.blinker_pulse_end, self.model_pulse = min(self.blinker_pulse_end, self.frame), False
@@ -656,8 +658,9 @@ class CarController(CarControllerBase):
       self.soft_hold_mode = 1 if params.get_int("AutoCruiseControl") > 1 else 2
       self.depart_jerk = params.get_int("StopGoLongAssist") >= 2
       if self.canfd_stopping is not None:
-        self.canfd_stopping.unheld_brake = params.get_int("StopGoLongAssist") >= 1  # stop guard level (stopping.py)
-      self.blinker_control = params.get_bool("CanfdBlinkerKick")
+        self.canfd_stopping.unheld_brake = params.get_int("StopGoLongAssist") >= 1
+      # Admission is set at fingerprint time; the setting can still stop Kick mid-drive.
+      self.blinker_control = canfd_kick_enabled(self.CP) and params.get_bool("CanfdBlinkerKick")
       self.blinker_kick_mode = params.get_int("CanfdBlinkerKickMode")
       model_mode = params.get_int("CanfdBlinkerKickModelMode")  # 0 hold, 1 off, 2/3/4: 3/5/7 flashes
       self.blinker_kick_model, self.model_flashes = model_mode != 1, MODEL_FLASH_COUNTS.get(model_mode, 0)
