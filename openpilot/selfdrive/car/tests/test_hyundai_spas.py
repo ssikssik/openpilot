@@ -61,24 +61,38 @@ def test_parked_trial_is_one_shot_and_three_seconds(monkeypatch, setting):
   assert s.test_pulse == (setting >= 3)
 
 
-@pytest.mark.parametrize('bad', ['moving', 'drive', 'active', 'controls', 'panda', 'stale', 'can', 'stalk', 'other_hold'])
+@pytest.mark.parametrize('setting', [1, 2, 3, 4, 5, 15, 17])
+@pytest.mark.parametrize('state', ['moving', 'reverse', 'engaged'])
+def test_only_acknowledged_trials_admit_nonpark_states(monkeypatch, setting, state):
+  sig, params, cs, sm = setup(monkeypatch)
+  warm(sig)
+  sig.driver_data = bytes.fromhex('f880300000000000')
+  if state == 'moving':
+    cs.gearShifter, cs.vEgo, cs.standstill = 'drive', 20., False
+  elif state == 'reverse':
+    cs.gearShifter = 'reverse'
+  else:
+    sm['carControl'].latActive = sm['selfdriveState'].enabled = sm['pandaStates'][0].controlsAllowed = True
+  sig.update(cs, sm, 10.0, True)  # establish continuity before the selection edge
+  params.value = setting
+  sig.settings_at = 0
+  sent = sig.update(cs, sm, 10.01, True)
+  if setting <= 4:
+    assert [m.dat for m in sent] == [EXTENDED]
+    sig.update(cs, sm, 10.05, True)
+    assert sig.test_request is not None
+  else:
+    assert sent == [] and sig.test_request is None
+
+
+@pytest.mark.parametrize('bad', ['stale', 'can', 'stalk', 'other_hold'])
 def test_invalid_trial_edge_is_consumed_without_later_start(monkeypatch, bad):
   s, p, cs, sm = setup(monkeypatch)
   warm(s)
   s.update(cs, sm, 10.0, True)
   p.value = 3
   s.settings_at = 0
-  if bad == 'moving':
-    cs.vEgo = 0.1
-  elif bad == 'drive':
-    cs.gearShifter = 'drive'
-  elif bad == 'active':
-    sm['selfdriveState'].active = True
-  elif bad == 'controls':
-    sm['carControl'].latActive = True
-  elif bad == 'panda':
-    sm['pandaStates'][0].controlsAllowed = True
-  elif bad == 'stale':
+  if bad == 'stale':
     sm.recv_time['carControl'] = 0
   elif bad == 'can':
     cs.canValid = False

@@ -113,10 +113,18 @@ class SpasSignals:
         self.worker = Process('blink_source.py', 'spas')
       except OSError:
         self.worker_retry = now+5.
-    healthy = (initialized and cs.canValid and math.isfinite(cs.vEgo) and
+    data_ok = (initialized and cs.canValid and math.isfinite(cs.vEgo) and
                self.driver_count >= 3 and 0 <= now-self.driver_at < .5 and
-               str(cs.gearShifter) in ('park', 'neutral', 'drive') and
                all(sm.valid[k] and sm.alive[k] and 0 <= now-sm.recv_time[k] < .35 for k in ('carControl', 'selfdriveState')))
+    healthy = data_ok and str(cs.gearShifter) in ('park', 'neutral', 'drive')
+    test_ready = (data_ok and sm.valid['pandaStates'] and sm.alive['pandaStates'] and
+                  0 <= now-sm.recv_time['pandaStates'] < .75 and len(sm['pandaStates']) > 0)
+    cc, ss = sm['carControl'], sm['selfdriveState']
+    # Only 1–4 use the normal acknowledged handoff. Direct coexistence, the
+    # response-suppressed patch, and lever replay still require the Panda parked guard.
+    parked_test_ready = (test_ready and str(cs.gearShifter) == 'park' and cs.standstill and abs(cs.vEgo) < .01 and
+                         not (cc.latActive or cc.longActive or ss.active or ss.enabled) and
+                         not any(p.controlsAllowed for p in sm['pandaStates']))
     stalks = (cs.leftBlinkerStalkCount, cs.rightBlinkerStalkCount)
     override = bool(cs.blinkerLever or (cs.leftBlinker and cs.rightBlinker) or self.stalks is not None and stalks != self.stalks)
     self.stalks = stalks
@@ -127,16 +135,12 @@ class SpasSignals:
     if now >= self.settings_at:
       setting = self.params.get_int('CanfdBlinkerTest')
       if setting != self.test_setting and setting in range(1, 19):
-        # Consume the edge even when the parked guard fails; never run later.
-        cc, ss = sm['carControl'], sm['selfdriveState']
-        parked = (healthy and str(cs.gearShifter) == 'park' and cs.standstill and abs(cs.vEgo) < .01 and
-                  not (cc.latActive or cc.longActive or ss.active or ss.enabled) and
-                  sm.valid['pandaStates'] and sm.alive['pandaStates'] and 0 <= now-sm.recv_time['pandaStates'] < .75 and
-                  len(sm['pandaStates']) > 0 and not any(p.controlsAllowed for p in sm['pandaStates']))
+        # Consume the edge even when the applicable guard fails; never run later.
         direct = setting >= 5
+        ready = parked_test_ready if direct else test_ready
         direct_ready = (not direct or (now >= self.direct_cooldown and self.can_health(sm['pandaStates']) is not None and self.session.stock_ready(now) and
                         self.session.stock_direction == 0 and not (cs.leftBlinker or cs.rightBlinker)))
-        if parked and (setting <= 2 or self.hold_supported) and self.session.state == 'idle' and direct_ready:
+        if ready and (setting <= 2 or self.hold_supported) and self.session.state == 'idle' and direct_ready:
           self.test_serial += 1
           self.test_request = f'park:{self.test_serial}'
           # Pulse/hold and SPAS-only comparisons have independent bounded modes.
@@ -179,11 +183,7 @@ class SpasSignals:
         if taps:
           request, direction = taps[-1].get('id'), taps[-1].get('direction')
     if self.test_request is not None:
-      cc, ss = sm['carControl'], sm['selfdriveState']
-      healthy = (healthy and str(cs.gearShifter) == 'park' and cs.standstill and abs(cs.vEgo) < .01 and
-                 not (cc.latActive or cc.longActive or ss.active or ss.enabled) and
-                 sm.valid['pandaStates'] and sm.alive['pandaStates'] and 0 <= now-sm.recv_time['pandaStates'] < .75 and
-                 len(sm['pandaStates']) > 0 and not any(p.controlsAllowed for p in sm['pandaStates']))
+      healthy = parked_test_ready if self.test_direct or self.test_setting >= 5 else test_ready
       if now < self.test_until and self.test_setting != 0:
         request, direction = self.test_request, self.test_direction
       else:
