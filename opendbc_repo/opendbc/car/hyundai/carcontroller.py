@@ -211,7 +211,7 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
     # then 15~40 kph tapers 1.1->0.8 deg/tick. Above 40 kph, physics limits take over.
     low_mid_speed_cap = float(np.interp(v_ego,
                                         [0.0, LOW_SPEED_ANGLE_RATE_RAMP_SPEED, MID_SPEED_ANGLE_RATE_LIMIT_SPEED],
-                                        [0.8, 1.1, 0.8]))
+                                        [1.2, 1.5, 1.2]))
     max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, low_mid_speed_cap)
 
   target_rw = target_sw / steer_ratio
@@ -229,7 +229,7 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
 
   err = abs(target_sw - last_sw_deg)
   if err > 20.0:
-    max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, 1.0)
+    max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, 1.5)
 
   # Once steering is in the large-angle region, do not make the return toward center wait on
   # the normal low-speed/large-error cap. This only relaxes unwinding; winding farther into the
