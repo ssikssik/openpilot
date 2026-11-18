@@ -111,7 +111,6 @@ class UIState:
 
     # Brightness and UI options
     self.show_brightness_ratio: float = 1.0
-    self.onroad_mochi = False
     self.screen_off: bool = False
     self.show_model_view: int = 0
     self.share_data: bool = False
@@ -231,7 +230,6 @@ class UIState:
     self.show_radar_info = self.params.get_int("ShowRadarInfo")
     self.show_brightness_ratio: float = self.params.get_int("ShowCustomBrightness") / 100.0
     self.screen_off = IS_MICI and self.params.get("ScreenOn", return_default=True) is False  # unset key keeps the screen on
-    self.onroad_mochi = self.params.get_int("OnroadMochiMode") == 1
     self.show_model_view = self.params.get_int("ShowModelView")
     self.share_data = self.params.get_bool("ShareData")
     self.show_camera_with_cluster = self.params.get_int("ShowCameraWithCluster") == 1

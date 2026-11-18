@@ -351,7 +351,7 @@ With `CarrotVisionEnabled` on, the external HUD and web camera view can be used 
 |---|---|---|
 | Information | `ShowDebugUI`, `ShowTpms`, `ShowDateTime`, `ShowPathEnd`, `ShowDeviceState`, `ShowLaneInfo`, `ShowRadarInfo`, `ShowRouteInfo`, `ShowPlotMode` | Debug, tire, time, lane, radar, and route information |
 | Path | `ShowPathMode`, `ShowPathColor`, `ShowPathColorCruiseOff`, `ShowPathModeLane`, `ShowPathColorLane` | Path shape and color by driving state |
-| Brightness/on-road view | `ShowCustomBrightness`, `ScreenOn`, `OnroadMochiMode`, `ShowModelView`, `ShowCameraWithCluster` | Brightness, C4 screen on/off, Mochi screensaver, camera/model composition, and the on-device camera while the external HUD is connected |
+| Brightness/on-road view | `ShowCustomBrightness`, `ScreenOn`, `MochiScreensaver`, `ShowModelView`, `ShowCameraWithCluster` | Brightness, C4 screen on/off, Mochi screensaver, camera/model composition, and the on-device camera while the external HUD is connected |
 | External HUD | `ClusterHud`, `ClusterHudBrightness`, `ClusterHudOrientation`, and related `ClusterHud*` settings | Supported TURZX HUD layout, live brightness, screen rotation, camera, radar, and encoder options |
 
 For RAV4 2022 with the ARS display stream, `ShowRadarInfo=3` on the standard device
@@ -377,7 +377,7 @@ An APN label remaining in the `ShowRouteInfo` description refers to route-input 
 
 `ShowCameraWithCluster=0` keeps the existing default: while the external HUD is connected, the on-device camera is hidden. Set it to `1` to show the on-device camera video.
 
-`OnroadMochiMode` (Mochi Screensaver) is off by default and only affects the C4 screen. When enabled, press and hold the road view for 650 ms to show one of 14 animated expressions; tap the character to return. A short tap on the road view does not switch screens while the mode is enabled. Driving alerts take priority, and the external HUD is unchanged.
+`MochiScreensaver` (Mochi Screensaver) is off by default and only affects the C4 screen. When enabled, press and hold the road view for 650 ms to show one of 13 animated expressions; tap the character to return. A short tap on the road view does not switch screens while the mode is enabled. Driving alerts take priority, and the external HUD is unchanged.
 
 `ShowModelView` (Driving Screen Layout) selects the C4 view: `0` camera + lanes/path, `1` camera only, `2` lanes/path on a black background, or `3` hide both. Lane/path graphics include lead-vehicle markers. It applies at every brightness setting, including automatic and 100%, with no additional wait after entering driving mode. Changes while driving appear within about five seconds without rebooting. Speed, alerts, and driver status stay visible; camera capture, driving decisions, and vehicle control are unchanged. This setting does not apply to C3/C3X. While an external HUD is connected, `ShowCameraWithCluster=0` hides both the on-device camera and lane/path graphics regardless of this choice.
 

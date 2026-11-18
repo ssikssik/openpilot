@@ -10,7 +10,7 @@ from openpilot.system.ui.lib import native_draw, native_geometry, native_text
 from openpilot.selfdrive.ui.mici.onroad import SIDE_PANEL_WIDTH
 from openpilot.selfdrive.ui.mici.onroad.alert_renderer import AlertRenderer
 from openpilot.selfdrive.ui.onroad.driver_preview import DriverPreview
-from openpilot.selfdrive.ui.mici.onroad.mochi_saver import MochiSaver
+from openpilot.selfdrive.ui.mici.onroad.mochi_screensaver import MochiScreensaver
 from openpilot.selfdrive.ui.mici.onroad.hud_renderer import HudRenderer
 from openpilot.selfdrive.ui.mici.onroad.model_renderer import ModelRenderer
 from openpilot.selfdrive.ui.mici.onroad.vision_renderer import VisionRenderer
@@ -172,7 +172,7 @@ class AugmentedRoadView(CameraView):
     self._vision_renderer = VisionRenderer()
     self._alert_renderer = AlertRenderer()
     self._driver_state_renderer = DriverPreview(compact=True)
-    self._mochi_saver = MochiSaver()
+    self._mochi_screensaver = MochiScreensaver()
     self._confidence_ball = ConfidenceBall()
     self._traffic_light = TrafficLight()
     self._offroad_label = UnifiedLabel("start the car to\nuse openpilot", 54, FontWeight.DISPLAY,
@@ -218,11 +218,11 @@ class AugmentedRoadView(CameraView):
 
   def _handle_mouse_event(self, mouse_event: MouseEvent) -> None:
     super()._handle_mouse_event(mouse_event)
-    self._mochi_saver.handle_mouse_event(mouse_event)
+    self._mochi_screensaver.handle_mouse_event(mouse_event)
 
   def _handle_mouse_release(self, mouse_pos: MousePos):
     # Do not let a Mochi gesture fall through to the home-screen callback.
-    if ui_state.started and self._mochi_saver.enabled:
+    if self._mochi_screensaver.gestures_enabled:
       return
     # Don't trigger click callback if bookmark was triggered
     if not self._bookmark_icon.interacting():
@@ -321,8 +321,11 @@ class AugmentedRoadView(CameraView):
 
     # Keep road alerts visible, including while they animate out.
     alert_visible = alert_to_render is not None
-    self._mochi_saver.update(alert_visible=alert_visible)
-    self._mochi_saver.render(self.rect, alert_visible=alert_visible)
+    self._mochi_screensaver.update_gesture(alert_visible)
+    if self._mochi_screensaver.is_active(alert_visible):
+      self._mochi_screensaver.render(self._content_rect)
+    elif not alert_visible:
+      self._mochi_screensaver.render_press_progress(self._content_rect)
 
     # Draw darkened background and text if not onroad
     if not ui_state.started:
