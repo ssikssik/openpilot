@@ -19,7 +19,7 @@ from opendbc.car.hyundai.stop_object import signal_stop_object_requested
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
 from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
-from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb
+from openpilot.selfdrive.controls.lib.drive_helpers import ClampSteerCorrector, clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb, read_lat_accel_limits
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
@@ -108,6 +108,8 @@ class Controls:
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI)
     self.carrot_controls = CarrotControls(self.CP)
+    self.clamp_steer_corrector = ClampSteerCorrector(self.params)
+    self.clamp_steer_active = False
 
   def update(self):
     self.sm.update(15)
@@ -210,6 +212,12 @@ class Controls:
       alpha = 1 - np.exp(-DT_CTRL / tau) if tau > 0 else 1
       return alpha * val + (1 - alpha) * prev_val
 
+    self.clamp_steer_active = False
+    clamp_available = (CC.latActive and not self.is_vw_meb and not self.lanefull_mode_enabled and
+                       self.sm.all_checks(['modelV2']))
+    if not clamp_available:
+      self.clamp_steer_corrector.reset()
+
     if not CC.latActive:
       new_desired_curvature = self.curvature
     elif self.is_vw_meb:
@@ -228,8 +236,16 @@ class Controls:
       else:
         curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + lat_smooth_seconds, lat_plan.distances)
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
-    else:      
-      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.06)
+    else:
+      carrot_man = get_carrot_man(self.sm)
+      atc_active = (carrot_man is not None and carrot_man.activeCarrot > 1 and
+                    0 < carrot_man.xDistToTurn < 100)
+      lane_changing = (model_v2.meta.desire != log.Desire.none or
+                       model_v2.meta.laneChangeState != log.LaneChangeState.off or
+                       CS.leftBlinker or CS.rightBlinker or atc_active)
+      clamp_kappa = self.clamp_steer_corrector.update(model_v2, CS.vEgo, lane_changing) if clamp_available else 0.0
+      self.clamp_steer_active = self.clamp_steer_corrector.alert_active
+      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature + clamp_kappa, self.desired_curvature, 0.06)
 
     if self.sm.frame == 1 or self.sm.frame % 100 == 0:
       self.shoulder_avoid_margin_m = max(0.0, min(0.80, self.params.get_int("ShoulderAvoidMargin") * 0.01))
@@ -248,12 +264,16 @@ class Controls:
           break
     self.shoulder_avoid_bias = smooth_value(target_avoid_bias, self.shoulder_avoid_bias, 0.35)
 
+    lat_accel_low, lat_accel_high, lat_jerk = read_lat_accel_limits(self.params)
     self.desired_curvature, curvature_limited = clip_curvature(
-      CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll, car_fingerprint=self.CP.carFingerprint,
+      CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll,
+      car_fingerprint=self.CP.carFingerprint, max_lat_accel_low=lat_accel_low,
+      max_lat_accel_high=lat_accel_high, max_lat_jerk=lat_jerk,
     )
     output_desired_curvature, bias_limited = clip_curvature(
       CS.vEgo, self.desired_curvature, self.desired_curvature + self.shoulder_avoid_bias, lp.roll,
-      car_fingerprint=self.CP.carFingerprint,
+      car_fingerprint=self.CP.carFingerprint, max_lat_accel_low=lat_accel_low,
+      max_lat_accel_high=lat_accel_high, max_lat_jerk=lat_jerk,
     )
     curvature_limited = curvature_limited or bias_limited
 
@@ -504,6 +524,7 @@ class Controls:
       cs.lateralControlState.torqueState = lac_log
 
     cs.activeLaneLine = self.lanefull_mode_enabled
+    cs.clampSteerActive = self.clamp_steer_active
     self.pm.send('controlsState', dat)
 
     # carControl

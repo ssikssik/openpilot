@@ -15,7 +15,7 @@ from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
 from openpilot.selfdrive.selfdrived.vehicle_faults import inhibit_faulted_controls
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.interfaces import CarInterfaceBase
-from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature
+from openpilot.selfdrive.controls.lib.drive_helpers import ClampSteerCorrector, clip_curvature, get_lag_adjusted_curvature, read_lat_accel_limits
 from openpilot.selfdrive.controls.lib.latcontrol import MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate, lateral_vehicle_parameters
@@ -31,10 +31,11 @@ def control_fixture():
   cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'Controls')
   names = {'lateral_control_allowed', 'state_control'}
   nodes = [n for n in tree.body + cls.body if isinstance(n, ast.FunctionDef) and n.name in names]
-  ns = {'math': math, 'np': np, 'Number': Number, 'car': car, 'DT_CTRL': DT_CTRL, 'CV': CV,
+  ns = {'math': math, 'np': np, 'Number': Number, 'car': car, 'log': log, 'DT_CTRL': DT_CTRL, 'CV': CV,
         'MIN_LATERAL_CONTROL_SPEED': MIN_LATERAL_CONTROL_SPEED, 'LaneChangeState': log.LaneChangeState,
         'LaneChangeDirection': log.LaneChangeDirection, 'ACTUATOR_FIELDS': tuple(car.CarControl.Actuators.schema.fields),
-        'clip_curvature': clip_curvature, 'get_lag_adjusted_curvature': get_lag_adjusted_curvature,
+        'clip_curvature': clip_curvature, 'read_lat_accel_limits': read_lat_accel_limits,
+        'get_carrot_man': lambda sm: None, 'get_lag_adjusted_curvature': get_lag_adjusted_curvature,
         'resolve_vehicle_model_steer_ratio': resolve_vehicle_model_steer_ratio,
         'lateral_vehicle_parameters': lateral_vehicle_parameters,
         'set_lane_change_blinkers': set_lane_change_blinkers,
@@ -61,14 +62,15 @@ def control_fixture():
   sm.recv_frame = {'longitudinalPlan': 1}
   sm['carState'].gearShifter = 'drive'
   sm['carState'].latEnabled = True
-  settings = {'AlwaysLateral': True, 'SteerRatioRate': 88, 'CustomSR': 0, 'LatSmoothSec': 13}
-  params = NS(get_float=lambda k: float(settings.get(k, 0)), get_int=lambda k: int(settings.get(k, 0)),
+  settings = {'AlwaysLateral': True, 'ShoulderAvoidMargin': 0, 'SteerRatioRate': 88, 'CustomSR': 0, 'LatSmoothSec': 13}
+  params = NS(get=lambda k, **kw: settings.get(k), get_float=lambda k: float(settings.get(k, 0)), get_int=lambda k: int(settings.get(k, 0)),
               get_bool=lambda k: bool(settings.get(k, False)))
   control = NS(CP=cp, CI=ci, sm=sm, params=params, VM=VehicleModel(cp), LaC=LatControlTorque(cp, ci),
                LoC=NS(reset=lambda: None, update=lambda *args: (0.0, 0.0, 0.0), long_control_state='off'),
                carrot_controls=NS(lat_suspend_control=lambda cs, active: active), is_vw_meb=False,
                desired_curvature=0.0, lateral_startup=LateralStartupGate(), lateral_started=False,
-               steer_limited_by_safety=False)
+               steer_limited_by_safety=False, shoulder_avoid_bias=0.0, shoulder_avoid_margin_m=0.0,
+               clamp_steer_corrector=ClampSteerCorrector(params))
   return control, lambda: ns['state_control'](control)
 
 
