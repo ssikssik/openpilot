@@ -374,14 +374,15 @@ class DesireHelper:
     else:
       self.centerline_wrong_way_timer = 0.0
 
-    right_clear = (not self.right.side_object_detected) and (self.right.bsd_hold_counter == 0) and (not carstate.rightBlindspot)
-    if self.centerline_wrong_way_timer >= 0.4 and self.centerline_guard_cooldown <= 0.0 and \
+    right_clear = (not self.right.side_object_detected) and (self.right.bsd_hold_counter == 0) and \
+                  (not carstate.rightBlindspot) and (getattr(self.right, "lane_width", 0.0) >= 2.2)
+    if self.centerline_wrong_way_timer >= 1.5 and self.centerline_guard_cooldown <= 0.0 and \
        self.carrot_lane_change_count == 0 and right_clear:
       self.carrot_lane_change_count = int(0.2 / DT_MDL)
       self.carrot_blinker_state = BLINKER_RIGHT
       self.centerline_wrong_way_timer = 0.0
       self.centerline_return_active = True
-      self.centerline_guard_cooldown = 5.0
+      self.centerline_guard_cooldown = 10.0
 
   def _update_atc_blinker(self, carrotMan, driver_blinker_state, remote=None):
     atc_type = carrotMan.atcType
