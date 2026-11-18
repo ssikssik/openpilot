@@ -8,8 +8,10 @@ from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
 def make_car_state(left_blinker=False):
   return SimpleNamespace(
     canValid=True,
+    cruiseState=SimpleNamespace(enabled=False),
     leftBlinker=left_blinker,
     rightBlinker=False,
+    rightBlindspot=False,
     vEgo=20.0,
     aEgo=0.0,
     trailerConnected=False,

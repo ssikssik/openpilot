@@ -6,7 +6,6 @@ from opendbc.can.parser import get_raw_value
 from opendbc.car import DT_CTRL, structs
 from opendbc.car.hyundai import carcontroller
 from opendbc.car.hyundai.carcontroller import CarController
-from opendbc.car.hyundai.values import CAR, HyundaiSafetyFlags
 
 D, P = structs.CarState.GearShifter.drive, structs.CarState.GearShifter.park
 EXT, QUIET, DEFAULT = carcontroller.APRK_EXT_SESSION, carcontroller.APRK_COM_DISABLE, carcontroller.APRK_DEFAULT_SESSION
@@ -44,7 +43,7 @@ class Ecu:
 
 
 def make_cc(control=True, test=0, spas=0, ecu=None, mode=1, model=True):
-  cc = SimpleNamespace(blinker_control=control, kick_output_ready=True, blinker_test=test, blinker_kick_mode=mode, aprk_state=0, aprk_frame=0, aprk_nanos=0, aprk_acked=False,
+  cc = SimpleNamespace(blinker_control=control, blinker_test=test, blinker_kick_mode=mode, aprk_state=0, aprk_frame=0, aprk_nanos=0, aprk_acked=False,
                          lane_crossing=Crossing(), blinker_side=0, blinker_pulse_end=0, frame=0, yellow_until=[0, 0],
                          blinker_kick_model=model, lane_change_prev="off", model_pulse=False, blinker_pulse_start=0, model_hold={}, model_flashes=0, cgw_kick=False, cgw_trial=0, cgw_last_tx=-carcontroller.CGW_REARM_FRAMES,
                          remote_blinker=0, remote_pulse=False, hazard_test=False,
@@ -106,6 +105,17 @@ def test_frames_only_after_the_ecu_answered_and_went_quiet():
   assert cc.ecu.quiet
 
 
+def test_no_answer_still_blinks_behind_the_stock_frames():
+  cc = make_cc(ecu=Ecu(answers=False))  # 10-24..11-05: no 0x7B9 reply to ~180 requests, stock stream stays on
+  sent = step(cc, carcontroller.APRK_REPLY_FRAMES, D, 60, cross=3)
+  assert spas2(cc, sent) == [] and uds(sent) == [(EXT, 0), (EXT, 1)]  # the reply window: nothing yet
+  sent = step(cc, carcontroller.BLINKER_PULSE_FRAMES, D, 60)
+  # a full pulse after the window, next to the stock frames (panda sends each frame right behind a stock one)
+  assert set(spas2(cc, sent)) == {3} and len(spas2(cc, sent)) == carcontroller.BLINKER_PULSE_FRAMES - 1  # none on the switch frame
+  assert cc.aprk_state == carcontroller.APRK_ACTIVE and not cc.aprk_acked
+  assert uds(step(cc, 1, D, 60)) == [(DEFAULT, 0), (DEFAULT, 1)] and cc.aprk_state == carcontroller.APRK_IDLE
+
+
 def test_kick_mode_picks_the_send_pattern_without_an_ack():
   # 0: as before fcd251a2 - one try, then given back for this kick
   cc = make_cc(ecu=Ecu(answers=False), mode=0)
@@ -122,36 +132,6 @@ def test_kick_mode_picks_the_send_pattern_without_an_ack():
   cc = make_cc(mode=2)
   step(cc, 30, D, 60, cross=3)
   assert len(spas2(cc, step(cc, 20, D, 60))) == 20
-
-
-@pytest.mark.parametrize("camera_scc", [0, 2])
-@pytest.mark.parametrize("car", [CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV6])
-@pytest.mark.parametrize("contract", [False, True])
-def test_kick_requires_protocol_not_model(monkeypatch, car, camera_scc, contract):
-  # values.verified SPAS/stalk protocol on the camera-SCC harness only: anything else ignores CanfdBlinkerKick, at fingerprint (panda
-  # flag CANFD_BLINKER_KICK) and in carcontroller, which follows that flag
-  from unittest.mock import patch
-  from opendbc.car import gen_empty_fingerprint
-  from opendbc.car.hyundai.interface import CarInterface
-  from opendbc.car.hyundai.tests.test_steering_handover_controller import setup_controller, step as control_step
-
-  class Settings:
-    def __init__(self, *a, **k):
-      pass
-
-    def get_bool(self, key):
-      return key == "CanfdBlinkerKick"
-
-    def get_int(self, key):
-      return {"HyundaiCameraSCC": camera_scc, "MaxAngleFrames": 89}.get(key, 0)
-
-  with patch("opendbc.car.hyundai.interface.Params", Settings):
-    fingerprint = gen_empty_fingerprint()
-    if contract:
-      fingerprint[0].update({0x165: 24, 0x16A: 32, 0x3C1: 8})
-    CP = CarInterface.get_params(car, fingerprint, [], False, False, False)
-  active = contract and camera_scc > 0
-  assert bool(CP.safetyConfigs[-1].safetyParam & HyundaiSafetyFlags.CANFD_BLINKER_KICK) == active
 
 
 STOCK_CGW1 = bytes([0x01, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00])  # ignition on, nothing else

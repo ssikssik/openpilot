@@ -307,23 +307,7 @@ See [Radar tracks and corner radar](radar.md) before changing radar modes.
 
 **Cluster CAN Direct Send** (`HyundaiCanfdClusterDirectTx`) compares the original direct-send method on Hyundai/Kia/Genesis CAN-FD CameraSCC vehicles with intermittent cluster warnings. It defaults to OFF for every vehicle; enable it manually on an affected vehicle. Reboot the device after changing it. Updated Panda firmware supporting this setting is required. Resolution of vehicle warnings has not been validated.
 
-### Indicator Control
-
-Manual lane-change detection retains an established approach when valid width returns within 0.15s of the last valid observation. The output stage uses the detector’s lane-admission decision. [Detailed behavior](lane-change.md)
-
-Settings > Vehicle & Hardware > Indicator Control contains Automatic Indication, Output Device and Lever Behavior. Automatic Indication contains `AutoBlinkerControl`, `ManualLaneChangeIndicator`, `ManualTurnIndicator`, `ModelDesireIndicator` and `ModelPathIndicator`. Output Device contains `CanfdBlinkerKick`, `CanfdBlinkerKickMode`, `CanfdBlinkerControl` and `CanfdBlinkerTest`. Lever Behavior contains `BlinkerLatchedTurn` and `LaneChangeLeverWait`.
-
-**Panda/SPAS Indicator Output** (`CanfdBlinkerKick`) transmits requests from the common indication policy through Panda. It supports camera-SCC CAN-FD with ECAN SPAS 0x165 (24 bytes), 0x16A (32 bytes) and stalk 0x3C1 (8 bytes), without a model-name restriction. Manual lane changes, manual turns, model observations, navigation turns and voice lane changes use the existing common settings for starting, holding and ending indication. Physical lever input and stale inputs stop transmission. An ended request requires a new request to restart.
-
-`CanfdBlinkerKickMode` selects ECU-acknowledged transmission with 0 or the existing stock-frame piggyback fallback with 1. Enabling applies on the next onroad start and requires updated Panda firmware. Disabling applies immediately. Enabling Kick suspends USB2CAN/BT2CAN output and waits for outstanding commands and exclusive ownership. It disables `CanfdBlinkerControl` on the next onroad start.
-
-Saved output and common indication settings are retained. `AutoBlinkerControl=0` disables automatic indication, so select the desired common features. Explicit Bluetooth indicator buttons produce a single tap in D. The independent hold/3/5/7-flash `CanfdBlinkerKickModelMode` setting is retired. Residual physical flashing after a SPAS request ends depends on the vehicle.
-
-For manual lane changes and manual turns, Panda/SPAS delays normal completion until two seconds after the first transmission request. While transmission is preparing, normal completion can wait up to two seconds from observation start. Physical lever input, cruise cancellation, disabling the feature, opposite lamps and input or lane errors end the request immediately. Actual flash count requires vehicle verification.
-
-Automatic lamp feedback is isolated from steering requests. During exclusive ownership, a verified new physical lever operation reaches normal lane-change admission even during feedback isolation and stops Kick output.
-
-`CcncClusterDisplay` and `CcncTrafficBackground` (both default `0`) change the CCNC cluster frames that openpilot re-sends. This needs Hyundai/Kia/Genesis CAN-FD with camera SCC and openpilot longitudinal control (`HyundaiCameraSCC` 1 or 2), and the camera's 0x161 frame (0x162 for the HDP icon) must have been received. `0` turns off only that key's items; the [always-on changes](#always-on-changes) apply regardless. `CcncClusterDisplay=1` shows lane visibility, steering state, the target-gap ring, engage popups, selected openpilot alert texts and the HDP icon like the stock HDA2 display. `CcncTrafficBackground=1` turns the background red while a red light is detected and green for 2 s after it turns green.
+The `CanfdHazardTest` trial requests hazards through SPAS2 when a camera 0x1EA frame is unavailable. Vehicle lamp response to the SPAS2 request remains unverified.
 
 With CAN-FD CameraSCC, openpilot longitudinal control and corner radar enabled, valid CAN, Drive, released brakes and speed above 10.8 km/h allow periodic requests to switch on stock SCC MAIN. This applies independently of AutoEngage and Carrot cruise engagement, and these requests stop once MAIN is on. SET and standstill-resume requests retain the existing Carrot cruise engagement requirement. With CAN-FD CameraSCC and openpilot longitudinal control, the OEM SCC MAIN state used for cluster display is tracked separately from Carrot engagement intent. Steering activation follows AutoEngage initialization and the existing driver-button settings.
 

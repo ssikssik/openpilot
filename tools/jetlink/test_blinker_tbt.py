@@ -171,6 +171,7 @@ def test_real_lamp_feedback_uses_unchanged_desire_path(monkeypatch):
   side.dist_to_edge_far = 3.5
   s = scene()
   # New rear fields have no authority over ordinary manual/remote admission.
+  s['cs'].cruiseState = NS(enabled=False)
   s['cs'].tbtRightRearBlocked = True
   h.update(s['cs'], s['model'], True, .1, s['nav'], NS())
   assert h.lane_change_state == log.LaneChangeState.off
@@ -235,8 +236,7 @@ def test_actual_source_loop_only_emits_physical_indicator(monkeypatch, atc, addo
   monkeypatch.setitem(sys.modules, 'openpilot.common.params', NS(Params=lambda: NS(
     get=lambda _: b'cp', get_int=lambda key: values.get(key, 0), get_bool=lambda key: bool(values.get(key, False)))))
   monkeypatch.setitem(sys.modules, 'openpilot.cereal', NS(messaging=NS(SubMaster=lambda _: sm),
-    car=NS(CarParams=NS(from_bytes=lambda _: nullcontext(NS(carFingerprint='PROTOCOL_MATCHED_CAR',
-      brand='hyundai', passive=False, openpilotLongitudinalControl=True, extFlags=1 << 19, radarUnavailable=front == 'unavailable'))))))
+    car=NS(CarParams=NS(from_bytes=lambda _: nullcontext(NS(carFingerprint='HYUNDAI_IONIQ_5_PE', radarUnavailable=front == 'unavailable'))))))
   sock = NS(setblocking=lambda _: None, recv=lambda _: b'', send=lambda raw: sent.append(json.loads(raw)))
   monkeypatch.setattr(source.socket, 'socket', lambda **kw: sock)
   monkeypatch.setattr(source.select, 'select', lambda *args: ([sock] if len(sent) == 36 else [], [], []))

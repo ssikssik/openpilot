@@ -91,14 +91,11 @@ class HyundaiSafetyFlags(IntFlag):
   CANFD_SPAS_BLINKERS = 4096
   CANFD_SPAS_DIRECT = 1024  # CanfdBlinkerKickMode 2/3: queue SPAS frames directly, no piggyback
   PALISADE_CGW_TEST = 32768
+  # carrot-wip's Kick harness bit is 32768, which this branch already uses for PALISADE_CGW_TEST, and all 16 safetyParam
+  # bits are taken. Our Kick does not use carrot-wip's KickOutput lease, so its flag is 0 here: never set, never matched.
+  CANFD_BLINKER_KICK = 0
   PEDAL_INTERCEPTOR = 8192
   PEDAL_INTERCEPTOR_RAY = 16384
-  CANFD_BLINKER_KICK = 32768  # Same bit as PALISADE_CGW_TEST, but only on the Hyundai CAN-FD safety model.
-
-
-def canfd_kick_enabled(CP):
-  return any(cfg.safetyModel == "hyundaiCanfd" and cfg.safetyParam & HyundaiSafetyFlags.CANFD_BLINKER_KICK
-             for cfg in CP.safetyConfigs)
 
 
 class HyundaiFlags(IntFlag):
@@ -175,7 +172,6 @@ class HyundaiExtFlags(IntFlag):
   EV_MODE_STATUS_230 = 2 ** 16  # ECAN 0x230/DLC32 exposes the hybrid power-flow mode used for the EV indicator
   BOSCH_RADAR = 2 ** 17  # passive Bosch MRRevo14F 0x601-0x612 receive provider (see BOSCH_MRREVO14F_CAR)
   BOSCH_RADAR_BUS1 = 2 ** 18  # Observed receive src=1; otherwise use LKAS camera CAN (src=2)
-  CANFD_INDICATOR_HOLD = 2 ** 19  # Observed camera ADRV_0x1EA/DLC32 for an external indicator hold
 
 class Footnote(Enum):
   CANFD = CarFootnote(
@@ -1053,7 +1049,10 @@ CAN_GEARS = {
 }
 
 CANFD_CAR = CAR.with_flags(HyundaiFlags.CANFD)
-# These models use 0x1CF buttons even when no button frame was seen at boot.
+# carrot-wip's Kick models (lamp seen lighting from a driving kick). On this branch Kick is not limited to them; kept for
+# the shared code that names it.
+KICK_CARS = {CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_9, CAR.HYUNDAI_AZERA_7TH_GEN}
+# Steering-wheel buttons are on 0x1CF; a missing 0x1CF at boot is a fault, not the ALT_BUTTONS variant
 CANFD_1CF_BUTTONS_CAR = {CAR.HYUNDAI_IONIQ_5_PE}
 CANFD_RADAR_SCC_CAR = CAR.with_flags(HyundaiFlags.RADAR_SCC)  # TODO: merge with UNSUPPORTED_LONGITUDINAL_CAR
 

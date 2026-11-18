@@ -146,22 +146,17 @@ class CarInterface(CarInterfaceBase):
       if CAN.ECAN >= 4:
         cfgs.insert(0, get_safety_config(structs.CarParams.SafetyModel.noOutput))
       ret.safetyConfigs = cfgs
-      from opendbc.car.hyundai.spas import compatible, kick_compatible
-      # Select by the observed protocol and harness, never the model name.
-      # Runtime CRC/counter/driver checks still precede each new Kick request.
-      kick = kick_compatible(fingerprint, CAN.ECAN, ret.flags & HyundaiFlags.CAMERA_SCC) and params.get_bool("CanfdBlinkerKick")
-      if ret.flags & HyundaiFlags.CAMERA_SCC and fingerprint[CAN.CAM].get(0x1EA) == 32:
-        ret.extFlags |= HyundaiExtFlags.CANFD_INDICATOR_HOLD.value
-      if not docs and kick and params.get_bool("CanfdBlinkerControl"):
+      from opendbc.car.hyundai.spas import compatible
+      # joongyu01: our CanfdBlinkerKick (carcontroller) and this path both pause APRK and send 0x16A; Kick wins and
+      # switches this one off at boot so the menu shows what is actually running
+      if not docs and params.get_bool("CanfdBlinkerKick") and params.get_bool("CanfdBlinkerControl"):
         params.put_bool("CanfdBlinkerControl", False)
       if params.get_bool("CanfdBlinkerControl") and compatible(fingerprint, CAN.ECAN) and not ret.flags & HyundaiFlags.ENABLE_BLINKERS:
         ret.flags |= HyundaiFlags.CANFD_SPAS_BLINKERS.value
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_SPAS_BLINKERS.value
       # CanfdBlinkerKickMode 2/3: panda queues our SPAS frames as they come instead of holding them for the stock
       # frame (carcontroller.aprk_blinkers). Read at fingerprint time, so it applies from the next onroad start.
-      if kick:
-        ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_BLINKER_KICK.value
-      if kick and params.get_int("CanfdBlinkerKickMode") in (2, 3):
+      if params.get_bool("CanfdBlinkerKick") and params.get_int("CanfdBlinkerKickMode") in (2, 3):
         ret.safetyConfigs[-1].safetyParam |= HyundaiSafetyFlags.CANFD_SPAS_DIRECT.value
 
 
