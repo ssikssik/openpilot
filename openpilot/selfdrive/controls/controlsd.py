@@ -229,7 +229,7 @@ class Controls:
         curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + lat_smooth_seconds, lat_plan.distances)
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
     else:      
-      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
+      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.06)
 
     if self.sm.frame == 1 or self.sm.frame % 100 == 0:
       self.shoulder_avoid_margin_m = max(0.0, min(0.80, self.params.get_int("ShoulderAvoidMargin") * 0.01))

@@ -54,7 +54,7 @@ PARK_ASSIST_MAX_KPH = 10.
 # latActive stands aside only where VALUE63 15 was seen to mean the stock auto park (other cars: unverified, 11-12 review)
 PARK_ASSIST_YIELD_CARS = (CAR.HYUNDAI_IONIQ_5_PE,)
 STEER_ANGLE_TEST_RATE = 1.0  # deg/tick toward SteerAngleTest
-LARGE_ANGLE_UNWIND_RATE = 1.5  # deg/tick: allow a quicker return from the EPS fault-angle region
+LARGE_ANGLE_UNWIND_RATE = 2.2  # deg/tick: allow a quicker return from the EPS fault-angle region
 CANFD_JERK_UPPER_MIN = 1.0
 CANFD_JERK_LIMIT_MAX = 5.0
 CANFD_DEPART_JERK_UPPER = 3.0  # StopGoLongAssist departure: no-lead departures already send 2.8-3.3 (02_logs §22)
@@ -195,23 +195,23 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
                                      steer_sw_max_deg: float,
                                      model_v2=None) -> float:
   max_lat_accel = 8.5   # m/s^2
-  max_lat_jerk  = 6.0   # m/s^3
+  max_lat_jerk  = 7.0   # m/s^3
   y_std_1s = 0.1
   if model_v2 is not None and len(model_v2.position.yStd) > 10:
     model_y_std_1s = float(model_v2.position.yStd[10])
     if np.isfinite(model_y_std_1s) and model_y_std_1s >= 0.0:
       y_std_1s = model_y_std_1s
-  max_sw_rate_deg_per_tick = float(np.interp(y_std_1s, [0.1, 0.2, 0.4], [2.0, 1.5, 0.8]))
+  max_sw_rate_deg_per_tick = float(np.interp(y_std_1s, [0.1, 0.2, 0.4], [2.8, 2.0, 1.1]))
   v = max(float(v_ego), 1.0)
 
   target_sw = clip_float(desired_sw_deg, -steer_sw_max_deg, steer_sw_max_deg)
   if v_ego < MID_SPEED_ANGLE_RATE_LIMIT_SPEED:
     # Keep low/mid-speed angle commands quieter without reducing LKAS_ANGLE_MAX_TORQUE.
-    # Allow the angle, but slow the arrival: 0~15 kph ramps 0.8->1.1 deg/tick,
-    # then 15~40 kph tapers 1.1->0.8 deg/tick. Above 40 kph, physics limits take over.
+    # The extra cap ramps from 1.8 to 2.2 deg/tick at 0~15 kph, then tapers to
+    # 1.8 deg/tick at 40 kph. At 40 kph and above, this extra cap does not apply.
     low_mid_speed_cap = float(np.interp(v_ego,
                                         [0.0, LOW_SPEED_ANGLE_RATE_RAMP_SPEED, MID_SPEED_ANGLE_RATE_LIMIT_SPEED],
-                                        [1.2, 1.5, 1.2]))
+                                        [1.8, 2.2, 1.8]))
     max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, low_mid_speed_cap)
 
   target_rw = target_sw / steer_ratio
@@ -229,7 +229,7 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
 
   err = abs(target_sw - last_sw_deg)
   if err > 20.0:
-    max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, 1.5)
+    max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, 2.2)
 
   # Once steering is in the large-angle region, do not make the return toward center wait on
   # the normal low-speed/large-error cap. This only relaxes unwinding; winding farther into the
