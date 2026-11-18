@@ -330,8 +330,9 @@ class DesireHelper:
     if self.auto_overtake_cooldown > 0.0 or self.auto_overtake_in_progress:
       return
 
-    v_cruise_kph = float(getattr(carrotMan, "vCruise", 0.0))
-    v_cruise_ms = v_cruise_kph * CV.KPH_TO_MS if v_cruise_kph > 0.0 else float(getattr(carstate.cruiseState, "speed", 0.0))
+    # card publishes vCruise in km/h (255 means unset); stock cruise speed is already in m/s.
+    v_cruise_kph = getattr(carstate, "vCruise", 0.0)
+    v_cruise_ms = v_cruise_kph * CV.KPH_TO_MS if 0.0 < v_cruise_kph <= 250.0 else carstate.cruiseState.speed
     lead_one = getattr(radarState, "leadOne", None)
     lead_active = bool(lead_one is not None and getattr(lead_one, "status", False))
 
