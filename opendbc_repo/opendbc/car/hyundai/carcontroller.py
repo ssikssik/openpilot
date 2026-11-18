@@ -304,7 +304,7 @@ class CarController(CarControllerBase):
     self.blinker_kick_model = False  # CanfdBlinkerKickModelMode != 1: also kick on a model lane change start (kick_pulse)
     self.model_flashes = 0  # CanfdBlinkerKickModelMode 2/3/4 -> 3/5/7 flashes; 0 = hold through the change
     self.blinker_test = 0  # CanfdBlinkerMenuTest: 1 left, 2 right (menu test, any speed/gear)
-    self.hazard_test = False  # CanfdHazardTest (remote hazard): SPAS2 hazards when no camera 0x1ea carries bit 104
+    self.hazard_test = 0  # CanfdHazardTest (remote hazard, 2 = fast flash): SPAS2 hazards when no camera 0x1ea carries bit 104
     self.blinker_stalk = 0  # CanfdBlinkerStalk: 1 left, 2 right (0x3C1 replay)
     # CanfdBvmView: 0 off, 1 left, 2 right, 3 both. Spoofs the cluster camera view status (0x400 byte4) so the
     # blind-spot camera is shown without the turn signal. Display-only message, nothing else uses it.
@@ -546,7 +546,7 @@ class CarController(CarControllerBase):
       self.blinker_pulse_end, self.model_pulse = min(self.blinker_pulse_end, self.frame), False
     # CanfdHazardTest on a car whose camera sends no 0x1ea (HDA1 Tucson): bit 104 has no carrier, so SPAS2 BLINKER_CONTROL 1
     # (DBC "hazards") asks for them instead, any gear, while the test is on. A car with 0x1ea keeps bit 104 (hyundaicanfd).
-    hazard = self.hazard_test and getattr(CS, "adrv_0x1ea", None) is None
+    hazard = self.hazard_test in (1, 2) and getattr(CS, "adrv_0x1ea", None) is None
     want = self.blinker_test in (1, 2) or kick or remote or spas or hazard
     now, stock, ack = getattr(CS, "can_nanos", 0), getattr(CS, "aprk_stock_nanos", 0), getattr(CS, "aprk_ack_nanos", 0)
 
@@ -599,7 +599,8 @@ class CarController(CarControllerBase):
         return ret  # direct 25 Hz: a quarter of the frames, a quarter of the collision chances
       left = (pulse and self.blinker_side == 3) or self.blinker_test == 1
       right = (pulse and self.blinker_side == 4) or self.blinker_test == 2
-      ret.extend(hyundaicanfd.create_spas_messages(self.packer, self.CAN, self.frame, left, right, getattr(CS, "spas2", None), hazard))
+      ret.extend(hyundaicanfd.create_spas_messages(self.packer, self.CAN, self.frame, left, right, getattr(CS, "spas2", None),
+                                                         hazard and hyundaicanfd.hazard_request(self.hazard_test, self.frame)))
     return ret
 
   def update(self, CC, CS, now_nanos):
@@ -625,7 +626,7 @@ class CarController(CarControllerBase):
       self.max_angle_frames = params.get_int("MaxAngleFrames")
       self.steer_angle_test = params.get_int("SteerAngleTest")
       self.spas_steer_test = params.get_int("SpasSteerTest")
-      self.hazard_test = params.get_int("CanfdHazardTest") == 1
+      self.hazard_test = params.get_int("CanfdHazardTest")
       steerMax = params.get_int("CustomSteerMax")
       steerDeltaUp = params.get_int("CustomSteerDeltaUp")
       steerDeltaDown = params.get_int("CustomSteerDeltaDown")
