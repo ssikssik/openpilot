@@ -12,7 +12,7 @@ def angle_max(car, kph):
   return CarController.steer_angle_max(cc, kph / 3.6)
 
 
-@pytest.mark.parametrize("kph, expected", [(0, 450), (5, 450), (20, 450), (30, 450), (35, 312.5), (40, 175), (50, 175)])
+@pytest.mark.parametrize("kph, expected", [(kph, 175) for kph in (0, 5, 20, 30, 35, 40, 50)])
 def test_low_speed_angle_max(kph, expected):
   assert angle_max(CAR.KIA_EV4, kph) == pytest.approx(expected)
 

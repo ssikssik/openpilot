@@ -56,10 +56,9 @@ def test_real_hooks_authorize_exact_compatible_bus_after_ack(flags, bus):
   assert d.tx(0x16A, frame(0x16A, 11, "left", bus).dat)
 
 
-# joongyu01 fork: HDA2 camera SCC on bus 0 (16 | 8 ...) and HDA1 on bus 0 (0, 4, 8, 2048; since 732117e8) are left
-# out - without CANFD_SPAS_BLINKERS the runtime menu paths (CanfdBlinkerKick/MenuTest) send these ids under the shape
-# checks in safety_hyundai_canfd.h instead (test_hda1_kick_path_shape_checks_without_spas below)
-@pytest.mark.parametrize("flags", [16, 16 | 4])
+# joongyu01 fork: HDA2 camera SCC on bus 0 (16 | 8 ...) is left out - without CANFD_SPAS_BLINKERS the runtime menu paths
+# (CanfdBlinkerKick/MenuTest) send these ids under the shape checks in safety_hyundai_canfd.h instead
+@pytest.mark.parametrize("flags", [0, 4, 8, 16, 16 | 4, 2048])
 def test_disabled_never_admits_uds_or_spas(flags):
   bus = 1 if flags & 16 and not flags & 8 else 0
   d = Device(flags, bus)
@@ -68,24 +67,6 @@ def test_disabled_never_admits_uds_or_spas(flags):
     assert not d.tx(APRK, data)
   for a in SPAS:
     assert not d.tx(a, frame(a, 0, "left", bus).dat)
-
-
-# 732117e8 (11-17): HDA1 sends the parking ECU pause and SPAS1/SPAS2 like HDA2 (Kick, menu test, remote blinker, hazard).
-# Without the SPAS opt-in these ids take the Kick path's content checks: 0x7B1 only extended/default session,
-# communication disable without reply (PATCH_DISABLE) and tester present; the SPAS module's own forms that ask for a
-# reply (DISABLE) or switch communication back on (ENABLE) stay refused; SPAS frames keep their shape check.
-@pytest.mark.parametrize("flags", [0, 4, 8, 2048])
-def test_hda1_kick_path_shape_checks_without_spas(flags):
-  from opendbc.car.hyundai.spas import PATCH_DISABLE
-  d = Device(flags, 0)
-  d.stock()
-  for data in (EXTENDED, PATCH_DISABLE, PRESENT, DEFAULT):
-    assert d.tx(APRK, data)
-  for data in (DISABLE, ENABLE):
-    assert not d.tx(APRK, data)
-  for a in SPAS:
-    assert d.tx(a, frame(a, 0, "left", 0).dat)
-    assert not d.tx(a, frame(a, 0, "left", 0).dat, 2)  # wrong bus
 
 
 def test_requires_stock_and_each_positive_reply():
@@ -210,9 +191,11 @@ def test_parked_comparison_no_uds_ten_seconds_and_cooldown(flags):
 
 @pytest.mark.parametrize('bad', ['moving', 'gear', 'driver', 'controls', 'stock', 'stale', 'bus', 'disabled', 'bad_crc'])
 def test_parked_comparison_rejects_missing_or_unsafe_inputs(bad):
-  # disabled: no SPAS opt-in on HDA2 (bus 1); HDA1 flags 0 now takes the Kick path (test_hda1_kick_path_shape_checks_without_spas)
-  d = Device(flags=16 if bad == 'disabled' else 4096 | (16 if bad == 'bus' else 0), bus=1 if bad in ('bus', 'disabled') else 0)
-  parked(d, driver=bad == 'driver', stock_direction='right' if bad == 'stock' else None)
+  d = Device(flags=0 if bad == 'disabled' else 4096 | (16 if bad == 'bus' else 0), bus=1 if bad == 'bus' else 0)
+  parked(d, wheel=1 if bad == 'moving' else 0, gear=5 if bad == 'gear' else 0,
+         driver=bad == 'driver', stock_direction='right' if bad == 'stock' else None)
+  if bad == 'controls':
+    d.s.set_controls_allowed(True)
   if bad == 'stale':
     d.advance(100000)
   if bad == 'bad_crc':
@@ -396,12 +379,3 @@ def test_spas_steer_request_only_while_stopped():
   assert d.tx(0x165, bytes(24))  # the blinker path's all-zero frame still goes
   assert d.tx(APRK, EXTENDED, 1) and d.tx(APRK, EXTENDED, 0)
   assert not Device(16 | 4, 1).tx(APRK, EXTENDED, 1)
-
-
-# HighBeamTest (11-18): a 0x3C1 frame with no blinker bit - the lever pushed (byte2 0x04) or pulled (byte3 0x04) -
-# takes the plain shape check whether the SPAS stalk path is on or off, in any state
-@pytest.mark.parametrize('flags', [0, 4096, 4253])
-def test_highbeam_lever_frames_take_the_shape_check(flags):
-  d = Device(flags)
-  for b2, b3, ok in ((0x34, 0x00, True), (0x30, 0x04, True), (0x30, 0x08, False), (0x38, 0x00, False)):
-    assert d.tx(0x3C1, bytes([0x12, 0xb0, b2, b3, 0, 0, 0, 0])) == ok

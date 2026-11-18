@@ -29,7 +29,7 @@ def test_controller_enables_canfd_stopping_by_vehicle_scope(monkeypatch, canfd, 
 
 
 def step(controller, **overrides):
-  args = dict(active=True, requested=True, speed=0.3, held=False, accel=-0.5,
+  args = dict(active=True, requested=True, speed=ENTRY_SPEED * 0.8, held=False, accel=-0.5,
               previous_value=-0.5, jerk_u=2.0, jerk_l=1.0)
   args.update(overrides)
   return controller.update(**args)
@@ -38,12 +38,12 @@ def step(controller, **overrides):
 def test_normal_stop_keeps_zero_request_without_toggle():
   controller = CanfdStopping()
   for tick in range(150):
-    cmd = step(controller, speed=max(0, 0.6 - tick * DT * 0.4), held=tick >= 80)
+    cmd = step(controller, speed=max(0, ENTRY_SPEED - tick * DT * 0.4), held=tick >= 80)
     assert (cmd.stop_req, cmd.raw, cmd.value, cmd.lower) == (1, 0., 0., STOP_LOWER_BAND)
   assert controller.phase == StopPhase.held
 
 
-@pytest.mark.parametrize('speed', [.07, .3, .65])
+@pytest.mark.parametrize('speed', [.07, .08, ENTRY_SPEED])
 def test_persistent_creep_never_releases_request(speed):
   controller = CanfdStopping()
   for _ in range(1500):  # exceed every old timeout, distance and retry limit
@@ -102,8 +102,8 @@ def make_cs():
   return SimpleNamespace(
     scc_control={"ACC_ObjRelSpd": 0.0, "InfoDisplay": 5, "ZEROS_7": 1, "AccelLimitBandLower": 1.26},
     canfdSccHoldActive=False, softHoldActive=0, paddle_button_prev=0,
-    out=SimpleNamespace(aEgo=0.0, vEgo=0.3, vEgoRaw=0.3,
-                        wheelSpeeds=SimpleNamespace(fl=0.3, fr=0.3, rl=0.3, rr=0.3),
+    out=SimpleNamespace(aEgo=0.0, vEgo=ENTRY_SPEED * 0.8, vEgoRaw=ENTRY_SPEED * 0.8,
+                        wheelSpeeds=SimpleNamespace(fl=ENTRY_SPEED * 0.8, fr=ENTRY_SPEED * 0.8, rl=ENTRY_SPEED * 0.8, rr=ENTRY_SPEED * 0.8),
                         canValid=True, gearShifter="drive", brakePressed=False, gasPressed=False,
                         brakeHoldActive=False, parkingBrake=False, cruiseState=SimpleNamespace(available=True, standstill=True)),
   )
@@ -145,7 +145,7 @@ def test_no_object_state_trial_follows_final_stop_request_without_latching(camer
   stock = dict(cs.scc_control)
   controller = CanfdStopping()
   # shouldStop can be true while the approach gate still sends StopReq=0.
-  for stopping, speed, expected_stop in [(False, 2., 0), (True, 1., 0), (True, .3, 1),
+  for stopping, speed, expected_stop in [(False, 2., 0), (True, 1., 0), (True, ENTRY_SPEED, 1),
                                           (True, 0., 1), (True, .4, 1), (False, .4, 0)]:
     cs.out.vEgo = cs.out.vEgoRaw = speed
     cs.out.wheelSpeeds = SimpleNamespace(fl=speed, fr=speed, rl=speed, rr=speed)
@@ -229,8 +229,8 @@ def test_lower_band_precedes_stop_and_survives_hold_and_departure(camera, stock_
   stages = [(False, 10., .4, 0), (False, 2., -.5, 0)]
   if approach:
     stages.append((True, 1., -.8, 0))
-  stages += [(True, .3, -.5, 1), (True, 0., -.5, 1),
-             (True, .3, -.5, 1), (False, .3, .4, 0)]
+  stages += [(True, ENTRY_SPEED, -.5, 1), (True, 0., -.5, 1),
+             (True, ENTRY_SPEED, -.5, 1), (False, .3, .4, 0)]
   for stopping, speed, accel, stop_req in stages:
     cs.out.vEgo = cs.out.vEgoRaw = speed
     cs.out.wheelSpeeds = SimpleNamespace(fl=speed, fr=speed, rl=speed, rr=speed)
@@ -260,7 +260,7 @@ def test_packed_stop_zeros_both_requests_on_first_frame_and_keeps_zero(camera, i
   previous = initial
   for tick in range(200):
     # Rebound beyond the entry threshold must not create another release.
-    speed = .3 if tick < 40 else 1.2
+    speed = ENTRY_SPEED if tick < 40 else 1.2
     cs.out.vEgo = cs.out.vEgoRaw = speed
     cs.out.wheelSpeeds = SimpleNamespace(fl=speed, fr=speed, rl=speed, rr=speed)
     cs.out.aEgo = -.3 if tick < 40 else .5
@@ -364,7 +364,7 @@ def test_wheel_motion_overrides_zero_ego_for_initial_entry_but_never_retries(cam
   cs.canfdSccHoldActive = True
   cs.out.wheelSpeeds.fl = 1.
   assert send(camera, controller, cs)['StopReq'] == 0
-  cs.out.wheelSpeeds.fl = .3
+  cs.out.wheelSpeeds.fl = ENTRY_SPEED
   assert send(camera, controller, cs)['StopReq'] == 1
   cs.out.wheelSpeeds.fl = 1.
   assert send(camera, controller, cs)['StopReq'] == 1
@@ -509,8 +509,8 @@ def test_upper_edge_uses_final_request_after_approach(camera):
   approach = send(camera, controller, cs)
   assert approach['StopReq'] == 0
   assert approach['JerkUpperLimit'] == 2.
-  cs.out.vEgo = cs.out.vEgoRaw = .3
-  cs.out.wheelSpeeds = SimpleNamespace(fl=.3, fr=.3, rl=.3, rr=.3)
+  cs.out.vEgo = cs.out.vEgoRaw = ENTRY_SPEED
+  cs.out.wheelSpeeds = SimpleNamespace(fl=ENTRY_SPEED, fr=ENTRY_SPEED, rl=ENTRY_SPEED, rr=ENTRY_SPEED)
   request = send(camera, controller, cs)
   assert request['StopReq'] == 1
   assert request['JerkUpperLimit'] == 2.  # already sent before the real edge
@@ -589,3 +589,9 @@ def test_unheld_roll_brake_ends_with_the_stop_request():
   for _ in range(20):
     cmd = step(controller, speed=.02, previous_value=0.)
   assert (cmd.raw, cmd.value) == (0., 0.)
+
+
+@pytest.mark.parametrize("speed,expected", [(0.0, 1), (0.1, 1), (0.1001, 0), (0.3, 0), (0.7, 0)])
+def test_ej_first_stop_entry_boundary(speed, expected):
+  assert ENTRY_SPEED == 0.1
+  assert step(CanfdStopping(), speed=speed).stop_req == expected

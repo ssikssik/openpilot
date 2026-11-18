@@ -288,7 +288,7 @@ class Controls:
     # 주의: MEB는 위 곡률 PID가 실제 조향을 만들고, 아래 LaC(LatControlAngle)와 lac_log는
     # 파이프라인 형식 유지를 위한 더미임 (로그의 angleState는 실제 제어 상태가 아님).
     steer, steeringAngleDeg, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
-                                                       self.steer_limited_by_safety, output_desired_curvature,
+                                                       self.steer_limited_by_safety, self.desired_curvature,
                                                        CC, curvature_limited,
                                                        model_data=self.sm['modelV2'])
     actuators.torque = float(steer)

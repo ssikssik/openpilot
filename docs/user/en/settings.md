@@ -537,3 +537,11 @@ Manual indication projects 0.3s of measured boundary approach, advancing the cen
 After confirmed turn entry, the TBT indicator ends its hold as the wheel returns within ±15 degrees while moving, without waiting for the remaining 30m. Pre-turn traffic-light waits remain held; see [lane changes](lane-change.md) for the entry conditions.
 
 The ATC right lane-change distance uses 0m for off and 50m steps up to 500m. The former ON setting migrates to 250m at restart.
+
+## ej integration in carrot-dev
+
+The ej menu interpolates lateral acceleration limits between low speed (at or below 80km/h) and high speed (at or above 120km/h). `LatAccelMaxLow` and `LatAccelMaxHigh` default to 45 and 30 (4.5 and 3.0m/s²); their displayed range is 20–60. `LatJerkMax` defaults to 50 (5.0m/s³), with a displayed range of 20–100. Saved limits apply immediately to target curvature; they do not change MDPS protection limits. The current EV4 steering angle limit is 175°.
+
+`ComfortBrake` defaults to 24 (2.4m/s²), with a range of 15–35. Lower values use a gentler braking reference. Safe mode applies a factor of 0.9; the running planner periodically rereads the value.
+
+`RobotFaceUI` replaces the normal view with a face reflecting vehicle state. `RobotFaceTest` selects live expressions at 0 and test expressions at 1–25. When face mode is disabled, a test clears after 10 seconds. Existing screen-off, touch-wake and alert-wake behavior remains effective in face mode. Safety alerts appear above the face.

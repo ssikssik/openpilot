@@ -42,6 +42,11 @@ def test_clamp_direction_slew_and_alert(corrector, direction):
   clock.now += 0.1
   assert clamp.update(md, 10.0, False) == pytest.approx(direction * 0.0015)
   assert clamp.alert_active
+  # ej ramps down an existing correction under its slew limit.
+  assert clamp.update(md, 10.0, True) == pytest.approx(direction * 0.0015)
+  clock.now += 0.1
+  assert clamp.update(md, 10.0, True) == pytest.approx(direction * 0.0005)
+  clock.now += 0.1
   assert clamp.update(md, 10.0, True) == 0.0
   assert not clamp.alert_active
   clock.now += 1.99
@@ -58,7 +63,7 @@ def test_deadband_and_edge_fallback(corrector):
   assert clamp.update(model(-0.5), 10.0, False) == 0.0
   clock.now += 0.1
   assert clamp.update(model(-1.1, (0.0,) * 4), 10.0, False) > 0.0
-  clamp.reset()
+  clamp = dh.ClampSteerCorrector(Settings())
   assert clamp.update(model(-1.1), 1.0, False) == 0.0
   clamp.params.values['ClampEnable'] = False
   clock.now += 0.1
@@ -80,16 +85,15 @@ def test_path_clamp_keeps_configured_distance_and_yields_for_lane_change():
   assert np.array_equal(planner.apply_min_distance_clamp(path.copy(), 10.0), path)
 
 
-def test_lateral_limit_settings_preserve_existing_envelope_and_ev4_scale():
-  defaults = (6.5, 4.5, 7.0)
+def test_ej_lateral_limit_settings_and_curvature_envelope():
+  defaults = (4.5, 3.0, 5.0)
   assert dh.read_lat_accel_limits(Settings()) == defaults
-  assert dh.read_lat_accel_limits(Settings(LatAccelMaxLow=999, LatAccelMaxHigh=999, LatJerkMax=999)) == defaults
+  assert dh.read_lat_accel_limits(Settings(LatAccelMaxLow=999, LatAccelMaxHigh=999, LatJerkMax=999)) == (10.0, 10.0, 20.0)
   low, high, jerk = dh.read_lat_accel_limits(Settings(LatAccelMaxLow=30, LatAccelMaxHigh=25, LatJerkMax=40))
   assert (low, high, jerk) == (3.0, 2.5, 4.0)
   v_ego = 20.0
-  for fingerprint, scale in [('', 1.0), (CAR.KIA_EV4, 2.0)]:
-    curvature, limited = dh.clip_curvature(v_ego, 0.02, 0.02, 0.0, car_fingerprint=fingerprint,
-                                           max_lat_accel_low=low, max_lat_accel_high=high, max_lat_jerk=jerk)
-    assert limited and curvature * v_ego ** 2 == pytest.approx(scale * low)
+  curvature, limited = dh.clip_curvature(v_ego, 0.02, 0.02, 0.0,
+                                         max_lat_accel_low=low, max_lat_accel_high=high, max_lat_jerk=jerk)
+  assert limited and curvature * v_ego ** 2 == pytest.approx(low)
   curvature, _ = dh.clip_curvature(v_ego, 0.0, 0.02, 0.0, max_lat_jerk=jerk)
   assert curvature * v_ego ** 2 == pytest.approx(jerk * dh.DT_CTRL)
