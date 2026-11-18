@@ -152,11 +152,6 @@ class MiciMainLayout(Scroller):
     face_mode = (self._robot_face.is_face_mode
                  and not gui_app.widget_in_stack(self._settings_layout)
                  and not gui_app.widget_in_stack(self._onboarding_window))
-    # 얼굴 표시 중에는 화면이 꺼지지 않도록 유지한다. ui_state.py가 구버전이면
-    # (부분 동기화) 메서드가 없을 수 있으니 getattr로 확인한다.
-    set_face_active = getattr(device, "set_face_active", None)
-    if set_face_active is not None:
-      set_face_active(face_mode)
     if face_mode:
       self._robot_face.render(self._rect)
     else:

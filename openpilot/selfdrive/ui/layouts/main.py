@@ -174,11 +174,6 @@ class MainLayout(Widget):
     # 토글만으로 얼굴을 미리볼 수 있다 — 시스템 강제 onroad 없이 UI만으로
     # 동작한다. 설정 화면에서는 얼굴을 가려 토글을 끌 수 있게 한다.
     face_mode = self._robot_face.is_face_mode and self._current_mode != MainState.SETTINGS
-    # 얼굴 표시 중에는 화면이 꺼지지 않도록 유지한다. ui_state.py가 구버전이면
-    # (부분 동기화) 메서드가 없을 수 있으니 getattr로 확인한다.
-    set_face_active = getattr(device, "set_face_active", None)
-    if set_face_active is not None:
-      set_face_active(face_mode)
     if face_mode:
       self._robot_face.render(content_rect)
     else:
