@@ -333,7 +333,7 @@ class HudRenderer(Widget):
             ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed):
       for temperature in temperatures:
         badge = self._draw_runtime_badge(*temperature, right, top, scale=0.85)
-        top = badge.y + badge.height + 8
+        right = badge.x - 8
       return
 
     state = usbgpu_badge_state(ui_state.usbgpu_compiled, ui_state.usbgpu_loading,
@@ -354,7 +354,7 @@ class HudRenderer(Widget):
     top = badge.y + badge.height + 8
     for temperature in temperatures:
       badge = self._draw_runtime_badge(*temperature, right, top, scale=0.85)
-      top = badge.y + badge.height + 8
+      right = badge.x - 8
 
   def _draw_runtime_badge(self, text, state, right, top, scale=1.0) -> rl.Rectangle:
     color = rl.Color(*state, 230) if isinstance(state, tuple) else {
