@@ -14,6 +14,7 @@ from openpilot.selfdrive.modeld.big_model import model_cache_dir
 from openpilot.selfdrive.modeld.big_model_status import delivery_badge, read_big_model_status
 from openpilot.selfdrive.ui.carrot_param_cache import RealtimeUiParamSnapshot, TimedSnapshotCache, read_realtime_ui_params
 from openpilot.selfdrive.ui.lib.prime_state import PrimeState
+from openpilot.selfdrive.ui.device_temperature import comma_temperature_badge
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.hardware import HARDWARE, PC
 
@@ -125,6 +126,7 @@ class UIState:
     self.usbgpu_startup_failed: bool = False
     self.jetlink_badge = None
     self.jetlink_temperature_badge = None
+    self.comma_temperature_badge = None
 
     self.update_params()
 
@@ -147,6 +149,7 @@ class UIState:
   def update(self) -> None:
     self.prime_state.start()  # start thread after manager forks ui
     self.sm.update(0)
+    self.comma_temperature_badge = comma_temperature_badge(self.sm, time.monotonic())
     self._update_state()
     self._update_status()
     if time.monotonic() - self._param_update_time > 5.0:

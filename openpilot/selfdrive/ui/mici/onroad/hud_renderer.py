@@ -326,12 +326,14 @@ class HudRenderer(Widget):
     # Keep runtime state visible while the shared USB hub re-enumerates; a
     # transient missing sysfs sample must not hide loading or failure details.
     right, top = rect.x + rect.width - 24, rect.y + 12
-    temperature = getattr(ui_state, 'jetlink_temperature_badge', None)
+    temperatures = [badge for badge in (getattr(ui_state, 'jetlink_temperature_badge', None),
+                                        getattr(ui_state, 'comma_temperature_badge', None)) if badge]
     if not (getattr(ui_state, 'jetlink_badge', None) or getattr(ui_state, 'usbgpu_delivery_badge', None) or
             ui_state.usbgpu_present or ui_state.usbgpu_active or
             ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed):
-      if temperature:
-        self._draw_runtime_badge(*temperature, right, top)
+      for temperature in temperatures:
+        badge = self._draw_runtime_badge(*temperature, right, top)
+        top = badge.y + badge.height + 8
       return
 
     state = usbgpu_badge_state(ui_state.usbgpu_compiled, ui_state.usbgpu_loading,
@@ -346,8 +348,10 @@ class HudRenderer(Widget):
     if getattr(ui_state, 'usbgpu_recovery_badge', None) and not ui_state.usbgpu_active:
       text, state = ui_state.usbgpu_recovery_badge
     badge = self._draw_runtime_badge(text, state, right, top)
-    if temperature:
-      self._draw_runtime_badge(*temperature, right, badge.y + badge.height + 8)
+    top = badge.y + badge.height + 8
+    for temperature in temperatures:
+      badge = self._draw_runtime_badge(*temperature, right, top)
+      top = badge.y + badge.height + 8
 
   def _draw_runtime_badge(self, text, state, right, top) -> rl.Rectangle:
     color = rl.Color(*state, 230) if isinstance(state, tuple) else {

@@ -32,4 +32,5 @@ class OverlayState:
       sm.valid['carrotMan'], sm.alive['carrotMan'],
       ui.usbgpu_active, ui.usbgpu_loading, ui.usbgpu_startup_failed,
       getattr(ui, 'usbgpu_recovery_badge', None),
+      getattr(ui, 'comma_temperature_badge', None),
     )
