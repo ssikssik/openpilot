@@ -332,7 +332,7 @@ class HudRenderer(Widget):
             ui_state.usbgpu_present or ui_state.usbgpu_active or
             ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed):
       for temperature in temperatures:
-        badge = self._draw_runtime_badge(*temperature, right, top, scale=0.7)
+        badge = self._draw_runtime_badge(*temperature, right, top, scale=0.85)
         top = badge.y + badge.height + 8
       return
 
@@ -346,14 +346,14 @@ class HudRenderer(Widget):
     scale = 1.0
     if getattr(ui_state, 'jetlink_badge', None) and not ui_state.usbgpu_active:
       text, state = ui_state.jetlink_badge
-      scale = 0.7
+      scale = 0.85
     if getattr(ui_state, 'usbgpu_recovery_badge', None) and not ui_state.usbgpu_active:
       text, state = ui_state.usbgpu_recovery_badge
       scale = 1.0
     badge = self._draw_runtime_badge(text, state, right, top, scale=scale)
     top = badge.y + badge.height + 8
     for temperature in temperatures:
-      badge = self._draw_runtime_badge(*temperature, right, top, scale=0.7)
+      badge = self._draw_runtime_badge(*temperature, right, top, scale=0.85)
       top = badge.y + badge.height + 8
 
   def _draw_runtime_badge(self, text, state, right, top, scale=1.0) -> rl.Rectangle:

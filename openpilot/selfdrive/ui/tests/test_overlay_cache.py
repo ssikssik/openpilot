@@ -178,7 +178,7 @@ def test_camera_and_critical_states_invalidate_both_layers(layer_env):
   state.update(ui, camera, 0, 0)
   assert state.enabled and not state.urgent
   old = state.key
-  ui.comma_temperature_badge = ('COMMA 65.0°C', (255, 255, 0))
+  ui.comma_temperature_badge = ('C 65.0°C', (255, 255, 0))
   state.update(ui, camera, 0, 0)
   assert state.key != old
   old = state.key

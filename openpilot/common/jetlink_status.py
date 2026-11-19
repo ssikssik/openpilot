@@ -171,7 +171,7 @@ def temperature_badge(health):
   t = max(50., min(90., temperature))
   red = round(255 * min(1., (t - 50) / 15))
   green = round(255 - 6 * max(0., t - 65)) if t <= 80 else round(165 * (90 - t) / 10)
-  return f'{temperature:.1f}°C', (red, green, 0)
+  return f'J {temperature:.1f}°C', (red, green, 0)
 
 
 def badge():

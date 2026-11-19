@@ -18,4 +18,4 @@ def comma_temperature_badge(sm, now):
   t = max(50., min(90., temperature))
   red = round(255 * min(1., (t - 50) / 15))
   green = round(255 - 6 * max(0., t - 65)) if t <= 80 else round(165 * (90 - t) / 10)
-  return f'COMMA {temperature:.1f}°C', (red, green, 0)
+  return f'C {temperature:.1f}°C', (red, green, 0)
