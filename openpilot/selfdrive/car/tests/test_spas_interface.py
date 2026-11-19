@@ -1,10 +1,10 @@
-﻿import ast
+import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
 from openpilot.cereal import car
-from opendbc.car.hyundai.spas import compatible, SPAS
+from opendbc.car.hyundai.spas import compatible, kick_compatible, SPAS
 from opendbc.car.hyundai.values import HyundaiFlags, HyundaiSafetyFlags
 
 

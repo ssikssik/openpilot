@@ -545,3 +545,11 @@ The ej menu interpolates lateral acceleration limits between low speed (at or be
 `ComfortBrake` defaults to 24 (2.4m/s²), with a range of 15–35. Lower values use a gentler braking reference. Safe mode applies a factor of 0.9; the running planner periodically rereads the value.
 
 `RobotFaceUI` replaces the normal view with a face reflecting vehicle state. `RobotFaceTest` selects live expressions at 0 and test expressions at 1–25. When face mode is disabled, a test clears after 10 seconds. Existing screen-off, touch-wake and alert-wake behavior remains effective in face mode. Safety alerts appear above the face.
+
+## Joongyu and Carrot synchronization (2026-11-19)
+
+Joongyu Lab moves to the beginning of the settings menu. `CanfdBvmReverse` defaults to off (0); 1 requests the left cluster blind-spot camera while reversing and 2 requests the right. It overrides existing blind-spot display tests while in Reverse. Actual vehicle acceptance remains unverified. Hazard test value 2 requests fast flashing.
+
+After unconfirmed SPAS restoration, the session returns to idle instead of remaining locked until restart. It does not automatically replay the previous request: a new request and healthy stock messages are required.
+
+The internal driving model changes to Cheddar. External Jetson/eGPU model selection and their existing runtime remain unchanged. Existing ej settings, robot face and screen-saver behavior are retained. Desktop checks do not establish physical driving performance.
