@@ -39,7 +39,7 @@ def test_missing_or_stale_readings_are_hidden(kwargs):
 
 @pytest.mark.parametrize('mici', [False, True])
 @pytest.mark.parametrize('jetson', [False, True])
-def test_both_huds_stack_temperature_with_and_without_external_device(mici, jetson):
+def test_both_huds_align_temperature_row_with_and_without_external_device(mici, jetson):
   path = Path(__file__).parents[1] / ('mici/onroad/hud_renderer.py' if mici else 'onroad/hud_renderer.py')
   tree = ast.parse(path.read_text())
   cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'HudRenderer')
@@ -54,9 +54,16 @@ def test_both_huds_stack_temperature_with_and_without_external_device(mici, jets
   exec(compile(ast.Module(body=[method], type_ignores=[]),str(path),'exec'), env)
   calls = []
   def draw(text, color, right, top, scale=1.0):
-    calls.append((text, top, scale))
-    return NS(y=top, height=24 * scale)
+    calls.append((text, top, scale, right))
+    return NS(x=right-100*scale, y=top, height=24 * scale)
   env['_draw_egpu_badge'](NS(_draw_runtime_badge=draw), NS(x=0,y=0,width=536,height=240))
   assert [x[0] for x in calls] == (['jetSON', 'J 60.0°C', 'C 65.0°C'] if jetson else ['C 65.0°C'])
   assert all(x[2] == 0.85 for x in calls)
-  assert all(b[1] == pytest.approx(a[1]+24*a[2]+8) for a,b in zip(calls,calls[1:]))
+  if jetson:
+    state, jetson_temp, comma_temp = calls
+    assert jetson_temp[1] == pytest.approx(state[1] + 24 * state[2] + 8)
+    assert comma_temp[1] == jetson_temp[1]
+    assert comma_temp[3] == pytest.approx(jetson_temp[3] - 100 * 0.85 - 8)
+    assert jetson_temp[3] == state[3]
+  else:
+    assert calls[0][3] == (512 if mici else 422)
