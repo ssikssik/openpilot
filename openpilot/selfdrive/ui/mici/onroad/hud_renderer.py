@@ -332,7 +332,7 @@ class HudRenderer(Widget):
             ui_state.usbgpu_present or ui_state.usbgpu_active or
             ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed):
       for temperature in temperatures:
-        badge = self._draw_runtime_badge(*temperature, right, top)
+        badge = self._draw_runtime_badge(*temperature, right, top, scale=0.7)
         top = badge.y + badge.height + 8
       return
 
@@ -343,17 +343,20 @@ class HudRenderer(Widget):
     if (getattr(ui_state, "usbgpu_delivery_badge", None) and
         not (ui_state.usbgpu_active or ui_state.usbgpu_loading or ui_state.usbgpu_startup_failed)):
       text, state = ui_state.usbgpu_delivery_badge
+    scale = 1.0
     if getattr(ui_state, 'jetlink_badge', None) and not ui_state.usbgpu_active:
       text, state = ui_state.jetlink_badge
+      scale = 0.7
     if getattr(ui_state, 'usbgpu_recovery_badge', None) and not ui_state.usbgpu_active:
       text, state = ui_state.usbgpu_recovery_badge
-    badge = self._draw_runtime_badge(text, state, right, top)
+      scale = 1.0
+    badge = self._draw_runtime_badge(text, state, right, top, scale=scale)
     top = badge.y + badge.height + 8
     for temperature in temperatures:
-      badge = self._draw_runtime_badge(*temperature, right, top)
+      badge = self._draw_runtime_badge(*temperature, right, top, scale=0.7)
       top = badge.y + badge.height + 8
 
-  def _draw_runtime_badge(self, text, state, right, top) -> rl.Rectangle:
+  def _draw_runtime_badge(self, text, state, right, top, scale=1.0) -> rl.Rectangle:
     color = rl.Color(*state, 230) if isinstance(state, tuple) else {
       "active": rl.Color(0, 255, 0, 230),
       "loading": rl.Color(255, 255, 0, 230),
@@ -364,13 +367,13 @@ class HudRenderer(Widget):
     }[state]
     numeric_or_ascii = text.isascii() or text.endswith('°C')
     font = self._font_semi_bold if numeric_or_ascii else gui_app.font(FontWeight.DISPLAY)
-    font_size = 22
+    font_size = 22 * scale
     text_size = measure_text_cached(font, text, font_size)
-    pad_x, pad_y = 10, 5
+    pad_x, pad_y = 10 * scale, 5 * scale
     width = text_size.x + pad_x * 2
     badge = rl.Rectangle(right - width, top, width, text_size.y + pad_y * 2)
     rl.draw_rectangle_rounded(badge, 0.35, 8, rl.Color(0, 0, 0, 150))
-    rl.draw_rectangle_rounded_lines_ex(badge, 0.35, 8, 2, color)
+    rl.draw_rectangle_rounded_lines_ex(badge, 0.35, 8, 2 * scale, color)
     rl.draw_text_ex(font, text, rl.Vector2(badge.x + pad_x, badge.y + pad_y), font_size, 0, color)
     return badge
 

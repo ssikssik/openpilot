@@ -53,9 +53,10 @@ def test_both_huds_stack_temperature_with_and_without_external_device(mici, jets
          'UI_CONFIG': NS(border_size=30, button_size=60), 'usbgpu_badge_state': lambda *a: 'ready'}
   exec(compile(ast.Module(body=[method], type_ignores=[]),str(path),'exec'), env)
   calls = []
-  def draw(text, color, right, top):
-    calls.append((text, top))
-    return NS(y=top, height=24)
+  def draw(text, color, right, top, scale=1.0):
+    calls.append((text, top, scale))
+    return NS(y=top, height=24 * scale)
   env['_draw_egpu_badge'](NS(_draw_runtime_badge=draw), NS(x=0,y=0,width=536,height=240))
   assert [x[0] for x in calls] == (['jetSON', '60.0°C', 'COMMA 65.0°C'] if jetson else ['COMMA 65.0°C'])
-  assert all(b[1] == a[1]+32 for a,b in zip(calls,calls[1:]))
+  assert all(x[2] == 0.7 for x in calls)
+  assert all(b[1] == pytest.approx(a[1]+24*a[2]+8) for a,b in zip(calls,calls[1:]))
