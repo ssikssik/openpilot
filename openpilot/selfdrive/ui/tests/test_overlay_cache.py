@@ -178,6 +178,14 @@ def test_camera_and_critical_states_invalidate_both_layers(layer_env):
   state.update(ui, camera, 0, 0)
   assert state.enabled and not state.urgent
   old = state.key
+  ui.comma_temperature_badge = ('COMMA 65.0°C', (255, 255, 0))
+  state.update(ui, camera, 0, 0)
+  assert state.key != old
+  old = state.key
+  ui.comma_temperature_badge = None  # stale telemetry must invalidate the cached badge too
+  state.update(ui, camera, 0, 0)
+  assert state.key != old
+  old = state.key
   sm['longitudinalPlan'].trafficState = 2
   state.update(ui, camera, 0, 0)
   assert state.key != old
