@@ -42,11 +42,11 @@ class Ecu:
       self.stock = now
 
 
-def make_cc(control=True, test=0, spas=0, ecu=None, mode=1, model=True):
-  cc = SimpleNamespace(blinker_control=control, blinker_test=test, blinker_kick_mode=mode, aprk_state=0, aprk_frame=0, aprk_nanos=0, aprk_acked=False,
+def make_cc(control=True, test=0, spas=0, ecu=None, mode=1, model=True, spas2_only=0):
+  cc = SimpleNamespace(blinker_control=control, blinker_test=test, blinker_kick_mode=mode, spas2_only=spas2_only, aprk_spas2_only=0, aprk_state=0, aprk_frame=0, aprk_nanos=0, aprk_acked=False,
                          lane_crossing=Crossing(), blinker_side=0, blinker_pulse_end=0, frame=0, yellow_until=[0, 0],
                          blinker_kick_model=model, lane_change_prev="off", model_pulse=False, blinker_pulse_start=0, model_hold={}, model_flashes=0, cgw_kick=False, cgw_trial=0, cgw_last_tx=-carcontroller.CGW_REARM_FRAMES,
-                         remote_blinker=0, remote_pulse=False, hazard_test=False,
+                         remote_blinker=0, remote_pulse=False, hazard_test=False, hazard_shot_sent=False, hazard_shot_frame=0,
                          CAN=SimpleNamespace(ECAN=0, ACAN=1), packer=CANPacker('hyundai_canfd_generated'), params=SimpleNamespace(STEER_THRESHOLD=250),
                          spas_steer_test=spas, spas_angle=0., aprk_buses=(), ecu=ecu or Ecu())
   cc.kick_pulse = lambda CS: CarController.kick_pulse(cc, CS)
@@ -69,7 +69,7 @@ def run(cc, frames, out):
 
 def step(cc, frames, gear, kph, cross=0, lamp=False, tunnel=0, roundabout=False, left_line=10, right_line=10):
   cc.lane_crossing.side = cross or cc.lane_crossing.side
-  return run(cc, frames, lambda: SimpleNamespace(out=SimpleNamespace(
+  return run(cc, frames, lambda: SimpleNamespace(controls_ready_count=200, out=SimpleNamespace(
     gearShifter=gear, vEgo=kph / 3.6, leftBlinker=lamp, rightBlinker=False, steeringTorque=0, naviTunnel=bool(tunnel),
     naviRoundabout=roundabout, leftLaneLine=left_line, rightLaneLine=right_line)))
 
@@ -274,6 +274,70 @@ def test_spas_steer_test_parked_only():
   assert uds(run(cc, 1, out(held=True))) == [(DEFAULT, 0), (DEFAULT, 1)]
   assert run(cc, 1, out(gear=D)) == []
 
+
+
+def spas1(sent):
+  return [m for m in sent if m[0] == 0x165]
+
+
+def test_spas2_only_1_leaves_the_parking_ecu_on():
+  # CanfdBlinkerSpas2Only 1 (Sorento HEV 11-19, 02_logs s70): no 0x7B1 at all, the ECU keeps its own SPAS1, ours is SPAS2 only
+  cc = make_cc(control=False, test=1, spas2_only=1)
+  sent = step(cc, 20, P, 0)
+  assert uds(sent) == [] and spas1(sent) == [] and not cc.ecu.quiet and cc.ecu.stock > 0
+  assert spas2(cc, sent) == [3] * 19  # none on the switch frame; the stock stream does not end it
+  cc.blinker_test = 0
+  assert step(cc, 1, P, 0) == [] and cc.aprk_state == carcontroller.APRK_IDLE  # nothing to give back
+  # a driving kick: the whole pulse, no handshake wait
+  cc = make_cc(spas2_only=1)
+  sent = step(cc, carcontroller.BLINKER_PULSE_FRAMES + 10, D, 60, cross=3)
+  assert uds(sent) == [] and spas1(sent) == [] and set(spas2(cc, sent)) == {3}
+  assert abs(len(spas2(cc, sent)) - (carcontroller.BLINKER_PULSE_FRAMES - 1)) <= 1
+
+
+def test_spas2_only_2_silences_the_ecu_and_sends_spas2_only():
+  cc = make_cc(control=False, test=2, spas2_only=2)
+  sent = step(cc, 30, P, 0)
+  assert uds(sent)[:4] == [(EXT, 0), (EXT, 1), (QUIET, 0), (QUIET, 1)] and cc.ecu.quiet
+  assert spas1(sent) == [] and set(spas2(cc, sent)) == {4}
+  cc.blinker_test = 0
+  assert uds(step(cc, 1, P, 0)) == [(DEFAULT, 0), (DEFAULT, 1)]
+  # 0 (default): SPAS1 and SPAS2 together, as before
+  cc = make_cc(control=False, test=2)
+  sent = step(cc, 30, P, 0)
+  assert len(spas1(sent)) == len(spas2(cc, sent)) > 0
+
+
+def test_spas2_only_leaves_spas_steer_test_alone():
+  cc = make_cc(control=False, spas=90, spas2_only=1)
+  out = lambda: SimpleNamespace(out=SimpleNamespace(
+    gearShifter=P, standstill=True, steeringPressed=False, steeringAngleDeg=0., leftBlinker=False,
+    rightBlinker=False, steeringTorque=0, leftLaneLine=0, rightLaneLine=0))
+  sent = run(cc, 40, out)
+  assert uds(sent)[:4] == [(EXT, 0), (EXT, 1), (QUIET, 0), (QUIET, 1)] and spas1(sent) and spas2(cc, sent) == []
+  # joining a running SPAS2-only session (MenuTest, value 1): that session ends and the steering test takes the handshake
+  cc = make_cc(control=False, test=1, spas2_only=1)
+  assert uds(step(cc, 30, P, 0)) == []
+  cc.spas_steer_test = 90
+  sent = run(cc, 40, out)
+  first = next(i for i, m in enumerate(sent) if m[0] == 0x165)
+  assert uds(sent[:first])[:4] == [(EXT, 0), (EXT, 1), (QUIET, 0), (QUIET, 1)] and cc.ecu.quiet
+
+
+def test_spas2_only_change_mid_session_starts_over():
+  # 1 -> 2: the ECU gets silenced; 2 -> 1: given back once (10 01), then no 0x7B1; 1 -> 0: handshake before any SPAS1
+  cc = make_cc(control=False, test=1, spas2_only=1)
+  step(cc, 30, P, 0)
+  cc.spas2_only = 2
+  sent = step(cc, 30, P, 0)
+  assert uds(sent)[:4] == [(EXT, 0), (EXT, 1), (QUIET, 0), (QUIET, 1)] and cc.ecu.quiet and spas1(sent) == []
+  cc.spas2_only = 1
+  sent = step(cc, 30, P, 0)
+  assert uds(sent) == [(DEFAULT, 0), (DEFAULT, 1)] and not cc.ecu.quiet and spas1(sent) == [] and spas2(cc, sent)
+  cc.spas2_only = 0
+  sent = step(cc, 30, P, 0)
+  first = next(i for i, m in enumerate(sent) if m[0] == 0x165)
+  assert uds(sent[:first])[:4] == [(EXT, 0), (EXT, 1), (QUIET, 0), (QUIET, 1)]
 
 def test_carstate_sees_stock_frames_and_replies_without_touching_can_validity():
   from opendbc.can import CANParser
@@ -631,13 +695,83 @@ def test_hazard_without_camera_0x1ea_uses_spas2_hazards():
 
 def test_hazard_with_camera_0x1ea_leaves_spas2_alone():
   # Ioniq 5 PE: bit 104 of the camera's 0x1ea carries it (hyundaicanfd), nothing on SPAS2
-  cc = make_cc(control=False, ecu=Ecu(answers=False))
-  cc.hazard_test = True
-  sent = run(cc, 50, lambda: SimpleNamespace(adrv_0x1ea={}, out=SimpleNamespace(
-    gearShifter=P, vEgo=0., leftBlinker=False, rightBlinker=False, steeringTorque=0, naviTunnel=False,
-    naviRoundabout=False, leftLaneLine=10, rightLaneLine=10)))
-  assert sent == [] and cc.aprk_state == carcontroller.APRK_IDLE
+  for mode in (1, 2, 3, 4, 12, 17):  # 3/4/10-17 are SPAS2-only tests: nothing here either
+    cc = make_cc(control=False, ecu=Ecu(answers=False))
+    cc.hazard_test = mode
+    sent = run(cc, 50, lambda: SimpleNamespace(adrv_0x1ea={}, out=SimpleNamespace(
+      gearShifter=P, vEgo=0., leftBlinker=False, rightBlinker=False, steeringTorque=0, naviTunnel=False,
+      naviRoundabout=False, leftLaneLine=10, rightLaneLine=10)))
+    assert sent == [] and cc.aprk_state == carcontroller.APRK_IDLE
 
+
+
+def test_hazard_one_shot_sends_a_single_value_1_frame():
+  # CanfdHazardTest 3 (Tucson, user 11-19): one value-1 frame, then the session is given back; 0 then 3 sends it again
+  cc = make_cc(control=False, ecu=Ecu(answers=False))
+  cc.hazard_test = 3
+  sent = step(cc, carcontroller.APRK_REPLY_FRAMES + 30, P, 0)
+  assert spas2(cc, sent).count(1) == 1 and set(spas2(cc, sent)) == {1}
+  assert uds(sent)[-2:] == [(DEFAULT, 0), (DEFAULT, 1)] and cc.aprk_state == carcontroller.APRK_IDLE
+  assert step(cc, 100, P, 0) == []  # held at 3: nothing more
+  cc.hazard_test = 0
+  step(cc, 1, P, 0)
+  cc.hazard_test = 3
+  assert spas2(cc, step(cc, carcontroller.APRK_REPLY_FRAMES + 30, P, 0)).count(1) == 1
+
+
+def test_hazard_alternate_asks_left_and_right_in_turn():
+  # CanfdHazardTest 4: BLINKER_CONTROL 3 and 4 in 0.4 s turns, never 1
+  cc = make_cc(control=False, ecu=Ecu(answers=False))
+  cc.hazard_test = 4
+  step(cc, carcontroller.APRK_REPLY_FRAMES + 1, P, 0)
+  values = spas2(cc, step(cc, 4 * carcontroller.HAZARD_ALT_FRAMES, P, 0))
+  runs = [len(list(g)) for _, g in __import__("itertools").groupby(values)]
+  assert set(values) == {3, 4} and all(r == carcontroller.HAZARD_ALT_FRAMES for r in runs[1:-1])
+  cc.hazard_test = 0
+  assert uds(step(cc, 1, P, 0)) == [(DEFAULT, 0), (DEFAULT, 1)]
+
+
+
+def test_hazard_one_shot_survives_another_running_test():
+  # review 11-19: with MenuTest running too, the frame after the shot must not replace it in panda's hold (KickMode 1)
+  cc = make_cc(control=False, test=1, ecu=Ecu(answers=False))
+  cc.hazard_test = 3
+  sent = step(cc, carcontroller.APRK_REPLY_FRAMES + 30, P, 0)
+  assert spas2(cc, sent).count(1) == 1
+  # host frames after the shot: nothing on SPAS1/SPAS2 for the hold, then MenuTest's value 3 again
+  cc = make_cc(control=False, test=1, ecu=Ecu(answers=False))
+  cc.hazard_test = 3
+  per_frame = [step(cc, 1, P, 0) for _ in range(carcontroller.APRK_REPLY_FRAMES + 30)]
+  shot = next(i for i, f in enumerate(per_frame) if 1 in spas2(cc, f))
+  hold = per_frame[shot + 1:shot + carcontroller.HAZARD_SHOT_HOLD_FRAMES]
+  assert all(not [m for m in f if m[0] in (0x165, 0x16A)] for f in hold)
+  assert spas2(cc, per_frame[shot + carcontroller.HAZARD_SHOT_HOLD_FRAMES]) == [3]
+
+
+def test_trial_values_wait_for_the_0x1ea_decision():
+  # review 11-19: before carstate could adopt ADRV_0x1ea (ready count 122), or once the camera bus has shown 0x1EA,
+  # 3/4/10-17 send nothing; 1 keeps its old behaviour
+  for mode in (3, 4, 12):
+    cc = make_cc(control=False, ecu=Ecu(answers=False))
+    cc.hazard_test = mode
+    early = run(cc, 60, lambda: SimpleNamespace(controls_ready_count=0, out=SimpleNamespace(
+      gearShifter=P, vEgo=0., leftBlinker=False, rightBlinker=False, steeringTorque=0, naviTunnel=False,
+      naviRoundabout=False, leftLaneLine=10, rightLaneLine=10)))
+    seen = run(cc, 60, lambda: SimpleNamespace(controls_ready_count=200, cp_cam=SimpleNamespace(seen_addresses={0x1EA}),
+      out=SimpleNamespace(gearShifter=P, vEgo=0., leftBlinker=False, rightBlinker=False, steeringTorque=0,
+                          naviTunnel=False, naviRoundabout=False, leftLaneLine=10, rightLaneLine=10)))
+    assert early == [] and seen == []
+
+
+@pytest.mark.parametrize("value", range(8))
+def test_hazard_raw_values_hold_blinker_control_as_is(value):
+  # CanfdHazardTest 10-17: BLINKER_CONTROL 0-7 held (2 "hazards button backlight", 5-7 unnamed, 11-19 Tucson trial)
+  cc = make_cc(control=False, ecu=Ecu(answers=False))
+  cc.hazard_test = carcontroller.HAZARD_RAW_FIRST + value
+  sent = step(cc, carcontroller.APRK_REPLY_FRAMES + 30, P, 0)
+  assert len(spas2(cc, sent)) == 29 and set(spas2(cc, sent)) == {value}
+  cc.hazard_test = 9  # not a test value: given back, nothing sent
+  assert uds(step(cc, 1, P, 0)) == [(DEFAULT, 0), (DEFAULT, 1)] and step(cc, 10, P, 0) == []
 
 
 def test_fast_hazard_switches_spas2_between_hazards_and_off():
@@ -649,3 +783,35 @@ def test_fast_hazard_switches_spas2_between_hazards_and_off():
   values = spas2(cc, sent)
   assert set(values) == {0, 1} and cc.aprk_state == carcontroller.APRK_ACTIVE
   assert 0.5 < values.count(1) / len(values) < 0.8
+
+
+def test_hazard_one_shot_rearms_through_update_after_0(monkeypatch):
+  # review 11-19: at 0 the update() gate never calls aprk_blinkers, so the one-shot flag is cleared where the param is read
+  from opendbc.car import Bus
+  from opendbc.car.hyundai.values import CAR, HyundaiFlags
+  value = {"CanfdHazardTest": 3, "CanfdBlinkerKickMode": 1}  # KickMode default 1 (0 would give up without an ack)
+  monkeypatch.setattr(carcontroller, "Params", lambda: SimpleNamespace(get_int=lambda key: value.get(key, 0),
+                                                                        get_bool=lambda key: False))
+  for name in ("create_steering_messages_camera_scc", "create_steering_messages", "create_lfa_icon_non_camera_scc"):
+    monkeypatch.setattr(hyundaicanfd, name, lambda *a, **kw: [])
+  monkeypatch.setattr(carcontroller.CarController, "create_button_messages", lambda *a, **kw: [])
+  cp = structs.CarParams(carFingerprint=CAR.HYUNDAI_TUCSON_4TH_GEN, flags=int(HyundaiFlags.CANFD | HyundaiFlags.CAMERA_SCC),
+                         wheelbase=2.7, steerRatio=14.0,
+                         safetyConfigs=[structs.CarParams.SafetyConfig(safetyModel=structs.CarParams.SafetyModel.hyundaiCanfd)])
+  controller = carcontroller.CarController({Bus.pt: "hyundai_canfd_generated"}, cp)
+  cs = SimpleNamespace(out=structs.CarState(canValid=True, gearShifter=P), modelV2=None, is_metric=True, adrv_0x161=None,
+                       controls_ready_count=200, lfahda_cluster=None, lfa=None, mdps=None, scc_control=None)
+  cc = structs.CarControl().as_reader()
+  sig = controller.packer.dbc.name_to_msg['SPAS2'].sigs['BLINKER_CONTROL']
+
+  def ones(frames):
+    n = 0
+    for _ in range(frames):
+      _, msgs = controller.update(cc, cs, 0)
+      n += sum(1 for addr, dat, _ in msgs if addr == 0x16A and get_raw_value(dat, sig) == 1)
+    return n
+  assert ones(100) == 1
+  value["CanfdHazardTest"] = 0
+  assert ones(100) == 0 and not controller.hazard_shot_sent
+  value["CanfdHazardTest"] = 3
+  assert ones(100) == 1

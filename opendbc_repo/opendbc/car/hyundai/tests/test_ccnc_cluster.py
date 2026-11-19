@@ -723,13 +723,14 @@ def test_dbc_listed_split_matches_the_gates():
 
 
 @pytest.mark.parametrize("test, dashed", [(0, False), (1, False), (2, True), (3, True)])
-def test_ioniq9_cluster_test_opens_dashed_lanes_only_on_ioniq9(monkeypatch, test, dashed):
-  # Ioniq9ClusterTest 2/3: the IONIQ 9 gets the dashed codes the confirmed clusters get; other cars never read the key
+def test_ioniq9_cluster_test_opens_dashed_lanes_on_every_ccnc_car(monkeypatch, test, dashed):
+  # Ioniq9ClusterTest 2/3: any CCNC car gets the dashed codes the confirmed clusters get (11-19: no IONIQ 9 gate)
   monkeypatch.setattr(hyundaicanfd, "Params", lambda: SimpleNamespace(get_int=lambda key: test))
-  assert hyundaicanfd._dashed_lane_line(2, 10, CAR.HYUNDAI_IONIQ_9) == (8 if dashed else 2)
-  assert hyundaicanfd._dashed_lane_line(2, 10, CAR.KIA_EV9) == 2
-  assert hyundaicanfd._ioniq9_cluster_test(CAR.KIA_EV9) == 0
-  assert bool(hyundaicanfd._ioniq9_cluster_test(CAR.HYUNDAI_IONIQ_9) & 1) == (test in (1, 3))
+  monkeypatch.setattr(hyundaicanfd._ioniq9_cluster_test, "read_at", float("-inf"))
+  monkeypatch.setattr(hyundaicanfd._ioniq9_cluster_test, "value", 0)  # restored afterwards: no cached value leaks out
+  for car in (CAR.HYUNDAI_IONIQ_9, CAR.KIA_EV9):
+    assert hyundaicanfd._dashed_lane_line(2, 10, car) == (8 if dashed else 2)
+  assert bool(hyundaicanfd._ioniq9_cluster_test() & 1) == (test in (1, 3))
 
 
 
@@ -738,3 +739,4 @@ def test_fast_hazard_request_is_switched_on_and_off():
   on = [hyundaicanfd.hazard_request(2, f) for f in frames]
   assert on[0] and not on[hyundaicanfd.HAZARD_FAST_ON] and sum(on) == 2 * hyundaicanfd.HAZARD_FAST_ON
   assert all(hyundaicanfd.hazard_request(1, f) for f in frames) and not any(hyundaicanfd.hazard_request(0, f) for f in frames)
+  assert not any(hyundaicanfd.hazard_request(m, f) for m in (3, 4, 10, 17) for f in frames)  # SPAS2-only: no 0x1ea bit 104

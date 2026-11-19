@@ -292,7 +292,7 @@ These settings describe the car, harness, and device hardware configuration. Do 
 | Vehicle assistance | `MaxAngleFrames`, `SpeedFromPCM` | Steering-angle frames and stock-SCC speed control |
 | Device hardware | `CommaPedalEnabled`, `HardwareC3xLite` | Comma Pedal permission for vehicles without ACC, and C3X Lite hardware configuration |
 
-`CcncLaneTypeDetection` recognizes lane markings for cluster display on HDA1 camera-SCC vehicles at 5, 10 or 20 Hz. `Ioniq9ClusterTest` uses levels 2 and 3 to test dashed lanes on the IONIQ 9.
+`CcncLaneTypeDetection` recognizes lane markings for cluster display on HDA1 camera-SCC vehicles at 5, 10 or 20 Hz. `Ioniq9ClusterTest` uses levels 2 and 3 to test dashed lanes on ccNC cars; 0/1 are off and reboot resets it to 0. Forced HDP icons remain removed.
 
 > [!CAUTION]
 > Incorrect `HyundaiCameraSCC`, `CanfdHDA2`, `EnableRadarTracks`, `CarrotRadarMode`, `CarrotRadarCutInSensitivity`, or `SpeedFromPCM` values can change vehicle identification, SCC, radar, or longitudinal behavior. Confirm the vehicle, model year, HDA generation, harness location, and whether stock ACC is retained.
@@ -557,3 +557,11 @@ The internal driving model changes to Cheddar. External Jetson/eGPU model select
 ## Internal driving model selection
 
 Choose CD210 or Cheddar in the Carrot Web Tools model dialog. Cheddar is the default. Park, turn ignition off and reboot comma to apply the saved choice; it does not immediately change a running model or the external Jetson/eGPU selection. First use requires compilation of the internal model. See [Driving model selection](carrot-web.md#driving-model-selection-carrot-dev) for the procedure.
+
+### Joongyu lamp and ccNC trials (carrot-dev)
+
+`CanfdBlinkerSpas2Only`: 0 keeps the existing path, 1 retains the parking ECU and sends SPAS2 only, 2 stops that ECU and sends SPAS2 only. Applies to Kick and command trials. `BlinkerStalkTest` replaces the separate stalk/high-beam trials: 1/2 hold left/right, 3/4 tap left/right, 5 requests high beam once, 6 requests a flash once on a value change. Vehicle response varies.
+
+Select `CanfdHazardTest` directly: 0 off, 1 held hazards, 2 fast flash, 3 one request (return to 0 before rearming), 4 alternate left/right every 0.4 seconds, 10–17 continuously try SPAS2 control values 0–7. Extra modes wait for camera 0x1EA classification and operate only without that frame; a short post-shot hold prevents immediate replacement. Some Tucson HDA1 cars flash rapidly even at 1. Default off; these are unverified lamp trials.
+
+`Ioniq9ClusterTest` is available to ccNC cars: 0/1 off, 2/3 dashed lane codes; resets to 0 on reboot. Forced HDP icons and activation/deactivation popups remain removed.

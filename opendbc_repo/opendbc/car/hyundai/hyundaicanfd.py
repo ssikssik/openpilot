@@ -639,13 +639,16 @@ def create_spas_steer(packer, CAN, mode, angle):
   return [packer.make_can_msg("SPAS1", CAN.ECAN, {"BYTE3": 0x4b, "NEW_SIGNAL_2": mode, "NEW_SIGNAL_1": angle})]
 
 
-def create_spas_messages(packer, CAN, frame, left_blink, right_blink, spas2_template=None, hazard=False):
+def create_spas_messages(packer, CAN, frame, left_blink, right_blink, spas2_template=None, hazard=False, spas1=True, raw=None):
   ret = []
 
-  ret.append(packer.make_can_msg("SPAS1", CAN.ECAN, {}))
+  if spas1:  # CanfdBlinkerSpas2Only leaves SPAS1 to the parking ECU (or to nobody)
+    ret.append(packer.make_can_msg("SPAS1", CAN.ECAN, {}))
 
   blink = 0
-  if hazard:
+  if raw is not None:
+    blink = raw  # CanfdHazardTest 10-17: BLINKER_CONTROL 0-7 as is (DBC names 1-4 only)
+  elif hazard:
     blink = 1  # DBC VAL_ 362 BLINKER_CONTROL 1 "hazards"
   elif left_blink:
     blink = 3
@@ -1063,7 +1066,8 @@ HAZARD_FAST_ON = 20
 
 
 def hazard_request(mode, frame):
-  """CanfdHazardTest 1: hazards held on. 2: the same request switched on/off for a fast flash. 0: off."""
+  """CanfdHazardTest 1: hazards held on. 2: the same request switched on/off for a fast flash. 0: off. 3/4/10-17 are SPAS2-only
+  tests (carcontroller.aprk_blinkers) and ask nothing on 0x1ea."""
   return mode == 1 or (mode == 2 and frame % HAZARD_FAST_PERIOD < HAZARD_FAST_ON)
 
 
@@ -1116,10 +1120,15 @@ NON_DBC_CLUSTER_VALUE_CARS = (CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_AZERA_7TH_GEN,
 DASHED_LANE_CARS = NON_DBC_CLUSTER_VALUE_CARS
 
 
-def _ioniq9_cluster_test(car):
-  # Ioniq9ClusterTest (Joongyu Lab, IONIQ 9 only, cleared at manager start): 1 HDP icon, 2 dashed lane codes, 3 both, so
-  # the owner can look at values this cluster is not confirmed to draw. Read only on an IONIQ 9.
-  return Params().get_int("Ioniq9ClusterTest") if car == CAR.HYUNDAI_IONIQ_9 else 0
+def _ioniq9_cluster_test():
+  # Ioniq9ClusterTest (cleared at manager start): 0/1 off, 2/3 dashed lane codes; forced HDP icons remain removed.
+  # First tried on an IONIQ 9 (10-28~30); open to every CCNC car since 11-19 (the
+  # test menu hides nothing). Every CCNC car now calls this per cluster frame, so the key is read at most once a second.
+  now = time.monotonic()
+  if now - _ioniq9_cluster_test.read_at >= 1.0:
+    _ioniq9_cluster_test.value, _ioniq9_cluster_test.read_at = Params().get_int("Ioniq9ClusterTest"), now
+  return _ioniq9_cluster_test.value
+_ioniq9_cluster_test.value, _ioniq9_cluster_test.read_at = 0, float("-inf")
 
 
 def _dbc_listed(field, value):
@@ -1131,7 +1140,7 @@ def _dbc_listed(field, value):
 
 def _dashed_lane_line(color, lane_line, car=None):
   # 0x161 dashed codes seen on the Ioniq 5 PE cluster: 8 white, 10 green (no orange dashed)
-  if (car in DASHED_LANE_CARS or _ioniq9_cluster_test(car) & 2) and lane_line // 10 > 0 and lane_line % 10 in (0, 5):  # camera: dashed / DLM inner dashed (color 0 = no lane info)
+  if (car in DASHED_LANE_CARS or _ioniq9_cluster_test() & 2) and lane_line // 10 > 0 and lane_line % 10 in (0, 5):  # camera: dashed / DLM inner dashed (color 0 = no lane info)
     return {2: 8, 6: 10}.get(color, color)
   return color
 
