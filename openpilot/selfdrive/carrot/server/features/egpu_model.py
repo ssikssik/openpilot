@@ -184,9 +184,13 @@ async def api_library(request: web.Request) -> web.Response:
     if not isinstance(body, dict) or set(body) != {'action', 'model'}:
       raise ValueError('invalid model action')
     action, key = body['action'], body['model']
-    if action != 'select' or not isinstance(key, str) or key not in catalog.available():
+    from openpilot.common import internal_model_catalog as internal
+    if action == 'select_internal':
+      await asyncio.to_thread(internal.select, key)
+    elif action == 'select' and isinstance(key, str) and key in catalog.available():
+      await asyncio.to_thread(catalog.select, key)
+    else:
       raise ValueError('unknown model action')
-    await asyncio.to_thread(catalog.select, key)
     return web.json_response({'ok': True, 'library': await asyncio.to_thread(library.status)})
   except (ValueError, OSError) as exc:
     return web.json_response({'ok': False, 'error': str(exc)}, status=409)

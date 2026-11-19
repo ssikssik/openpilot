@@ -9,3 +9,9 @@ tinygrad. Driver monitoring and legacy external-model compilation continue to
 use `tinygrad_repo`; downloaded external models retain their own runtime pins.
 This keeps serialized artifacts and runtime APIs paired without replacing the
 runtime used by unrelated inference processes.
+
+The boot-frozen internal selection can instead use the historical CD210 ONNX
+(`models/driving_cd210.onnx`) with the original `tinygrad_repo` compiler and
+ModelState. Its artifact is `driving_cd210_tinygrad.pkl`; Cheddar keeps
+`driving_tinygrad.pkl` and the isolated runtime above. Saved choices apply at
+the next real boot and do not change recovery within an active boot.

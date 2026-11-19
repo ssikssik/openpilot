@@ -21,8 +21,22 @@ def test_model_factory_selects_cheddar_for_internal_and_keeps_legacy_external(mo
   minimal = ast.ClassDef(name='ModelState', bases=[], keywords=[], body=[method], decorator_list=[])
   scope = {'modeld_pkl_path': lambda external: Path('internal.pkl')}
   exec(compile(ast.fix_missing_locations(ast.Module(body=[minimal], type_ignores=[])), str(path), 'exec'), scope)
+  from openpilot.common import internal_model_catalog as internal
+  monkeypatch.setattr(internal, 'effective_id', lambda: 'cheddar')
   calls = []
   monkeypatch.setattr(client, 'CheddarModelState', lambda *args: calls.append(args) or 'internal')
   assert scope['ModelState'](1928, 1208, False) == 'internal'
   assert calls == [(1928, 1208, Path('internal.pkl'))]
   assert isinstance(scope['ModelState'].__new__(scope['ModelState'], 1928, 1208, True), scope['ModelState'])
+
+
+def test_cd210_factory_keeps_legacy_runtime(monkeypatch):
+  from openpilot.common import internal_model_catalog as internal
+  monkeypatch.setattr(internal, 'effective_id', lambda: 'cd210')
+  path = Path(__file__).parents[1] / 'modeld.py'
+  cls = next(n for n in ast.parse(path.read_text()).body if isinstance(n, ast.ClassDef) and n.name == 'ModelState')
+  method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '__new__')
+  minimal = ast.ClassDef(name='ModelState', bases=[], keywords=[], body=[method], decorator_list=[])
+  scope = {}
+  exec(compile(ast.fix_missing_locations(ast.Module(body=[minimal],type_ignores=[])),str(path),'exec'),scope)
+  assert isinstance(scope['ModelState'].__new__(scope['ModelState'], 1344, 760, False), scope['ModelState'])

@@ -132,7 +132,8 @@ class ModelState:
   prev_desire: np.ndarray  # for tracking the rising edge of the pulse
 
   def __new__(cls, cam_w, cam_h, usbgpu, pkl_path=None, *, enable_shadow=True):
-    if not usbgpu:
+    from openpilot.common.internal_model_catalog import effective_id
+    if not usbgpu and effective_id() == 'cheddar':
       from openpilot.selfdrive.modeld.cheddar_model import CheddarModelState
       return CheddarModelState(cam_w, cam_h, pkl_path or modeld_pkl_path(False))
     return super().__new__(cls)
@@ -157,7 +158,8 @@ class ModelState:
     self.frame_buf_params = {k: get_nv12_info(cam_w, cam_h) for k in ('img', 'big_img')}
     self.run_policy = jits['run_policy']
     self.warp = jits[(cam_w,cam_h)]
-    self.signal_shadow = ShadowClient.optional(modeld_pkl_path(False).parent / 'driving_supercombo.onnx') if enable_shadow and not usbgpu else None
+    from openpilot.common.internal_model_catalog import onnx_path
+    self.signal_shadow = ShadowClient.optional(onnx_path()) if enable_shadow and not usbgpu else None
 
   def slice_outputs(self, model_outputs: np.ndarray, output_slices: dict[str, slice]) -> dict[str, np.ndarray]:
     parsed_model_outputs = {k: model_outputs[np.newaxis, v] for k,v in output_slices.items()}

@@ -305,3 +305,17 @@ def test_library_retired_entry_cannot_be_selected(feature, monkeypatch, tmp_path
     async def json(self): return {'action': 'select', 'model': 'md-v3'}
   assert asyncio.run(feature.api_library(Request())).status == 409
   assert not (tmp_path / 'selection.json').exists()
+
+
+@pytest.mark.parametrize('key', ['cd210', 'cheddar'])
+def test_internal_choice_api_saves_pending_without_live_switch(feature, monkeypatch, tmp_path, key):
+  from openpilot.common import big_model_catalog as C, internal_model_catalog as I
+  monkeypatch.setenv('CARROT_BIG_MODEL_DIR', str(tmp_path))
+  monkeypatch.setattr(C, 'boot_id', lambda: 'boot-test')
+  I.freeze_boot()
+  class Request:
+    async def json(self): return {'action': 'select_internal', 'model': key}
+  result = asyncio.run(feature.api_library(Request()))
+  assert result.status == 200
+  assert I.selected() == key
+  assert I.effective_id() == 'cheddar'

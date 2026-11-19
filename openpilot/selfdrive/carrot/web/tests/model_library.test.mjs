@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import test from 'node:test';
 import { renderLibrary } from '../src/features/tools/model_library.js';
 class Element {
@@ -105,4 +105,38 @@ test('status updates preserve the open dialog and focused selection across inven
   assert.equal(elements.get('modelLibraryDialog').open, true);
   assert.equal(root.dataset.state, 'error');
   assert.equal(root.querySelector('p').textContent, 'eGPU unavailable');
+});
+
+
+test('internal choices are independent, show pending state and survive polling while saving', async t => {
+  const old = { document: globalThis.document, postJson: globalThis.postJson };
+  t.after(() => Object.assign(globalThis, old));
+  const { editor, root } = setupDocument();
+  const payload = { ...data, internal: 'Cheddar', internal_selection: {
+    models: [{ id: 'cd210', name: 'CD210' }, { id: 'cheddar', name: 'Cheddar' }],
+    effective: 'cheddar', selected: 'cheddar', reboot_required: false,
+  }};
+  renderLibrary(payload);
+  const selects = editor.children.filter(e => e.tag === 'label').map(e => e.querySelector('select'));
+  assert.equal(selects.length, 2);
+  assert.equal(selects[0].value, 'flip-flop');
+  assert.deepEqual(selects[1].children.map(x => x.value), ['cd210', 'cheddar']);
+  assert.equal(selects[1].value, 'cheddar');
+  let finish;
+  const response = new Promise(resolve => { finish = resolve; });
+  globalThis.postJson = async (url, body) => {
+    assert.equal(url, '/api/egpu/model/library');
+    assert.deepEqual(body, { action: 'select_internal', model: 'cd210' });
+    return response;
+  };
+  selects[1].value = 'cd210';
+  const saving = selects[1].events.change();
+  assert.ok(selects.every(e => e.disabled));
+  renderLibrary(payload);
+  assert.equal(editor.children.filter(e => e.tag === 'label')[1].querySelector('select').value, 'cd210');
+  finish({ library: { ...payload, reboot_required: true,
+    internal_selection: { ...payload.internal_selection, selected: 'cd210', reboot_required: true } } });
+  await saving;
+  assert.ok(editor.children.some(e => /Cheddar → CD210/.test(e.textContent || '')));
+  assert.equal(root.querySelector('strong').textContent, 'Flip Flop');
 });

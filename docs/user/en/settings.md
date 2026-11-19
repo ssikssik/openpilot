@@ -553,3 +553,7 @@ Joongyu Lab moves to the beginning of the settings menu. `CanfdBvmReverse` defau
 After unconfirmed SPAS restoration, the session returns to idle instead of remaining locked until restart. It does not automatically replay the previous request: a new request and healthy stock messages are required.
 
 The internal driving model changes to Cheddar. External Jetson/eGPU model selection and their existing runtime remain unchanged. Existing ej settings, robot face and screen-saver behavior are retained. Desktop checks do not establish physical driving performance.
+
+## Internal driving model selection
+
+Choose CD210 or Cheddar in the Carrot Web Tools model dialog. Cheddar is the default. Park, turn ignition off and reboot comma to apply the saved choice; it does not immediately change a running model or the external Jetson/eGPU selection. First use requires compilation of the internal model. See [Driving model selection](carrot-web.md#driving-model-selection-carrot-dev) for the procedure.

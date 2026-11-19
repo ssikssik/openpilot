@@ -1,6 +1,8 @@
-﻿"use strict";
+"use strict";
 const EN = {
-  title: "External driving model", internal: "Internal model: Cheddar (fixed)",
+  title: "Driving models", internal: "Internal model",
+  internal_saved: "Saved. Park, turn ignition off and reboot comma to apply the internal model.",
+  internal_next: "Internal model after restart", internal_help: "Internal model changes apply after reboot. Park, turn ignition off and reboot comma. First use compiles the selected model. External Jetson/eGPU selection is independent.",
   help: "One choice for eGPU and Jetson. Choosing saves the next-boot selection. Reboot comma and Jetson while parked with ignition off and internet available. First use downloads files; Jetson also prepares its engine.",
   change: "Change model", close: "Close", pending_apply: "Apply after restart",
   current: "This boot", next: "Next boot", saved: "Saved. Reboot comma and Jetson to apply.",
@@ -13,7 +15,7 @@ async function action(kind, model) {
   try {
     const response = await postJson("/api/egpu/model/library", { action: kind, model });
     renderLibrary(response.library, true);
-    if (kind === "select" && typeof showAppToast === "function") showAppToast(t("saved"));
+    if ((kind === "select" || kind === "select_internal") && typeof showAppToast === "function") showAppToast(t(kind === "select_internal" ? "internal_saved" : "saved"));
     globalThis.CarrotEgpuModel?.refresh();
     return true;
   } catch (error) {
@@ -49,7 +51,8 @@ export function renderLibrary(library, force = false) {
   }
   root.querySelector("strong").textContent = selected?.name || library.selected;
   const card = document.getElementById("egpuModelCard");
-  const state = card && !card.hidden ? document.getElementById("egpuModelState").textContent : t("internal");
+  const internalName = library.internal || "Cheddar";
+  const state = card && !card.hidden ? document.getElementById("egpuModelState").textContent : `${t("internal")}: ${internalName}`;
   const amount = card && !card.hidden ? document.getElementById("egpuModelAmount").textContent : "";
   root.querySelector("p").textContent = library.reboot_required
     ? `${t("pending_apply")} · ${t("current")} ${effectiveName} · ${state}`
@@ -59,10 +62,10 @@ export function renderLibrary(library, force = false) {
   document.getElementById("modelLibraryTitle").textContent = t("title");
   document.getElementById("btnCloseModelLibrary").textContent = t("close");
   const signature = JSON.stringify([library.models, library.selected, library.effective,
-    library.effective_name, library.effective_noo, library.reboot_required, t("title")]);
+    library.effective_name, library.effective_noo, library.reboot_required, library.internal_selection, t("title")]);
   if (!force && editor.dataset.signature === signature) return;
   editor.dataset.signature = signature;
-  editor.replaceChildren(text("p", t("internal")), text("p", t("help")));
+  editor.replaceChildren(text("p", `${t("internal")}: ${internalName}`), text("p", t("help")));
   editor.append(text("p", `${t("current")} ${effectiveName} · ${t((effective?.noo ?? library.effective_noo) ? "noo" : "no_noo")}`));
   const label = text("label", t("next"));
   const select = document.createElement("select");
@@ -76,9 +79,33 @@ export function renderLibrary(library, force = false) {
   label.append(select);
   select.addEventListener("change", async () => {
     select.disabled = true;
+    if (internalSelect) internalSelect.disabled = true;
     if (!await action("select", select.value)) renderLibrary(library, true);
     select.disabled = false;
+    if (internalSelect) internalSelect.disabled = false;
   });
   editor.append(label, text("p", t("shared")));
-  if (library.reboot_required) editor.append(text("p", t("saved")));
+  let internalSelect = null;
+  const internal = library.internal_selection;
+  if (internal?.models) {
+    const internalLabel = text("label", t("internal_next"));
+    internalSelect = document.createElement("select");
+    internalSelect.setAttribute("aria-label", t("internal_next"));
+    for (const model of internal.models) {
+      const option = text("option", model.name);
+      option.value = model.id;
+      internalSelect.append(option);
+    }
+    internalSelect.value = internal.selected;
+    internalLabel.append(internalSelect);
+    internalSelect.addEventListener("change", async () => {
+      select.disabled = internalSelect.disabled = true;
+      if (!await action("select_internal", internalSelect.value)) renderLibrary(library, true);
+      select.disabled = internalSelect.disabled = false;
+    });
+    editor.append(internalLabel, text("p", t("internal_help")));
+    if (internal.reboot_required) editor.append(text("p", `${t("pending_apply")} · ${t("internal")}: ${internalName} → ${internal.models.find(m => m.id === internal.selected)?.name || internal.selected}`));
+  }
+  if (library.selected !== library.effective) editor.append(text("p", t("saved")));
+  if (internal?.reboot_required) editor.append(text("p", t("internal_saved")));
 }

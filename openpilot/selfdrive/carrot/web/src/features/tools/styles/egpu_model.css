@@ -181,10 +181,17 @@
   padding: 18px;
   border: 1px solid var(--md-outline-var);
   border-radius: 18px;
-  background: var(--md-surface-container);
-  color: var(--md-on-surface);
+  background: var(--md-surface, #151a22);
+  color: var(--md-on-surface, #f3f5f7);
+  box-shadow: 0 24px 80px #0008;
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
 }
-.model-library-dialog::backdrop { background: #0009; }
+.model-library-dialog::backdrop {
+  background: #080d16a8;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
 .model-library-dialog__heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .model-library-dialog h2 { margin: 0; font-size: 18px; }
 .model-library-dialog p { font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
