@@ -77,6 +77,9 @@ APRK_DEFAULT_SESSION = bytes([0x02, 0x10, 0x01, 0, 0, 0, 0, 0])
 # resumed. 3/4 = 1 sent in bursts, SPAS2_BURST_ON[value] frames on and SPAS2_BURST_OFF off, so it never runs 0.5 s (3: 0.35 s,
 # 4: 0.45 s - more on-time, 50 ms under the shortest trip seen; the gap stays above the 30-55 ms the ESC needs); the BCM keeps
 # the side it was asked for over a short gap (s70: one more flash 0.48 s after our last frame).
+# 11-20 car test (s73, P): 3 and 4 each ran ~20 s with no fault and the lamp kept 0.36/0.36 s. The one fault came at the
+# 3 -> 4 switch: the restart left a 2-frame gap, so the ESC saw 0.66 s in a row. A new burst session therefore starts
+# SPAS2_BURST_OFF after the last SPAS2 frame of any session (spas2_sent).
 SPAS2_BURST_ON = {3: int(0.35 / DT_CTRL), 4: int(0.45 / DT_CTRL)}
 SPAS2_BURST_OFF = int(0.1 / DT_CTRL)
 APRK_IDLE, APRK_ASK, APRK_WAIT_QUIET, APRK_ACTIVE, APRK_FAILED = range(5)
@@ -90,9 +93,11 @@ APRK_QUIET_NANOS = 100_000_000
 # own clean 0.4 s timer for 3/4 even with the stock 0 frames in between (s66 seg1 113 s).
 HAZARD_ALT_FRAMES = int(0.4 / DT_CTRL)
 # CanfdHazardTest 5 (11-20, s71): the stock parking ECU's own hazards during Tucson remote parking are not value 1 held but
-# BLINKER_CONTROL 2 (0.34 s) and 1 (0.32 s) in turn at 50 Hz, starting with 2, while 0x413 shows both lamps on throughout.
-# 5 copies that rhythm on the same SPAS2 path (raw values, panda allows all 8).
-HAZARD_STOCK_FRAMES = int(0.33 / DT_CTRL)
+# BLINKER_CONTROL 2 and 1 in turn at 50 Hz, 17-18 frames each (0.35 s), starting with 2, 0x413 byte1 5 throughout.
+# 5 copies that rhythm on the same SPAS2 path (raw values, panda allows all 8). 11-20 car test (s74, route 428): lamps on
+# in each 1 and off in each 2, but 0.33 s turns phased on the global frame gave a 0.66 s period and a 62 ms first 1;
+# now 0.35 s turns counted from the session start, so it opens with a full 2 like stock.
+HAZARD_STOCK_FRAMES = int(0.35 / DT_CTRL)
 # CanfdHazardTest 10-17 (user 11-19): BLINKER_CONTROL 0-7 held as is, same path. 2 is "hazards button backlight" in the
 # DBC, 5-7 have no name; none of them was tried on a car before (panda allows all 8 values since then).
 HAZARD_RAW_FIRST = 10
@@ -334,6 +339,7 @@ class CarController(CarControllerBase):
     self.blinker_kick_mode = 1  # CanfdBlinkerKickMode: 0 only after an ack, 1 panda piggyback, 2 direct 25 Hz, 3 direct 100 Hz
     self.spas2_only = 0  # CanfdBlinkerSpas2Only: 0 SPAS1+SPAS2, 1 ECU left on + SPAS2 only, 2 ECU silenced + SPAS2 only, 3/4 = 1 in bursts
     self.aprk_spas2_only = 0  # the value the running APRK session started with
+    self.spas2_sent = -SPAS2_BURST_OFF - 1  # last frame any SPAS2 went out; a 3/4 session starts SPAS2_BURST_OFF after it
     # set by card's KickOutput only on the CANFD_BLINKER_KICK harness (carrot-wip's kick_compatible); our Kick does not gate on it
     self.kick_output_ready = False
     self.remote_blinker = 0  # card: 3 left / 4 right from a Bluetooth remote blinker press, taken by kick_pulse
@@ -341,6 +347,7 @@ class CarController(CarControllerBase):
     self.blinker_kick_model = False  # CanfdBlinkerKickModelMode != 1: also kick on a model lane change start (kick_pulse)
     self.model_flashes = 0  # CanfdBlinkerKickModelMode 2/3/4 -> 3/5/7 flashes; 0 = hold through the change
     self.blinker_test = 0  # CanfdBlinkerMenuTest: 1 left, 2 right (menu test, any speed/gear)
+    self.blinker_park = False  # CanfdBlinkerMenuTest 3/4: 1/2 plus the GV80 parking-active SPAS2 body (GV80 template only)
     self.hazard_test = 0  # CanfdHazardTest (remote hazard, 2 = fast flash): SPAS2 hazards when no camera 0x1ea carries bit 104
     self.hazard_shot_sent = False  # CanfdHazardTest 3: the single value-1 frame went out (resets when the value leaves 3)
     self.hazard_shot_frame = 0
@@ -650,7 +657,7 @@ class CarController(CarControllerBase):
     alternate = haz_mode == 4  # left/right in turn, HAZARD_ALT_FRAMES each
     raw = haz_mode - HAZARD_RAW_FIRST if HAZARD_RAW_FIRST <= haz_mode <= HAZARD_RAW_FIRST + 7 else None
     if haz_mode == 5:  # stock remote-parking rhythm: 2 then 1, HAZARD_STOCK_FRAMES each
-      raw = 2 if (self.frame // HAZARD_STOCK_FRAMES) % 2 == 0 else 1
+      raw = 2 if ((self.frame - self.aprk_frame) // HAZARD_STOCK_FRAMES) % 2 == 0 else 1
     want = self.blinker_test in (1, 2) or kick or remote or spas or hazard or alternate or raw is not None
     spas2_only = 0 if spas else self.spas2_only  # SpasSteerTest: its request is SPAS1 itself
     now, stock, ack = getattr(CS, "can_nanos", 0), getattr(CS, "aprk_stock_nanos", 0), getattr(CS, "aprk_ack_nanos", 0)
@@ -670,7 +677,9 @@ class CarController(CarControllerBase):
     elif self.aprk_state == APRK_IDLE and spas2_only in (1, 3, 4):
       # no handshake: aprk_buses stays empty, so no tester present and no 10 01 restore; not acked, so a stock frame
       # never ends it (KickMode 2 still thins it to 25 Hz)
-      self.aprk_state, self.aprk_frame, self.aprk_nanos, self.aprk_acked = APRK_ACTIVE, self.frame, now, False
+      # 3/4: a restart (value change, test or kick ending and coming back) still owes the last burst its gap
+      start = max(self.frame, self.spas2_sent + SPAS2_BURST_OFF + 1) if spas2_only in SPAS2_BURST_ON else self.frame
+      self.aprk_state, self.aprk_frame, self.aprk_nanos, self.aprk_acked = APRK_ACTIVE, start, now, False
       self.aprk_spas2_only = spas2_only
     elif self.aprk_state == APRK_IDLE:
       self.aprk_buses, self.aprk_spas2_only = (self.CAN.ECAN, self.CAN.ACAN), spas2_only
@@ -716,14 +725,18 @@ class CarController(CarControllerBase):
       if not self.aprk_acked and self.blinker_kick_mode == 2 and self.frame % 4:
         return ret  # direct 25 Hz: a quarter of the frames, a quarter of the collision chances
       burst = SPAS2_BURST_ON.get(spas2_only)
-      if burst and (self.frame - self.aprk_frame) % (burst + SPAS2_BURST_OFF) >= burst:
+      k = self.frame - self.aprk_frame  # < 0 while a restarted session waits out the gap
+      if burst and (k < 0 or k % (burst + SPAS2_BURST_OFF) >= burst):
         return ret  # burst gap: the Sorento ESC never sees 0.5 s of our SPAS2 in a row
       side = (self.frame // HAZARD_ALT_FRAMES) % 2
       left = (pulse and self.blinker_side == 3) or self.blinker_test == 1 or (alternate and side == 0)
       right = (pulse and self.blinker_side == 4) or self.blinker_test == 2 or (alternate and side == 1)
       haz = hazard and (haz_mode == 3 or hyundaicanfd.hazard_request(haz_mode, self.frame))
       ret.extend(hyundaicanfd.create_spas_messages(self.packer, self.CAN, self.frame, left, right, getattr(CS, "spas2", None),
-                                                         haz, spas1=not spas2_only, raw=raw))
+                                                         haz, spas1=not spas2_only, raw=raw,
+                                                         park=self.blinker_park and raw is None and
+                                                         (self.blinker_test == 1 or (self.blinker_test == 2 and not left))))
+      self.spas2_sent = self.frame
       if haz_mode == 3 and haz:
         self.hazard_shot_sent, self.hazard_shot_frame = True, self.frame  # given back next frame unless another test runs
     return ret
@@ -790,7 +803,9 @@ class CarController(CarControllerBase):
       self.spas2_only = params.get_int("CanfdBlinkerSpas2Only")
       model_mode = params.get_int("CanfdBlinkerKickModelMode")  # 0 hold, 1 off, 2/3/4: 3/5/7 flashes
       self.blinker_kick_model, self.model_flashes = model_mode != 1, MODEL_FLASH_COUNTS.get(model_mode, 0)
-      self.blinker_test = params.get_int("CanfdBlinkerMenuTest")
+      menu = params.get_int("CanfdBlinkerMenuTest")
+      # 3/4 are 1/2 for every check here; only hyundaicanfd adds the GV80 body, so a car without the template runs them as 1/2
+      self.blinker_test, self.blinker_park = (menu - 2, True) if menu in (3, 4) else (menu, False)
       stalk = params.get_int("BlinkerStalkTest")  # 1-4 lever replay (CAN-FD), 5/6 one high beam / flash-to-pass
       self.blinker_stalk = stalk if stalk in (1, 2, 3, 4) else 0
       self.highbeam_test = stalk - 4 if stalk in (5, 6) else 0
