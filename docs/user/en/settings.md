@@ -571,3 +571,7 @@ Select `CanfdHazardTest` directly: 0 off, 1 held hazards, 2 fast flash, 3 one re
 `CanfdBlinkerSpas2Only` trials 3/4 keep the parking ECU and send SPAS2-only bursts for 0.35/0.45 seconds followed by 0.1 seconds off. These are Sorento HEV cruise-fault avoidance trials, not a verified cure. `CanfdHazardTest` 5 alternates SPAS2 values 2/1 every 0.35 seconds to imitate stock remote-parking hazards on cars without camera 0x1EA. Defaults and saved values are unchanged.
 
 `CanfdBlinkerMenuTest` 3/4 add the parking-active SPAS2 body only with a GV80 template; other cars behave like 1/2. `CanfdHazardTest` 5 starts with value 2 at session start and alternates 2/1 every 0.35 seconds. Restarting SPAS2 burst trials 3/4 still waits out the 0.1-second gap after the last transmission. Vehicle response is unverified; defaults and saved values remain unchanged.
+
+### Lane centering correction
+
+`ej > Lane Centering` exposes `LaneCenterEnable` (default on), `LaneCenterThreshold` (20 cm) and `LaneCenterGain` (10=1.0x). Applies only in laneless mode and retains existing final steering limits. See [operation and suppression conditions](lane-centering.md).

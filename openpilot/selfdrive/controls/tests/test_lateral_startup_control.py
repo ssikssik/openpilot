@@ -15,7 +15,7 @@ from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
 from openpilot.selfdrive.selfdrived.vehicle_faults import inhibit_faulted_controls
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.interfaces import CarInterfaceBase
-from openpilot.selfdrive.controls.lib.drive_helpers import ClampSteerCorrector, clip_curvature, get_lag_adjusted_curvature, read_lat_accel_limits
+from openpilot.selfdrive.controls.lib.drive_helpers import ClampSteerCorrector, LaneCenterCorrector, clip_curvature, get_lag_adjusted_curvature, read_lat_accel_limits
 from openpilot.selfdrive.controls.lib.latcontrol import MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate, lateral_vehicle_parameters
@@ -70,7 +70,8 @@ def control_fixture():
                carrot_controls=NS(lat_suspend_control=lambda cs, active: active), is_vw_meb=False,
                desired_curvature=0.0, lateral_startup=LateralStartupGate(), lateral_started=False,
                steer_limited_by_safety=False, shoulder_avoid_bias=0.0, shoulder_avoid_margin_m=0.0,
-               clamp_steer_corrector=ClampSteerCorrector(params))
+               clamp_steer_corrector=ClampSteerCorrector(params),
+               lane_center_corrector=LaneCenterCorrector(params))
   return control, lambda: ns['state_control'](control)
 
 
