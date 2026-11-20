@@ -295,6 +295,21 @@ def test_spas2_only_1_leaves_the_parking_ecu_on():
   assert abs(len(spas2(cc, sent)) - (carcontroller.BLINKER_PULSE_FRAMES - 1)) <= 1
 
 
+@pytest.mark.parametrize("value", [3, 4])
+def test_spas2_only_3_4_send_spas2_in_bursts(value):
+  # CanfdBlinkerSpas2Only 3/4 (Sorento 11-20, s71): as 1, but SPAS2 in 0.35 / 0.45 s bursts with 0.1 s gaps, never 0.5 s in a row
+  on_frames = carcontroller.SPAS2_BURST_ON[value]
+  cc = make_cc(control=False, test=1, spas2_only=value)
+  per = [step(cc, 1, P, 0) for _ in range(3 * (on_frames + carcontroller.SPAS2_BURST_OFF))]
+  assert all(uds(f) == [] and spas1(f) == [] for f in per) and not cc.ecu.quiet
+  on = [bool(spas2(cc, f)) for f in per]
+  runs = [(k, len(list(g))) for k, g in __import__("itertools").groupby(on)]
+  assert max(n for k, n in runs if k) <= on_frames < int(0.5 / carcontroller.DT_CTRL)
+  assert all(n == on_frames for n in [n for k, n in runs if k][1:])  # the first is one short: the session-start frame sends none
+  assert all(n == carcontroller.SPAS2_BURST_OFF for k, n in runs[1:-1] if not k)
+  assert {v for f in per for v in spas2(cc, f)} == {3}
+
+
 def test_spas2_only_2_silences_the_ecu_and_sends_spas2_only():
   cc = make_cc(control=False, test=2, spas2_only=2)
   sent = step(cc, 30, P, 0)
@@ -731,6 +746,17 @@ def test_hazard_alternate_asks_left_and_right_in_turn():
   assert uds(step(cc, 1, P, 0)) == [(DEFAULT, 0), (DEFAULT, 1)]
 
 
+def test_hazard_stock_rhythm_sends_2_and_1_in_turn():
+  # CanfdHazardTest 5: the stock remote-parking hazard pattern, BLINKER_CONTROL 2 and 1 in 0.33 s turns
+  cc = make_cc(control=False, ecu=Ecu(answers=False))
+  cc.hazard_test = 5
+  step(cc, carcontroller.APRK_REPLY_FRAMES + 1, P, 0)
+  values = spas2(cc, step(cc, 4 * carcontroller.HAZARD_STOCK_FRAMES, P, 0))
+  runs = [len(list(g)) for _, g in __import__("itertools").groupby(values)]
+  assert set(values) == {1, 2} and all(r == carcontroller.HAZARD_STOCK_FRAMES for r in runs[1:-1])
+  cc.hazard_test = 0
+  assert uds(step(cc, 1, P, 0)) == [(DEFAULT, 0), (DEFAULT, 1)]
+
 
 def test_hazard_one_shot_survives_another_running_test():
   # review 11-19: with MenuTest running too, the frame after the shot must not replace it in panda's hold (KickMode 1)
@@ -751,7 +777,7 @@ def test_hazard_one_shot_survives_another_running_test():
 def test_trial_values_wait_for_the_0x1ea_decision():
   # review 11-19: before carstate could adopt ADRV_0x1ea (ready count 122), or once the camera bus has shown 0x1EA,
   # 3/4/10-17 send nothing; 1 keeps its old behaviour
-  for mode in (3, 4, 12):
+  for mode in (3, 4, 5, 12):
     cc = make_cc(control=False, ecu=Ecu(answers=False))
     cc.hazard_test = mode
     early = run(cc, 60, lambda: SimpleNamespace(controls_ready_count=0, out=SimpleNamespace(

@@ -72,6 +72,13 @@ APRK_DEFAULT_SESSION = bytes([0x02, 0x10, 0x01, 0, 0, 0, 0, 0])
 # our SPAS1+SPAS2 the ESC turned ACC/FCA/AVH off (back 50 ms after our frames stopped, the ECU still silent). Whether
 # our SPAS1 (stock byte 14 = 0x02, ours 0) or SPAS2 itself (this car has none) trips it is not known yet:
 # 1 leaves the ECU on (no 0x7B1, its own SPAS1 and 0x170 stay) and sends SPAS2 only; 2 silences it as before, SPAS2 only.
+# 11-19 evening (s71): 1 and 2 both tripped it 0.5-0.6 s in, so it is our SPAS2 itself (this car sends none). The ESC
+# needs ~0.5 s of it without a break: a 51 ms host gap (s70, 507.59) cleared it and it came back only 0.52 s after we
+# resumed. 3/4 = 1 sent in bursts, SPAS2_BURST_ON[value] frames on and SPAS2_BURST_OFF off, so it never runs 0.5 s (3: 0.35 s,
+# 4: 0.45 s - more on-time, 50 ms under the shortest trip seen; the gap stays above the 30-55 ms the ESC needs); the BCM keeps
+# the side it was asked for over a short gap (s70: one more flash 0.48 s after our last frame).
+SPAS2_BURST_ON = {3: int(0.35 / DT_CTRL), 4: int(0.45 / DT_CTRL)}
+SPAS2_BURST_OFF = int(0.1 / DT_CTRL)
 APRK_IDLE, APRK_ASK, APRK_WAIT_QUIET, APRK_ACTIVE, APRK_FAILED = range(5)
 APRK_REPLY_FRAMES = int(0.4 / DT_CTRL)
 APRK_QUIET_NANOS = 100_000_000
@@ -82,6 +89,10 @@ APRK_QUIET_NANOS = 100_000_000
 # on; held: one short flash); 0 then 3 sends it again. 4 asks left (3) and right (4) in turn, 0.4 s each: the BCM runs its
 # own clean 0.4 s timer for 3/4 even with the stock 0 frames in between (s66 seg1 113 s).
 HAZARD_ALT_FRAMES = int(0.4 / DT_CTRL)
+# CanfdHazardTest 5 (11-20, s71): the stock parking ECU's own hazards during Tucson remote parking are not value 1 held but
+# BLINKER_CONTROL 2 (0.34 s) and 1 (0.32 s) in turn at 50 Hz, starting with 2, while 0x413 shows both lamps on throughout.
+# 5 copies that rhythm on the same SPAS2 path (raw values, panda allows all 8).
+HAZARD_STOCK_FRAMES = int(0.33 / DT_CTRL)
 # CanfdHazardTest 10-17 (user 11-19): BLINKER_CONTROL 0-7 held as is, same path. 2 is "hazards button backlight" in the
 # DBC, 5-7 have no name; none of them was tried on a car before (panda allows all 8 values since then).
 HAZARD_RAW_FIRST = 10
@@ -321,7 +332,7 @@ class CarController(CarControllerBase):
     self.depart_jerk = False
     self.blinker_control = False
     self.blinker_kick_mode = 1  # CanfdBlinkerKickMode: 0 only after an ack, 1 panda piggyback, 2 direct 25 Hz, 3 direct 100 Hz
-    self.spas2_only = 0  # CanfdBlinkerSpas2Only: 0 SPAS1+SPAS2, 1 ECU left on + SPAS2 only, 2 ECU silenced + SPAS2 only
+    self.spas2_only = 0  # CanfdBlinkerSpas2Only: 0 SPAS1+SPAS2, 1 ECU left on + SPAS2 only, 2 ECU silenced + SPAS2 only, 3/4 = 1 in bursts
     self.aprk_spas2_only = 0  # the value the running APRK session started with
     # set by card's KickOutput only on the CANFD_BLINKER_KICK harness (carrot-wip's kick_compatible); our Kick does not gate on it
     self.kick_output_ready = False
@@ -638,6 +649,8 @@ class CarController(CarControllerBase):
     hazard = haz_mode in (1, 2) or (haz_mode == 3 and not self.hazard_shot_sent)
     alternate = haz_mode == 4  # left/right in turn, HAZARD_ALT_FRAMES each
     raw = haz_mode - HAZARD_RAW_FIRST if HAZARD_RAW_FIRST <= haz_mode <= HAZARD_RAW_FIRST + 7 else None
+    if haz_mode == 5:  # stock remote-parking rhythm: 2 then 1, HAZARD_STOCK_FRAMES each
+      raw = 2 if (self.frame // HAZARD_STOCK_FRAMES) % 2 == 0 else 1
     want = self.blinker_test in (1, 2) or kick or remote or spas or hazard or alternate or raw is not None
     spas2_only = 0 if spas else self.spas2_only  # SpasSteerTest: its request is SPAS1 itself
     now, stock, ack = getattr(CS, "can_nanos", 0), getattr(CS, "aprk_stock_nanos", 0), getattr(CS, "aprk_ack_nanos", 0)
@@ -654,11 +667,11 @@ class CarController(CarControllerBase):
       # silenced) and start over next frame, so one run is never half one value and half another (review 11-19)
       ret += [CanData(APRK_ADDR, APRK_DEFAULT_SESSION, bus) for bus in self.aprk_buses]
       self.aprk_state, self.aprk_buses = APRK_IDLE, ()
-    elif self.aprk_state == APRK_IDLE and spas2_only == 1:
+    elif self.aprk_state == APRK_IDLE and spas2_only in (1, 3, 4):
       # no handshake: aprk_buses stays empty, so no tester present and no 10 01 restore; not acked, so a stock frame
       # never ends it (KickMode 2 still thins it to 25 Hz)
       self.aprk_state, self.aprk_frame, self.aprk_nanos, self.aprk_acked = APRK_ACTIVE, self.frame, now, False
-      self.aprk_spas2_only = 1
+      self.aprk_spas2_only = spas2_only
     elif self.aprk_state == APRK_IDLE:
       self.aprk_buses, self.aprk_spas2_only = (self.CAN.ECAN, self.CAN.ACAN), spas2_only
       ret += [CanData(APRK_ADDR, APRK_EXT_SESSION, bus) for bus in self.aprk_buses]
@@ -702,6 +715,9 @@ class CarController(CarControllerBase):
       # every frame (100 Hz), twice APRK's 50 Hz: 10-26 APRK stayed on, so its BLINKER_CONTROL 0 frames interleave with ours
       if not self.aprk_acked and self.blinker_kick_mode == 2 and self.frame % 4:
         return ret  # direct 25 Hz: a quarter of the frames, a quarter of the collision chances
+      burst = SPAS2_BURST_ON.get(spas2_only)
+      if burst and (self.frame - self.aprk_frame) % (burst + SPAS2_BURST_OFF) >= burst:
+        return ret  # burst gap: the Sorento ESC never sees 0.5 s of our SPAS2 in a row
       side = (self.frame // HAZARD_ALT_FRAMES) % 2
       left = (pulse and self.blinker_side == 3) or self.blinker_test == 1 or (alternate and side == 0)
       right = (pulse and self.blinker_side == 4) or self.blinker_test == 2 or (alternate and side == 1)

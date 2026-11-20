@@ -565,3 +565,5 @@ Choose CD210 or Cheddar in the Carrot Web Tools model dialog. Cheddar is the def
 Select `CanfdHazardTest` directly: 0 off, 1 held hazards, 2 fast flash, 3 one request (return to 0 before rearming), 4 alternate left/right every 0.4 seconds, 10–17 continuously try SPAS2 control values 0–7. Extra modes wait for camera 0x1EA classification and operate only without that frame; a short post-shot hold prevents immediate replacement. Some Tucson HDA1 cars flash rapidly even at 1. Default off; these are unverified lamp trials.
 
 `Ioniq9ClusterTest` is available to ccNC cars: 0/1 off, 2/3 dashed lane codes; resets to 0 on reboot. Forced HDP icons and activation/deactivation popups remain removed.
+
+`CanfdBlinkerSpas2Only` trials 3/4 keep the parking ECU and send SPAS2-only bursts for 0.35/0.45 seconds followed by 0.1 seconds off. These are Sorento HEV cruise-fault avoidance trials, not a verified cure. `CanfdHazardTest` 5 alternates SPAS2 values 2/1 every 0.33 seconds to imitate stock remote-parking hazards on cars without camera 0x1EA. Defaults and saved values are unchanged.
