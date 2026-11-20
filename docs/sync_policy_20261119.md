@@ -15,3 +15,5 @@ November 20 semantic resolution: preserve Joongyu Turnlight labels, Lab grouping
 ## November 20 afternoon
 
 Merge Joongyu ddeb4677 first: GV80 parking-body trials, session-relative hazard rhythm, restart burst-gap enforcement. Then integrate Carrot ad0943c0 shared optional 0x4B8/0x093 navigation reception. Preserve all existing user/ej/Joongyu resolutions and no device writes.
+
+Navigation conflict resolution: retain Joongyu full-wrapper naming and timestamp checks and optional GV80 SPAS2 registration; add lower-priority length-checked 0x4B8 reception alongside them. Keep Joongyu catalog wording and append only the new alternate-profile capability.
