@@ -9,3 +9,5 @@ Settings catalog has 257 entries, including branch-specific features; update Wik
 ## November 20 follow-up
 
 Merge Joongyu 67c78a65 lamp trials, then Carrot 8300c95f manual-indicator recovery. Keep forced HDP writes excluded, preserve existing ej/control and user policies. GV80 template byte-18 adjustment is upstream-specific; no device configuration or CAN transmission is performed by synchronization. Settings Wiki draft is validated separately; public Wiki remains carrot-wip-only.
+
+November 20 semantic resolution: preserve Joongyu Turnlight labels, Lab grouping and external-device-only/SPAS-Kick exclusion gates. Adopt compatible shared boundary observation/recovery changes; do not enable native manual-indicator behavior merely from lower-priority catalog prose. Existing ej minimum-duration behavior stays unchanged.

@@ -323,7 +323,9 @@
               "ko": "광각 모델 입력",
               "en": "Wide Model Input",
               "zh": "广角模型输入",
-              "params": ["ModelWideFov"]
+              "params": [
+                "ModelWideFov"
+              ]
             },
             {
               "id": "STEER_CENTER",
@@ -1782,13 +1784,13 @@
       "group": "Joongyu Lab",
       "name": "ManualLaneChangeIndicator",
       "title": "수동 차선변경 Turnlight (시험)",
-      "descr": "깜빡이 없이 손으로 차선을 바꾸면 그쪽 깜빡이를 대신 켭니다.\n외부 깜빡이 장치(USB2CAN·BLE), Turnlight 자동제어 1·2에서만 동작합니다(SPAS·Kick을 켜면 꺼짐).\n주의: 옆 차로가 비었는지는 보지 않습니다.",
+      "descr": "깜빡이 없이 손으로 차선을 바꾸면 그쪽 깜빡이를 대신 켭니다.\n외부 깜빡이 장치(USB2CAN·BLE), Turnlight 자동제어 1·2에서만 동작합니다(SPAS·Kick을 켜면 꺼짐).\n주의: 옆 차로가 비었는지는 보지 않습니다.\n좌측 선 색상·중앙선 분류와 우측 로드에지 거리를 수동 관찰 조건에서 제외하며, 2초 이내 끝난 접근 뒤 새로 확인한 턴의 복구를 개선합니다. 기존 외부 장치 전용 조건은 유지합니다.",
       "egroup": "Joongyu Lab",
       "etitle": "Manual lane change Turnlight (test)",
-      "edescr": "When you change lanes by hand without signalling, turns on that side's blinker for you.\nExternal blinker device (USB2CAN·BLE) only, with External device Turnlight auto control 1 or 2 (off when SPAS or Kick is on).\nCaution: it does not check whether the next lane is clear.",
+      "edescr": "When you change lanes by hand without signalling, turns on that side's blinker for you.\nExternal blinker device (USB2CAN·BLE) only, with External device Turnlight auto control 1 or 2 (off when SPAS or Kick is on).\nCaution: it does not check whether the next lane is clear.\nManual observation removes left marking/centre-line and right road-edge admission checks and improves independently confirmed turns after short boundary attempts. Existing external-device-only gates remain.",
       "cgroup": "Joongyu Lab",
       "ctitle": "手动变道 Turnlight (测试)",
-      "cdescr": "未打转向灯手动变道时，自动替你打开该侧转向灯。\n仅限外部转向灯设备(USB2CAN·BLE)，外部设备 Turnlight 自动控制为 1·2 时工作(开启 SPAS 或 Kick 时不工作)。\n注意: 不检查相邻车道是否空闲。",
+      "cdescr": "未打转向灯手动变道时，自动替你打开该侧转向灯。\n仅限外部转向灯设备(USB2CAN·BLE)，外部设备 Turnlight 自动控制为 1·2 时工作(开启 SPAS 或 Kick 时不工作)。\n注意: 不检查相邻车道是否空闲。\n手动观测不以左侧线色或中央线、右侧道路边缘距离准入，并改善短暂接近后的新转弯恢复。仍限外部设备。",
       "min": 0,
       "max": 1,
       "default": 0,
@@ -3882,9 +3884,21 @@
       "default": 0,
       "unit": 1,
       "options": {
-        "ko": ["끔", "왼쪽", "오른쪽"],
-        "en": ["Off", "Left", "Right"],
-        "zh": ["关闭", "左", "右"]
+        "ko": [
+          "끔",
+          "왼쪽",
+          "오른쪽"
+        ],
+        "en": [
+          "Off",
+          "Left",
+          "Right"
+        ],
+        "zh": [
+          "关闭",
+          "左",
+          "右"
+        ]
       }
     },
     {
