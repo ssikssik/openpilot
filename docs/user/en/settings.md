@@ -581,3 +581,5 @@ Select `CanfdHazardTest` directly: 0 off, 1 held hazards, 2 fast flash, 3 one re
 Centering now suppresses abrupt midpoint changes until geometry recovers. `ej > Lane Centering > LaneAvoidanceMode` supports K8 Hybrid and KIA EV4 as a trial: 0 off, default 1 log-only, 2 experimental laneless centering attenuation. Physical EV4 validation is incomplete; defaults and saved values are not automatically changed. See [scope and conditions](lane-centering.md).
 
 Selectable maxima are low-speed 120 (12.0m/s²), high-speed 80 (8.0m/s²), and lateral jerk 150 (15.0m/s³). Minimum 20, defaults 45/30/50 and stored values remain unchanged. The low-speed parameter read cap is 12.0m/s². These ranges do not establish vehicle capability; existing Hyundai command, angle and EPS limits still apply. Physical driving at higher settings is unvalidated.
+
+An already confirmed manual turn may retain its peak for up to 0.3 seconds and 5 degrees of small unwind while same-direction driver effort and yaw continue through rearm. Existing waiting and cancellation gates remain. carrot-dev retains Joongyu SPAS admission; the carrot-wip 60-second unanswered-probe cache is not applied.

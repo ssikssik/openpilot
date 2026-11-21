@@ -21,3 +21,7 @@ Navigation conflict resolution: retain Joongyu full-wrapper naming and timestamp
 ## November 21 upstream CD210 rollback
 
 Merge Carrot 5c970aa5 after already-contained Joongyu ddeb4677. On carrot-wip accept the fixed CD210 model/compiler/ModelState rollback. On carrot-dev user model selection takes precedence: keep Cheddar's exact driving_supercombo.onnx, separate CD210 source/artifact, boot-frozen selection, current default and compiler/runtime dispatch. Exclude fixed CD210 labels and retain the selector/blur; generated web assets remain unchanged because resolved web sources are unchanged. Dispatch new native internal verifier by boot-selected backend. Retain user lane-centering d294b576 as well as existing controls/HDP/HUD/DM/Orin settings. Top-level diagnostic imports and HDA2 topology fixes are independent and accepted.
+
+## November 21 evening
+
+Merge Carrot 77dd3335 after already-contained Joongyu ddeb4677. Preserve Joongyu APRK/SPAS implementation and tests: upstream no-reply probe cache assumes a different output-owner lease, so exclude it on carrot-dev, including automatically merged cache references. Adopt compatible shared manual-turn peak recovery (0.3s/5deg, existing rearm gates). Do not describe or expose the lower-priority 60-second cache on dev. Retain user EV4 avoidance extension, midpoint protection, lateral-setting maxima120/80/150, model picker, HUD and DM changes. carrot-wip accepts upstream probe cache and turn recovery.
