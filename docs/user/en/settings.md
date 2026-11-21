@@ -579,3 +579,5 @@ Select `CanfdHazardTest` directly: 0 off, 1 held hazards, 2 fast flash, 3 one re
 `ej > Lane Centering` exposes `LaneCenterEnable` (default on), `LaneCenterThreshold` (20 cm) and `LaneCenterGain` (10=1.0x). Applies only in laneless mode and retains existing final steering limits. See [operation and suppression conditions](lane-centering.md).
 
 Centering now suppresses abrupt midpoint changes until geometry recovers. `ej > Lane Centering > LaneAvoidanceMode` supports K8 Hybrid and KIA EV4 as a trial: 0 off, default 1 log-only, 2 experimental laneless centering attenuation. Physical EV4 validation is incomplete; defaults and saved values are not automatically changed. See [scope and conditions](lane-centering.md).
+
+Selectable maxima are low-speed 120 (12.0m/s²), high-speed 80 (8.0m/s²), and lateral jerk 150 (15.0m/s³). Minimum 20, defaults 45/30/50 and stored values remain unchanged. The low-speed parameter read cap is 12.0m/s². These ranges do not establish vehicle capability; existing Hyundai command, angle and EPS limits still apply. Physical driving at higher settings is unvalidated.

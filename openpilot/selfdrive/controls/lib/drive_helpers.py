@@ -140,7 +140,7 @@ def read_lat_accel_limits(params):
     high = MAX_LATERAL_ACCEL_NO_ROLL
   if not math.isfinite(jerk):
     jerk = MAX_LATERAL_JERK
-  return (float(np.clip(low, 0.5, 10.0)),
+  return (float(np.clip(low, 0.5, 12.0)),
           float(np.clip(high, 0.5, 10.0)),
           float(np.clip(jerk, 0.5, 20.0)))
 
