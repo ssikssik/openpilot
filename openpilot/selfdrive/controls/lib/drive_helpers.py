@@ -194,9 +194,12 @@ LANE_CENTER_MAX_LAT_ACCEL = 1.5
 LANE_CENTER_MAX_CURVATURE = 0.02
 LANE_CENTER_GAIN_DEFAULT = 1.0
 LANE_CENTER_GAIN_MAX = 2.0
-LANE_CENTER_THRESHOLD_DEFAULT = 0.20
-LANE_CENTER_LANE_CHANGE_HOLDOFF_SEC = 2.0
-LANE_CENTER_SLEW_RATE = 0.01
+LANE_CENTER_THRESHOLD_DEFAULT = 0.20  # m, 중앙에서 이만큼 벗어나면 보정 시작
+LANE_CENTER_LANE_CHANGE_HOLDOFF_SEC = 2.0  # s
+LANE_CENTER_SLEW_RATE = 0.01  # 1/m/s, 클램프와 동일
+LANE_CENTER_GEOMETRY_WINDOW_NS = 320_000_000
+LANE_CENTER_GEOMETRY_HOLD_NS = 1_000_000_000
+LANE_CENTER_GEOMETRY_RECOVERY_NS = 200_000_000
 
 
 class ClampSteerCorrector:
@@ -496,6 +499,54 @@ class LaneCenterCorrector:
     # 불감대 게이트 상태: 벗어남이 임계값을 넘으면 True, 절반 아래로
     # 떨어지면 False.
     self._correction_active = False
+    self._reset_geometry()
+
+  def _reset_geometry(self):
+    self._geometry_history = []
+    self._geometry_hold_until = 0
+    self._geometry_suppressed = False
+
+  def _geometry_usable(self, stamp, lookahead, path_y, center_y, width, confidence):
+    # Each camera frame supplies one sample even though controlsd runs at 100 Hz.
+    if stamp <= 0:
+      return not self._geometry_suppressed
+    if self._geometry_history:
+      previous = self._geometry_history[-1][0]
+      if stamp == previous:
+        return not self._geometry_suppressed
+      if stamp < previous or stamp - previous > 500_000_000:
+        self._geometry_history.clear()
+        if stamp < previous and self._geometry_suppressed:
+          self._geometry_hold_until = stamp + LANE_CENTER_GEOMETRY_HOLD_NS
+
+    relative_center = center_y - path_y
+    self._geometry_history = [sample for sample in self._geometry_history
+                              if stamp - sample[0] <= LANE_CENTER_GEOMETRY_WINDOW_NS]
+    for old_stamp, old_lookahead, old_path, old_center, old_offset, old_width, old_conf in self._geometry_history:
+      relative_shift = abs(relative_center - old_offset)
+      weakest = min(confidence, old_conf)
+      if (stamp - old_stamp >= 40_000_000 and abs(lookahead - old_lookahead) <= 1.5
+          and max(confidence, old_conf) >= LANE_CENTER_PROB_OFF
+          and abs(center_y - old_center) >= 0.18 and relative_shift >= 0.24
+          and abs(path_y - old_path) <= 0.18
+          and (abs(width - old_width) >= 0.25 or relative_shift >= 0.65
+               or (relative_shift >= 0.40 and weakest < 0.80))):
+        # A boundary switch moves the inferred center without a matching model-path change.
+        self._geometry_suppressed = True
+        self._geometry_hold_until = stamp + LANE_CENTER_GEOMETRY_HOLD_NS
+        break
+
+    self._geometry_history.append((stamp, lookahead, path_y, center_y, relative_center, width, confidence))
+    if self._geometry_suppressed and stamp >= self._geometry_hold_until:
+      # Wait for a span of fresh, consistent geometry before restoring the correction.
+      offsets = [sample[4] for sample in self._geometry_history]
+      widths = [sample[5] for sample in self._geometry_history]
+      if (stamp - self._geometry_history[0][0] >= LANE_CENTER_GEOMETRY_RECOVERY_NS
+          and min(sample[6] for sample in self._geometry_history) > LANE_CENTER_PROB_ON
+          and 2.5 <= min(widths) and max(widths) <= 4.7
+          and max(widths) - min(widths) <= 0.22 and max(offsets) - min(offsets) <= 0.16):
+        self._geometry_suppressed = False
+    return not self._geometry_suppressed
 
   def _read_settings(self):
     """(enabled, threshold_m, gain)을 읽는다.
@@ -527,7 +578,7 @@ class LaneCenterCorrector:
       gain = LANE_CENTER_GAIN_DEFAULT
     return bool(enabled), threshold, gain
 
-  def update(self, md, v_ego, lane_changing):
+  def update(self, md, v_ego, lane_changing, *, avoidance=None):
     """모델 곡률에 더할 곡률 보정(1/m)을 계산한다. 양수 = 우회전."""
     kappa = self._update_impl(md, v_ego, lane_changing)
     if not self._correction_active or not (self.left_active and self.right_active):
@@ -535,6 +586,11 @@ class LaneCenterCorrector:
       self._prev_time = None
       self.last_correction = 0.0
       return 0.0
+    if avoidance is not None and kappa * avoidance.side > 0.0:
+      lookahead = float(np.clip(v_ego * LANE_CENTER_LOOKAHEAD_TIME,
+                                LANE_CENTER_LOOKAHEAD_MIN, LANE_CENTER_LOOKAHEAD_MAX))
+      approach = min(1.0, max(0.0, (lookahead - avoidance.approachStart) / 5.0))
+      kappa *= 1.0 - approach * avoidance.strength
     kappa = self._slew_limit(kappa)
     self.last_correction = kappa
     return kappa
@@ -560,6 +616,7 @@ class LaneCenterCorrector:
       self.left_active = False
       self.right_active = False
       self._correction_active = False
+      self._reset_geometry()
       return 0.0
     # 차선변경 중에는 선을 넘는 것이 의도된 동작이므로 보정하지 않는다.
     # 종료 후 홀드오프(2초) 동안도 보정하지 않는다 (클램프와 동일 이유).
@@ -568,6 +625,7 @@ class LaneCenterCorrector:
       self.left_active = False
       self.right_active = False
       self._correction_active = False
+      self._reset_geometry()
       self._lane_change_holdoff_until = now + LANE_CENTER_LANE_CHANGE_HOLDOFF_SEC
       return 0.0
     if now < self._lane_change_holdoff_until:
@@ -580,6 +638,7 @@ class LaneCenterCorrector:
     strength = float(np.interp(v_ego * 3.6, [5.0, 10.0], [0.0, 1.0]))
     if strength <= 0.0:
       self._correction_active = False
+      self._reset_geometry()
       return 0.0
     try:
       return self._compute(md, v_ego, threshold, gain, strength)
@@ -612,9 +671,6 @@ class LaneCenterCorrector:
       self.right_active = True
     elif r_prob < LANE_CENTER_PROB_OFF:
       self.right_active = False
-    if not (self.left_active and self.right_active):
-      return 0.0
-
     # 룩어헤드 거리: 1초 앞 지점 (5~30m). 클램프와 동일.
     lookahead = float(np.clip(v_ego * LANE_CENTER_LOOKAHEAD_TIME,
                               LANE_CENTER_LOOKAHEAD_MIN, LANE_CENTER_LOOKAHEAD_MAX))
@@ -627,6 +683,12 @@ class LaneCenterCorrector:
 
     # 차선 중앙: 양쪽 차선의 중간. 경로가 중앙에서 벗어난 만큼 보정한다.
     center_y = (left_y + right_y) / 2.0
+    if not self._geometry_usable(getattr(md, "timestampEof", 0), lookahead, path_y, center_y,
+                                 right_y - left_y, min(l_prob, r_prob)):
+      self._correction_active = False
+      return 0.0
+    if not (self.left_active and self.right_active):
+      return 0.0
     offset = path_y - center_y  # 양수면 경로가 중앙보다 우측
     # 불감대 (히스테리시스): 벗어남이 임계값을 넘으면 켜지고, 절반 아래로
     # 떨어져야 꺼진다. 작은 벗어남은 무시해 정상 주행에서 보정이 자꾸

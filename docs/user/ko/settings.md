@@ -596,3 +596,5 @@ Carrot Web 도구의 모델 변경 창에서 CD210과 Cheddar를 선택합니다
 ### 차선 중앙 유지 보정
 
 `ej > 차선 중앙 유지`에서 `LaneCenterEnable`(기본 켜짐), `LaneCenterThreshold`(기본 20cm), `LaneCenterGain`(기본 10=1.0배)을 조절합니다. 레인리스 전용이며 기존 최종 조향 제한은 유지합니다. [동작·중단 조건](lane-centering.md)을 참고하세요.
+
+중앙 보정은 차선 중앙 급변 시 일시 중단 후 안정된 인식에서 복귀합니다. `ej > 차선 중앙 유지 > LaneAvoidanceMode`는 K8 하이브리드 전용으로 0=끔, 기본 1=기록만, 2=레인리스 중앙 보정 완화 시험입니다. EV4에는 회피 적용이 켜지지 않습니다. [조건과 범위](lane-centering.md)를 참고하세요.

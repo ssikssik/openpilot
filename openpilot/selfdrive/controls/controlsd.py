@@ -246,7 +246,16 @@ class Controls:
                        or CS.leftBlinker or CS.rightBlinker
                        or getattr(self.sm['carrotMan'], 'atc_active', False))
       clamp_kappa = self.clamp_steer_corrector.update(model_v2, CS.vEgo, lane_changing)
-      center_kappa = self.lane_center_corrector.update(model_v2, CS.vEgo, lane_changing)
+      avoidance = None
+      lane_avoidance = lat_plan.laneAvoidance
+      if (lane_avoidance.applyEnabled and self.sm.valid['lateralPlan'] and not lane_changing
+          and not (CS.steeringPressed or CS.brakePressed or CS.gasPressed)
+          and 0 <= time.monotonic() - self.sm.logMonoTime['lateralPlan'] * 1e-9 <= 0.20
+          and abs(self.sm.logMonoTime['modelV2'] - lat_plan.modelMonoTime) <= 150_000_000
+          and lane_avoidance.side in (-1, 1) and 0.0 < lane_avoidance.strength <= 1.0
+          and math.isfinite(lane_avoidance.approachStart)):
+        avoidance = lane_avoidance
+      center_kappa = self.lane_center_corrector.update(model_v2, CS.vEgo, lane_changing, avoidance=avoidance)
       new_desired_curvature = smooth_value(
         model_v2.action.desiredCurvature + clamp_kappa + center_kappa, self.desired_curvature, 0.1)
 

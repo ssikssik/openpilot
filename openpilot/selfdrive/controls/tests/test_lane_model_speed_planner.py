@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from openpilot.selfdrive.controls.lib.lane_avoidance import LaneAvoidance
 from openpilot.selfdrive.controls.lib.lane_model_speed import LaneModelSpeedGuard
 from opendbc.car.lateral_geometry import LateralGeometry
 
@@ -16,6 +17,7 @@ class StubMpc:
     self.u_sol = np.zeros((32, 1))
     self.solution_status = 0
     self.cost = 0.0
+    self.solve_time = 0.0
 
   def set_weights(self, *args):
     pass
@@ -28,12 +30,18 @@ class StubMpc:
 class StubLanePlanner:
   def __init__(self):
     self.debugText = ''
+    self.lane_width = 3.6
+    self.clamp_max_correction = 0.0
+    self.offset_total = 0.0
 
   def parse_model(self, md):
     pass
 
   def get_d_path(self, cs, speed, t, path, curve_speed):
     return path, self.lanefull_mode
+
+  def apply_min_distance_clamp(self, path, speed):
+    return path
 
 
 def make_planner(cp=None):
@@ -46,6 +54,7 @@ def make_planner(cp=None):
     'np': np,
     'DT_MDL': 0.05,
     'TRAJECTORY_SIZE': 33,
+    'CONTROL_N': 17,
     'MIN_SPEED': 1.0,
     'LAT_MPC_N': 32,
     'Params': lambda: params,
@@ -55,6 +64,9 @@ def make_planner(cp=None):
     'LateralGeometry': LateralGeometry,
     'time': SimpleNamespace(monotonic=lambda: 0),
     'log': SimpleNamespace(Desire=SimpleNamespace(none=0)),
+    'messaging': SimpleNamespace(new_message=lambda _: SimpleNamespace(
+      lateralPlan=SimpleNamespace(laneAvoidance=SimpleNamespace(), position=SimpleNamespace()),
+    )),
     'yaw_from_path_no_scipy': lambda *a, **k: (np.zeros(33), np.zeros(33)),
   }
   exec(
@@ -72,7 +84,7 @@ def inputs(speed=30.0, start=30.0, end=30.0, lane_speed=1):
     orientationRate=SimpleNamespace(z=np.zeros(33)),
     velocity=SimpleNamespace(x=np.linspace(start, end, 33), y=np.zeros(33), z=np.zeros(33)),
     acceleration=SimpleNamespace(x=np.zeros(33)),
-    meta=SimpleNamespace(desire=0, laneWidthLeft=3.5, laneWidthRight=3.5),
+    meta=SimpleNamespace(desire=0, laneWidthLeft=3.5, laneWidthRight=3.5, laneChangeState='off', laneChangeDirection='none'),
   )
   return {
     'modelV2': model,
@@ -121,3 +133,38 @@ def test_missing_model_speed_cannot_reuse_lane_mode_eligibility():
   for _ in range(20):
     assert not update(planner, inputs())
   assert update(planner, inputs())
+
+
+def test_experimental_diagnostic_preserves_published_lane_mode_path():
+  class PlannerMessages(dict):
+    logMonoTime = {'modelV2': 123}
+
+    def all_checks(self, service_list):
+      return True
+
+  planner = make_planner()
+  carrot = SimpleNamespace(atc_active=False)
+  sm = PlannerMessages(inputs())
+  published = []
+  pm = SimpleNamespace(send=lambda _, msg: published.append(msg.lateralPlan))
+  sm['modelV2'].position.y[:] = -0.45
+  for _ in range(21):
+    planner.update(sm, carrot)
+  candidate = LaneAvoidance("tracked", side=1, strength=1.0, start=5.0)
+
+  planner.publish(sm, pm, carrot)
+  planner.publish(sm, pm, carrot, candidate)
+  planner.publish(sm, pm, carrot, candidate, apply_avoidance=True)
+
+  baseline, shadow, experimental = published
+  assert baseline.useLaneLines and shadow.useLaneLines and experimental.useLaneLines
+  assert not shadow.laneAvoidance.applyEnabled
+  assert experimental.laneAvoidance.applyEnabled
+  assert experimental.laneAvoidance.approachStart == 5.0
+  for msg in (shadow, experimental):
+    assert msg.dPathPoints == baseline.dPathPoints
+    assert msg.position == baseline.position
+    assert msg.psis == baseline.psis
+    assert msg.distances == baseline.distances
+    assert msg.curvatures == baseline.curvatures
+    assert msg.curvatureRates == baseline.curvatureRates

@@ -577,3 +577,5 @@ Select `CanfdHazardTest` directly: 0 off, 1 held hazards, 2 fast flash, 3 one re
 ### Lane centering correction
 
 `ej > Lane Centering` exposes `LaneCenterEnable` (default on), `LaneCenterThreshold` (20 cm) and `LaneCenterGain` (10=1.0x). Applies only in laneless mode and retains existing final steering limits. See [operation and suppression conditions](lane-centering.md).
+
+Centering now suppresses abrupt midpoint changes until geometry recovers. `ej > Lane Centering > LaneAvoidanceMode` is K8 Hybrid-only: 0 off, default 1 log-only, 2 experimental laneless centering attenuation. It does not enable avoidance on EV4. See [scope and conditions](lane-centering.md).

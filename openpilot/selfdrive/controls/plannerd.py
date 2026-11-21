@@ -14,6 +14,7 @@ from openpilot.selfdrive.controls.lib.longitudinal_fast_radar import (
 )
 from openpilot.selfdrive.controls.lib.longitudinal_stopping_lead import StoppingLeadFilter
 from openpilot.selfdrive.controls.lib.lateral_planner import LateralPlanner
+from openpilot.selfdrive.controls.lib.lane_avoidance import LaneAvoidanceGuard
 import openpilot.cereal.messaging as messaging
 from openpilot.selfdrive.carrot.carrot_functions import CarrotPlanner
 from openpilot.selfdrive.carrot.radar import effective_radar_track_mode
@@ -48,9 +49,9 @@ def main():
   ldw = LaneDepartureWarning()
   longitudinal_planner = LongitudinalPlanner(CP)
   lateral_planner = LateralPlanner(CP, debug=False)
-  fast_radar = FastRadarOverlay(
-    front_radar_delay_s=front_radar_distance_delay_s(CP),
-  )
+  front_radar_delay = front_radar_distance_delay_s(CP)
+  fast_radar = FastRadarOverlay(front_radar_delay_s=front_radar_delay)
+  lane_avoidance = LaneAvoidanceGuard() if CP.carFingerprint == "KIA_K8_HEV_1ST_GEN" else None
   stopping_lead_filter = StoppingLeadFilter()
 
   pm = messaging.PubMaster(['longitudinalPlan', 'driverAssistance', 'lateralPlan'])
@@ -169,8 +170,16 @@ def main():
       lateral_start = time.monotonic()
       timings['model_age_at_lateral_ms'] = (lateral_start - sm.logMonoTime['modelV2'] * 1e-9) * 1000
       model_frame += 1
+      avoidance_mode = params.get("LaneAvoidanceMode", return_default=True) if lane_avoidance is not None else 0
+      avoidance = None
+      if lane_avoidance is not None:
+        if avoidance_mode in (1, 2):
+          avoidance = lane_avoidance.update_live(sm, carrot, time.monotonic(), front_radar_delay)
+        else:
+          lane_avoidance.reset()
+      apply_avoidance = avoidance_mode == 2 and bool(params.get("ClampEnable", return_default=True))
       lateral_planner.update(sm, carrot)
-      lateral_planner.publish(sm, pm, carrot)
+      lateral_planner.publish(sm, pm, carrot, avoidance, apply_avoidance=apply_avoidance)
 
       ldw.update(model_frame, sm['modelV2'], sm['carState'], sm['carControl'])
       msg = messaging.new_message('driverAssistance')

@@ -213,7 +213,7 @@ class LateralPlanner:
   
     self.x_sol = self.lat_mpc.x_sol
 
-  def publish(self, sm, pm, carrot):
+  def publish(self, sm, pm, carrot, avoidance=None, *, apply_avoidance=False):
     plan_solution_valid = self.solution_invalid_cnt < 2
     plan_send = messaging.new_message('lateralPlan')
     plan_send.valid = sm.all_checks(service_list=['carState', 'controlsState', 'modelV2'])
@@ -255,6 +255,13 @@ class LateralPlanner:
     lateralPlan.laneChangeState = sm['modelV2'].meta.laneChangeState
     lateralPlan.laneChangeDirection = sm['modelV2'].meta.laneChangeDirection
     lateralPlan.laneWidth = float(self.LP.lane_width)
+    if avoidance is not None:
+      diagnostic = lateralPlan.laneAvoidance
+      diagnostic.status = avoidance.status
+      diagnostic.side = avoidance.side
+      diagnostic.strength = avoidance.strength
+      diagnostic.applyEnabled = apply_avoidance and avoidance.strength > 0.0
+      diagnostic.approachStart = avoidance.start
 
     #plan_send.lateralPlan.dPathWLinesX = [float(x) for x in self.d_path_w_lines_xyz[:, 0]]
     #plan_send.lateralPlan.dPathWLinesY = [float(y) for y in self.d_path_w_lines_xyz[:, 1]]
