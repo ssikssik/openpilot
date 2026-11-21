@@ -133,3 +133,123 @@ def test_ev4_missing_optional_navigation_does_not_add_timeouts(ev4):
     receive(state, parsers, frame * .02, [packer.make_can_msg('CRUISE_BUTTONS', parser.bus, {'COUNTER': frame % 16})])
   assert parser.can_valid
   assert not output(state, parser).vehicleNaviAvailable
+
+
+# Logged EV4 frames, 0000033a--5e9dbab0d4 (2026-11-21 school-zone passes).
+EV4_PROFILE_77 = bytes.fromhex('f00c8affffffffff7700000000e0080cffffffffffffffff')
+EV4_PROFILE_D7 = bytes.fromhex('80d412ffffffffffd700000000e0080cffffffffffffffff')
+EV4_STATUS = {  # (warning byte 10, limit byte 12) -> A-CAN 0x380/24B
+  (0, 0): bytes.fromhex('a4d3a9000000200000000012001071000000000000000000'),
+  (0, 30): bytes.fromhex('4ce6120000002000000000121e1071000000000000000000'),
+  (0, 60): bytes.fromhex('5567f10000002000000000123c1071000000000000000000'),
+  (1, 0): bytes.fromhex('2102d1000000200000000112001071000000000000000000'),
+  (1, 30): bytes.fromhex('4d1ea40000002000000001121e1071000000000000000000'),
+}
+
+
+def school_output(state, parsers):
+  ret = SimpleNamespace(speedLimit=0., vEgo=0.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret, False, parsers[Bus.alt])
+  return ret
+
+
+def school_receive(state, parsers, time_s, status=None, profile=None):
+  frames = []
+  if status is not None:
+    frames.append((0x380, EV4_STATUS[status], parsers[Bus.alt].bus))
+  if profile is not None:
+    frames.append((0x93, profile, parsers[Bus.pt].bus))
+  receive(state, parsers, time_s, frames)
+  return school_output(state, parsers)
+
+
+def school_zone_entered(ev4):
+  state, parsers, _ = ev4
+  state.vehicleNaviSchoolZoneControl = True
+  state.controls_ready_count = 122
+  # 0x380 shows 30 about 0.6 s before 0x77 (5/5 logged school-zone passes).
+  school_receive(state, parsers, 1.0, status=(0, 30))
+  assert state.navi_status_380 is parsers[Bus.alt].vl[carstate.CANFD_NAVI_STATUS_MSG]
+  ret = school_receive(state, parsers, 1.6, status=(0, 30), profile=EV4_PROFILE_77)
+  return state, parsers, ret
+
+
+def test_ev4_school_zone_confirmed_by_acan_limit(ev4):
+  state, parsers, ret = school_zone_entered(ev4)
+  # 0x364 stays MapSource=1 on EV4; the A-CAN 30 confirms instead.
+  assert ret.schoolZoneActive
+  assert ret.speedLimit == 30
+  assert state.vehicleNaviSchoolZoneUsesNaviStatus
+  assert not state.vehicleNaviSchoolZoneUsesCameraStatus
+
+
+@pytest.mark.parametrize('status', [None, (0, 0), (0, 60)])
+def test_ev4_school_zone_needs_acan_30(ev4, status):
+  state, parsers, _ = ev4
+  state.vehicleNaviSchoolZoneControl = True
+  state.controls_ready_count = 122
+  school_receive(state, parsers, 1.0, status=status)
+  ret = school_receive(state, parsers, 1.6, status=status, profile=EV4_PROFILE_77)
+  assert not ret.schoolZoneActive
+  assert not state.vehicleNaviSchoolZoneActive
+
+
+def test_ev4_acan_30_alone_does_not_activate_school_zone(ev4):
+  state, parsers, _ = ev4
+  state.vehicleNaviSchoolZoneControl = True
+  state.controls_ready_count = 122
+  for t in (1.0, 1.5, 2.0):
+    ret = school_receive(state, parsers, t, status=(0, 30))
+  assert not ret.schoolZoneActive
+
+
+def test_ev4_school_zone_holds_through_logged_gaps(ev4):
+  state, parsers, _ = school_zone_entered(ev4)
+  t = 1.6
+  # Logged inside-zone gaps: 30 hidden ~4 s without warning, ~7.7 s while
+  # the pedestrian warning (code 1) stays on.
+  for status, duration in (((0, 0), 4.0), ((1, 30), 5.0), ((1, 0), 7.7), ((0, 30), 2.0)):
+    end = t + duration
+    while t < end:
+      t = round(t + 0.5, 3)
+      ret = school_receive(state, parsers, t, status=status)
+      assert ret.schoolZoneActive, (status, t)
+
+
+def test_ev4_school_zone_releases_after_sustained_loss(ev4):
+  state, parsers, _ = school_zone_entered(ev4)
+  # The release timer starts at the first frame showing limit 0 / no warning.
+  lost_start = t = 2.1
+  while t < lost_start + 7.5:
+    assert school_receive(state, parsers, t, status=(0, 0)).schoolZoneActive, t
+    t = round(t + 0.5, 3)
+  t = round(lost_start + 8.0, 3)
+  assert not school_receive(state, parsers, t, status=(0, 0)).schoolZoneActive
+  assert not state.vehicleNaviSchoolZoneActive
+
+
+def test_ev4_school_zone_releases_on_different_limit(ev4):
+  state, parsers, _ = school_zone_entered(ev4)
+  ret = school_receive(state, parsers, 2.0, status=(0, 60))
+  assert not ret.schoolZoneActive
+
+
+def test_ev4_school_zone_releases_when_acan_goes_stale(ev4):
+  state, parsers, _ = school_zone_entered(ev4)
+  ret = school_receive(state, parsers, 1.6 + 1.5)  # no 0x380 for 1.5 s
+  assert not ret.schoolZoneActive
+
+
+def test_ev4_school_zone_new_non_30_zone_profile_clears(ev4):
+  state, parsers, _ = school_zone_entered(ev4)
+  ret = school_receive(state, parsers, 2.0, status=(0, 60), profile=EV4_PROFILE_D7)
+  assert not ret.schoolZoneActive
+
+
+def test_ev4_school_zone_disabled_by_setting(ev4):
+  state, parsers, _ = ev4
+  state.vehicleNaviSchoolZoneControl = False
+  state.controls_ready_count = 122
+  school_receive(state, parsers, 1.0, status=(0, 30))
+  ret = school_receive(state, parsers, 1.6, status=(0, 30), profile=EV4_PROFILE_77)
+  assert not ret.schoolZoneActive

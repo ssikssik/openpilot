@@ -42,6 +42,9 @@ VEHICLE_NAVI_CAMERA_KINDS = (0, 1, 2)
 VEHICLE_NAVI_CONTROLLED_ACCESS_LINK_CLASSES = (1, 2, 3)  # Freeway, IC, JC
 VEHICLE_NAVI_CONTROLLED_ACCESS_ROAD_CLASSES = (1, 2)  # Freeway, arterial/city freeway
 VEHICLE_NAVI_SCHOOL_ZONE_MAX_DISTANCE = 1000.0
+# EV4 A-CAN 0x380 drops its 30 display for up to ~4 s inside a school zone
+# while no warning is shown (2026-11-21 logs). Release only after a longer gap.
+VEHICLE_NAVI_SCHOOL_ZONE_EV4_RELEASE_NS = 8_000_000_000
 VEHICLE_NAVI_POSITION_TIMEOUT_NS = 1_000_000_000
 SPEEDCAM_SKIP_MIN_SPEED = 5.0  # m/s; below this + keeps its resume/set-speed role
 SPEEDCAM_GAS_TOK_FRAMES = 40   # matches cruise.py _gas_tok_timer (0.4 s at 100 Hz)
@@ -325,6 +328,9 @@ class CarState(CarStateBase):
     self.vehicleNaviSchoolZoneActive = False
     self.vehicleNaviSchoolZoneStartDistance = 0.0
     self.vehicleNaviSchoolZoneUsesCameraStatus = False
+    self.vehicleNaviSchoolZoneUsesNaviStatus = False
+    self.vehicleNaviSchoolZoneLostNanos = None
+    self.ev4NaviStatus = None
     self.pcmCruiseGap = 0
 
     self.MainMode_ACC = False
@@ -551,6 +557,8 @@ class CarState(CarStateBase):
             add_and_cache(self.cp, self.navi_position_msg, "navi_position_4b4")
             add_and_cache(self.cp, self.navi_segment_msg, "navi_segment_4b9")
             add_and_cache(self.cp, self.navi_profile_msg, "navi_profile_4be")
+            if self.canfd_wrapped_navi_full and self.cp_alt is not None:
+              add_and_cache(self.cp_alt, CANFD_NAVI_STATUS_MSG, "navi_status_380")
           add_and_cache(self.cp, LEGACY_NAVI_PROFILE_4B8_MSG, "navi_profile_4b8")
           add_and_cache(self.cp, "STEER_TOUCH_2AF", "steer_touch_2af")
         elif self.controls_ready_count == 124:
@@ -1043,6 +1051,21 @@ class CarState(CarStateBase):
     self.vehicleNaviSchoolZoneActive = False
     self.vehicleNaviSchoolZoneStartDistance = self.totalDistance
     self.vehicleNaviSchoolZoneUsesCameraStatus = False
+    self.vehicleNaviSchoolZoneUsesNaviStatus = False
+    self.vehicleNaviSchoolZoneLostNanos = None
+
+  def _update_ev4_navi_status(self, cp, cp_alt):
+    # EV4 never reports MapSource=2 on E-CAN 0x364, so the legacy school
+    # confirmation cannot pass. Its A-CAN 0x380/24B instead shows the cluster
+    # limit (byte 12) and warning code (byte 10). Returns (limit, warning)
+    # only for a fresh frame of the expected size.
+    self.ev4NaviStatus = None
+    if not self.canfd_wrapped_navi_full or not self.is_metric:
+      return
+    if not self._pv5_navi_message_fresh(cp, cp_alt, CANFD_NAVI_STATUS_MSG, 0x380, 24):
+      return
+    raw = cp_alt.dat.get(0x380, b"")
+    self.ev4NaviStatus = (raw[12], raw[10])
 
   def _clear_vehicle_navi_speed_zone(self):
     self.vehicleNaviSpeedZoneActive = False
@@ -1211,10 +1234,17 @@ class CarState(CarStateBase):
             # 0x77 describes a generic 30 km/h zone and also appears outside
             # school zones. Only use it for the school cap while 0x4A3
             # independently confirms an active 30 km/h camera/zone.
-            if event[1] == 30 and speed_limit_cam and ret.speedLimit == 30 and not on_controlled_access_road:
+            # EV4: 0x364 never confirms, but A-CAN 0x380 shows the 30 limit
+            # ~0.6 s before every 0x77 seen in school zones (5/5 passes,
+            # 2026-11-17/21); 0x380 alone also shows 30 elsewhere (7/7 without 0x77).
+            map_confirmed = speed_limit_cam and ret.speedLimit == 30
+            status_confirmed = self.ev4NaviStatus is not None and self.ev4NaviStatus[0] == 30
+            if event[1] == 30 and (map_confirmed or status_confirmed) and not on_controlled_access_road:
               self.vehicleNaviSchoolZoneActive = True
               self.vehicleNaviSchoolZoneStartDistance = self.totalDistance
-              self.vehicleNaviSchoolZoneUsesCameraStatus = True
+              self.vehicleNaviSchoolZoneUsesCameraStatus = map_confirmed
+              self.vehicleNaviSchoolZoneUsesNaviStatus = not map_confirmed
+              self.vehicleNaviSchoolZoneLostNanos = None
             else:
               self._clear_vehicle_navi_school_zone()
       elif self._vehicle_navi_profile_allowed(event[0], profile) and (not on_controlled_access_road or
@@ -1268,6 +1298,7 @@ class CarState(CarStateBase):
     ret.vehicleNaviSpeed = 0.0
     if self.canfd_wrapped_navi:
       self._update_pv5_navi_section(cp, cp_alt)
+    self._update_ev4_navi_status(cp, cp_alt)
     profile_timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_profile_msg)
     profile_4b8_timestamp = 0
     if len(cp.dat.get(0x4b8, b"")) == 8:
@@ -1414,7 +1445,20 @@ class CarState(CarStateBase):
       camera_status_ended = (self.vehicleNaviSchoolZoneUsesCameraStatus and
                              (not speed_limit_cam or ret.speedLimit != 30))
       distance_expired = self.totalDistance - self.vehicleNaviSchoolZoneStartDistance >= VEHICLE_NAVI_SCHOOL_ZONE_MAX_DISTANCE
-      if camera_status_ended or distance_expired:
+      navi_status_ended = False
+      if self.vehicleNaviSchoolZoneUsesNaviStatus:
+        status = self.ev4NaviStatus
+        if status is None or status[0] not in (0, 30):
+          # Stale/missing 0x380 or an explicit different limit ends the zone.
+          navi_status_ended = True
+        elif status[0] == 30 or status[1] != 0:
+          self.vehicleNaviSchoolZoneLostNanos = None
+        else:
+          now = cp._last_update_nanos
+          if self.vehicleNaviSchoolZoneLostNanos is None:
+            self.vehicleNaviSchoolZoneLostNanos = now
+          navi_status_ended = now - self.vehicleNaviSchoolZoneLostNanos >= VEHICLE_NAVI_SCHOOL_ZONE_EV4_RELEASE_NS
+      if camera_status_ended or navi_status_ended or distance_expired:
         self._clear_vehicle_navi_school_zone()
 
     if self.vehicleNaviSchoolZoneControl and self.vehicleNaviSchoolZoneActive and not on_controlled_access_road:
@@ -1833,7 +1877,7 @@ class CarState(CarStateBase):
     elif wrapped_navi_full:
       msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_POSITION_MSG, math.nan),
               (CANFD_NAVI_SEGMENT_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan)]
-      alt_msgs = []
+      alt_msgs = [(CANFD_NAVI_STATUS_MSG, math.nan)]
     else:
       msgs = [("NEW_MSG_4B4", math.nan), ("NEW_MSG_4B9", math.nan), ("NEW_MSG_4BE", math.nan)]
       alt_msgs = []
