@@ -45,6 +45,10 @@ VEHICLE_NAVI_SCHOOL_ZONE_MAX_DISTANCE = 1000.0
 # EV4 A-CAN 0x380 drops its 30 display for up to ~4 s inside a school zone
 # while no warning is shown (2026-11-21 logs). Release only after a longer gap.
 VEHICLE_NAVI_SCHOOL_ZONE_EV4_RELEASE_NS = 8_000_000_000
+# EV4 A-CAN 0x380 byte 10 shows exactly 0x10 for ~5 s at a section-enforcement
+# entry; the kind-7 profile follows ~0.2-0.5 s later (3/3 confirmed sections,
+# 2026-11-18). Other bit-4 codes (0x1A-0x1D) and kind 7 alone also occur elsewhere.
+EV4_NAVI_SECTION_ALERT = 0x10
 VEHICLE_NAVI_POSITION_TIMEOUT_NS = 1_000_000_000
 SPEEDCAM_SKIP_MIN_SPEED = 5.0  # m/s; below this + keeps its resume/set-speed role
 SPEEDCAM_GAS_TOK_FRAMES = 40   # matches cruise.py _gas_tok_timer (0.4 s at 100 Hz)
@@ -331,6 +335,8 @@ class CarState(CarStateBase):
     self.vehicleNaviSchoolZoneUsesNaviStatus = False
     self.vehicleNaviSchoolZoneLostNanos = None
     self.ev4NaviStatus = None
+    self.vehicleNaviSpeedZoneUsesNaviStatus = False
+    self.vehicleNaviSpeedZoneLostNanos = None
     self.pcmCruiseGap = 0
 
     self.MainMode_ACC = False
@@ -1070,6 +1076,24 @@ class CarState(CarStateBase):
   def _clear_vehicle_navi_speed_zone(self):
     self.vehicleNaviSpeedZoneActive = False
     self.vehicleNaviSpeedZoneSpeed = 0.0
+    self.vehicleNaviSpeedZoneUsesNaviStatus = False
+    self.vehicleNaviSpeedZoneLostNanos = None
+
+  def _ev4_navi_status_zone_ended(self, speed, lost_attr, now):
+    # A zone held by EV4 0x380 ends on a stale frame or a different limit. The
+    # cluster may blank its limit (0) for a few seconds inside the zone, so a
+    # blank limit with no warning ends it only after the EV4 release delay.
+    status = self.ev4NaviStatus
+    if status is None or status[0] not in (0, speed):
+      return True
+    if status[0] == speed or status[1] != 0:
+      setattr(self, lost_attr, None)
+      return False
+    lost = getattr(self, lost_attr)
+    if lost is None:
+      setattr(self, lost_attr, now)
+      return False
+    return now - lost >= VEHICLE_NAVI_SCHOOL_ZONE_EV4_RELEASE_NS
 
   def _pv5_navi_message_fresh(self, cp, parser, name, address, size):
     if parser is None:
@@ -1228,6 +1252,13 @@ class CarState(CarStateBase):
       if event[0] == "speed_limit_zone":
         if self.vehicleNaviZoneControlSupported:
           if self._vehicle_navi_profile_allowed("camera", profile) and event[1] > 30:
+            # EV4 has no 0x092 position or 0x364 warning to hold the zone;
+            # a 0x380 section alert at this same limit confirms it instead.
+            status_confirmed = self.ev4NaviStatus == (event[1], EV4_NAVI_SECTION_ALERT)
+            if status_confirmed or not (self.vehicleNaviSpeedZoneUsesNaviStatus and
+                                        self.vehicleNaviSpeedZoneSpeed == event[1]):
+              self.vehicleNaviSpeedZoneUsesNaviStatus = status_confirmed
+              self.vehicleNaviSpeedZoneLostNanos = None
             self.vehicleNaviSpeedZoneActive = True
             self.vehicleNaviSpeedZoneSpeed = event[1]
           if self.vehicleNaviSchoolZoneControl:
@@ -1438,26 +1469,18 @@ class CarState(CarStateBase):
     if bumps:
       ret.speedBumpDistance = bumps[0]["target"] - self.totalDistance
 
-    if self.vehicleNaviSpeedZoneActive and not self.canfd_wrapped_navi and (not position_seen and not speed_limit_cam):
+    if self.vehicleNaviSpeedZoneActive and self.vehicleNaviSpeedZoneUsesNaviStatus:
+      if self._ev4_navi_status_zone_ended(self.vehicleNaviSpeedZoneSpeed, "vehicleNaviSpeedZoneLostNanos", cp._last_update_nanos):
+        self._clear_vehicle_navi_speed_zone()
+    elif self.vehicleNaviSpeedZoneActive and not self.canfd_wrapped_navi and (not position_seen and not speed_limit_cam):
       self._clear_vehicle_navi_speed_zone()
 
     if self.vehicleNaviSchoolZoneActive:
       camera_status_ended = (self.vehicleNaviSchoolZoneUsesCameraStatus and
                              (not speed_limit_cam or ret.speedLimit != 30))
       distance_expired = self.totalDistance - self.vehicleNaviSchoolZoneStartDistance >= VEHICLE_NAVI_SCHOOL_ZONE_MAX_DISTANCE
-      navi_status_ended = False
-      if self.vehicleNaviSchoolZoneUsesNaviStatus:
-        status = self.ev4NaviStatus
-        if status is None or status[0] not in (0, 30):
-          # Stale/missing 0x380 or an explicit different limit ends the zone.
-          navi_status_ended = True
-        elif status[0] == 30 or status[1] != 0:
-          self.vehicleNaviSchoolZoneLostNanos = None
-        else:
-          now = cp._last_update_nanos
-          if self.vehicleNaviSchoolZoneLostNanos is None:
-            self.vehicleNaviSchoolZoneLostNanos = now
-          navi_status_ended = now - self.vehicleNaviSchoolZoneLostNanos >= VEHICLE_NAVI_SCHOOL_ZONE_EV4_RELEASE_NS
+      navi_status_ended = (self.vehicleNaviSchoolZoneUsesNaviStatus and
+                           self._ev4_navi_status_zone_ended(30, "vehicleNaviSchoolZoneLostNanos", cp._last_update_nanos))
       if camera_status_ended or navi_status_ended or distance_expired:
         self._clear_vehicle_navi_school_zone()
 
