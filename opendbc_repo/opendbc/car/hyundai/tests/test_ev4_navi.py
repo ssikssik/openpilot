@@ -144,6 +144,11 @@ EV4_STATUS = {  # (warning byte 10, limit byte 12) -> A-CAN 0x380/24B
   (0, 60): bytes.fromhex('5567f10000002000000000123c1071000000000000000000'),
   (1, 0): bytes.fromhex('2102d1000000200000000112001071000000000000000000'),
   (1, 30): bytes.fromhex('4d1ea40000002000000001121e1071000000000000000000'),
+  # 00000320--5f1dce4517 (2026-11-18 motorway, three confirmed section-enforcement entries)
+  (0, 100): bytes.fromhex('a6f177000000200000000012641071000000000000000000'),
+  (0x10, 100): bytes.fromhex('3d8600000000200000001012641071000000000000000000'),
+  (0x1b, 100): bytes.fromhex('6c392a000000200000001b12641071000000000000000000'),
+  (0x10, 60): bytes.fromhex('b3257c0000002000000010123c1071000000000000000000'),
 }
 
 
@@ -253,3 +258,80 @@ def test_ev4_school_zone_disabled_by_setting(ev4):
   school_receive(state, parsers, 1.0, status=(0, 30))
   ret = school_receive(state, parsers, 1.6, status=(0, 30), profile=EV4_PROFILE_77)
   assert not ret.schoolZoneActive
+
+
+# 17:50:33 section entry: kind 7, offset 0, 100 km/h (0x157). The identical
+# profile also arrives without a 0x380 section alert (17:28:40, not a section).
+EV4_PROFILE_SECTION_100 = bytes.fromhex('e20b3affffffffff5701000000e0080cffffffffffffffff')
+
+
+def section_entered(ev4):
+  state, parsers, _ = ev4
+  state.controls_ready_count = 122
+  # 0x380 shows 0x10 at the section limit ~0.2-0.5 s before kind 7 (3/3 confirmed).
+  school_receive(state, parsers, 1.0, status=(0x10, 100))
+  ret = school_receive(state, parsers, 1.4, status=(0x10, 100), profile=EV4_PROFILE_SECTION_100)
+  return state, parsers, ret
+
+
+def test_ev4_section_confirmed_by_acan_alert(ev4):
+  state, parsers, ret = section_entered(ev4)
+  assert ret.vehicleNaviSectionActive
+  assert ret.vehicleNaviSpeed == 100
+  assert state.vehicleNaviSpeedZoneUsesNaviStatus
+
+
+@pytest.mark.parametrize('status', [None, (0, 100), (0x10, 60), (0x1b, 100)])
+def test_ev4_section_needs_alert_at_same_limit(ev4, status):
+  state, parsers, _ = ev4
+  state.controls_ready_count = 122
+  school_receive(state, parsers, 1.0, status=status)
+  ret = school_receive(state, parsers, 1.4, status=status, profile=EV4_PROFILE_SECTION_100)
+  assert not ret.vehicleNaviSectionActive
+  assert not state.vehicleNaviSpeedZoneActive
+
+
+def test_ev4_section_alert_alone_does_not_activate(ev4):
+  state, parsers, _ = ev4
+  state.controls_ready_count = 122
+  for t in (1.0, 1.5, 2.0):
+    ret = school_receive(state, parsers, t, status=(0x10, 100))
+  assert not ret.vehicleNaviSectionActive
+
+
+def test_ev4_section_holds_while_limit_agrees(ev4):
+  state, parsers, _ = section_entered(ev4)
+  t = 1.4
+  # The alert drops after ~5 s, a later 0x1B notice and an alert-less repeat
+  # of the same profile must not end the section (17:50 pass).
+  for status, duration, profile in (((0, 100), 10.0, None), ((0x1b, 100), 5.0, None),
+                                    ((0, 100), 0.5, EV4_PROFILE_SECTION_100), ((0, 100), 60.0, None)):
+    end = t + duration
+    while t < end:
+      t = round(t + 0.5, 3)
+      ret = school_receive(state, parsers, t, status=status, profile=profile)
+      profile = None
+      assert ret.vehicleNaviSectionActive, (status, t)
+      assert ret.vehicleNaviSpeed == 100
+
+
+def test_ev4_section_releases_on_different_limit(ev4):
+  state, parsers, _ = section_entered(ev4)
+  ret = school_receive(state, parsers, 2.0, status=(0, 60))
+  assert not ret.vehicleNaviSectionActive
+  assert not state.vehicleNaviSpeedZoneActive
+
+
+def test_ev4_section_releases_when_acan_goes_stale(ev4):
+  state, parsers, _ = section_entered(ev4)
+  ret = school_receive(state, parsers, 1.4 + 1.5)
+  assert not ret.vehicleNaviSectionActive
+
+
+def test_ev4_section_releases_after_sustained_blank_limit(ev4):
+  state, parsers, _ = section_entered(ev4)
+  lost_start = t = 2.0
+  while t < lost_start + 7.5:
+    assert school_receive(state, parsers, t, status=(0, 0)).vehicleNaviSectionActive, t
+    t = round(t + 0.5, 3)
+  assert not school_receive(state, parsers, round(lost_start + 8.0, 3), status=(0, 0)).vehicleNaviSectionActive
