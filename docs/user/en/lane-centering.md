@@ -20,6 +20,6 @@ A camera-frame history of roughly 0.32 seconds detects abrupt lane-midpoint/widt
 
 ## Lane correction during obstacle avoidance
 
-`LaneAvoidanceMode` is a K8 Hybrid trial. EV4 does not construct this avoidance detection/application path. `0` is off, default `1` logs candidates only, and `2` applies experimentally. Mode 2 additionally requires ClampEnable and reduces only laneless LaneCenter correction. Lane-mode planning, the existing clamp and final steering limits remain unchanged.
+`LaneAvoidanceMode` is a K8 Hybrid and KIA EV4 trial. Physical EV4 validation is incomplete. `0` is off, default `1` logs candidates only, and `2` applies experimentally. Mode 2 additionally requires ClampEnable and reduces only laneless LaneCenter correction. Lane-mode planning, the existing clamp and final steering limits remain unchanged.
 
 Front/corner radar must corroborate a stopped or slow roadside vehicle and the existing model path must already provide passing space inside the same lane. Only correction pulling toward that obstacle is attenuated; this does not generate an avoidance path. Detection operates at about 18–64.8km/h. Driver steering/pedals, blinkers, lane changes, automatic turns, surrounding traffic/blind spots, stale or invalid inputs restrict detection/application. Default logging does not alter steering. Physical driving is unvalidated; apply mode is for a controlled test environment.

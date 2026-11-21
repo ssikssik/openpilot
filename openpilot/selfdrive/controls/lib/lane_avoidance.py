@@ -9,7 +9,8 @@ import numpy as np
 MAX_SENSOR_AGE = 0.20
 CONFIRM_TIME = 0.30
 MAX_SAMPLE_GAP = 0.16
-# K8 body width is 1.88 m and length is 5.05 m. Allow for mirrors and geometry error.
+# Retain the existing conservative clearance envelope for both supported cars.
+# EV4 admission does not reduce margins or shorten the swept-path check.
 LANE_MARGIN = 1.20
 EGO_LENGTH = 5.1
 # Radar returns a point, not a measured outline. Use an inflated vehicle envelope.
@@ -126,6 +127,10 @@ def _blocked(geometry, obstacle, points):
 
 
 class LaneAvoidanceGuard:
+  @classmethod
+  def for_vehicle(cls, fingerprint):
+    return cls() if fingerprint in ('KIA_K8_HEV_1ST_GEN', 'KIA_EV4') else None
+
   def __init__(self):
     self.reset()
 

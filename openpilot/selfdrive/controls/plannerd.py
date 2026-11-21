@@ -51,7 +51,7 @@ def main():
   lateral_planner = LateralPlanner(CP, debug=False)
   front_radar_delay = front_radar_distance_delay_s(CP)
   fast_radar = FastRadarOverlay(front_radar_delay_s=front_radar_delay)
-  lane_avoidance = LaneAvoidanceGuard() if CP.carFingerprint == "KIA_K8_HEV_1ST_GEN" else None
+  lane_avoidance = LaneAvoidanceGuard.for_vehicle(CP.carFingerprint)
   stopping_lead_filter = StoppingLeadFilter()
 
   pm = messaging.PubMaster(['longitudinalPlan', 'driverAssistance', 'lateralPlan'])

@@ -55,10 +55,11 @@ def drive(guard, md, side=1, *, start_distance=18.0, frames=16, object_speed=0.0
           for n in range(frames)]
 
 
+@pytest.mark.parametrize('fingerprint', ['KIA_EV4', 'KIA_K8_HEV_1ST_GEN'])
 @pytest.mark.parametrize('side', [-1, 1])
 @pytest.mark.parametrize('object_speed', [0.0, 1.5])
-def test_stationary_and_creeping_roadside_vehicles_are_mirrored(side, object_speed):
-  results = drive(LaneAvoidanceGuard(), model(side), side, object_speed=object_speed)
+def test_stationary_and_creeping_roadside_vehicles_are_mirrored(side, object_speed, fingerprint):
+  results = drive(LaneAvoidanceGuard.for_vehicle(fingerprint), model(side), side, object_speed=object_speed)
   assert all(r.status == 'confirming' and r.strength == 0.0 for r in results[:6])
   assert results[-1].status == 'tracked'
   assert results[-1].side == side
@@ -66,9 +67,10 @@ def test_stationary_and_creeping_roadside_vehicles_are_mirrored(side, object_spe
   assert all(a.strength <= b.strength for a, b in zip(results, results[1:]))
 
 
+@pytest.mark.parametrize('fingerprint', ['KIA_EV4', 'KIA_K8_HEV_1ST_GEN'])
 @pytest.mark.parametrize('scenario', ['stopped_queue', 'front_only', 'corner_only', 'scc_only', 'unmeasured', 'centered'])
-def test_rejects_unsupported_or_non_avoiding_paths(scenario):
-  guard, md = LaneAvoidanceGuard(), model()
+def test_rejects_unsupported_or_non_avoiding_paths(scenario, fingerprint):
+  guard, md = LaneAvoidanceGuard.for_vehicle(fingerprint), model()
   if scenario == 'stopped_queue':
     md.velocity.x[4:] = 0.0
   if scenario == 'centered':
@@ -293,3 +295,8 @@ def test_lane_center_settings_and_lane_change_discard_old_midpoint_history():
   for _ in range(14):
     result = center_step(corrector, clock, md)
   assert result > 0.0
+
+
+@pytest.mark.parametrize('fingerprint', ['', 'KIA_EV9', 'HYUNDAI_IONIQ_5_PE'])
+def test_unrequested_vehicles_do_not_construct_avoidance(fingerprint):
+  assert LaneAvoidanceGuard.for_vehicle(fingerprint) is None
