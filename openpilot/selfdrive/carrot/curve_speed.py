@@ -21,6 +21,8 @@ TARGET_LAT_ACCEL = 1.9
 APPROACH_DECEL = 1.0
 APPROACH_JERK = 0.8
 RESPONSE_TIME = 1.0
+RESPONSE_TIME_MIN = 0.5
+RESPONSE_TIME_MAX = 3.0
 RELEASE_HOLD = 0.35
 GEOMETRY_RELEASE_WINDOW = 0.25
 GEOMETRY_MIN_SPAN = 0.20
@@ -35,7 +37,8 @@ class CurveSpeed:
   direction: float = 1.0
 
 
-def curve_speed(model, v_ego, sensitivity=1.0, lower_limit_kph=30.0, *, speed_ratio=1.0, a_ego=0.0):
+def curve_speed(model, v_ego, sensitivity=1.0, lower_limit_kph=30.0, *, speed_ratio=1.0, a_ego=0.0,
+                response_time=RESPONSE_TIME):
   """Find the tightest distance-adjusted speed constraint on a valid model path.
 
   A three-node median rejects isolated yaw spikes before taking any minimum.
@@ -43,7 +46,7 @@ def curve_speed(model, v_ego, sensitivity=1.0, lower_limit_kph=30.0, *, speed_ra
   relevant to the vehicle, even when the model predicts a different speed.
   Invalid/slow nodes break the neighbourhood instead of bridging missing data.
   """
-  if not all(math.isfinite(value) for value in (v_ego, sensitivity, lower_limit_kph, speed_ratio, a_ego)):
+  if not all(math.isfinite(value) for value in (v_ego, sensitivity, lower_limit_kph, speed_ratio, a_ego, response_time)):
     return None
   if sensitivity <= 0.0 or v_ego < 0.0:
     return None
@@ -67,7 +70,10 @@ def curve_speed(model, v_ego, sensitivity=1.0, lower_limit_kph=30.0, *, speed_ra
   curvature = np.divide(yaw_rate, velocity, out=np.zeros_like(yaw_rate), where=valid)
   # Include time to unwind acceleration and build gentle braking, as well as
   # controller/actuator response. The downstream planner still enforces jerk.
-  response_time = RESPONSE_TIME + (max(0.0, a_ego) + APPROACH_DECEL) / (2.0 * APPROACH_JERK)
+  # AutoCurveSpeedResponse can lengthen the base response: the MPC follows a
+  # lowered cruise ceiling with a 2-3 s ramp (EV4 ramp entries, 2026-11-17).
+  base_response = float(np.clip(response_time, RESPONSE_TIME_MIN, RESPONSE_TIME_MAX))
+  response_time = base_response + (max(0.0, a_ego) + APPROACH_DECEL) / (2.0 * APPROACH_JERK)
   response_distance = v_ego * response_time
   floor_ms = max(5.0, lower_limit_kph) * ratio / 3.6
   lateral_budget = TARGET_LAT_ACCEL / float(np.clip(sensitivity, 0.5, 3.0))

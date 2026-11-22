@@ -487,6 +487,7 @@
               "zh": "弯道与转弯",
               "params": [
                 "AutoCurveSpeedFactor",
+                "AutoCurveSpeedResponse",
                 "AutoCurveSpeedLowerLimit",
                 "TurnSpeedControlMode",
                 "MapTurnSpeedFactor",
@@ -1776,6 +1777,22 @@
       "default": 100,
       "unit": 5,
       "display_unit": "percent"
+    },
+    {
+      "group": "감속제어",
+      "name": "AutoCurveSpeedResponse",
+      "title": "커브감속 미리보기 시간(1.0초)",
+      "descr": "커브 감속을 얼마나 미리 시작할지 정합니다. 1/10초 단위이며 기본 10(1.0초)입니다. 높이면 감속이 더 일찍 시작됩니다. 속도 계획이 낮아진 목표를 2~3초에 걸쳐 따라가므로, 램프 진입이 빠르면 20(2.0초)부터 시험하세요. 높으면 커브 전에 더 일찍 느려집니다.",
+      "egroup": "DECEL",
+      "etitle": "CurveDecelLookahead(1.0s)",
+      "edescr": "How early curve slowing starts. Units of 0.1 s, default 10 (1.0 s). Higher values start slowing earlier. The planner follows a lowered target over 2-3 s, so if ramp entries are fast, start testing at 20 (2.0 s). Too high slows down earlier before curves.",
+      "cgroup": "减速控制",
+      "ctitle": "弯道减速预判时间(1.0秒)",
+      "cdescr": "决定弯道减速提前多久开始。单位0.1秒，默认10(1.0秒)。数值越高减速越早开始。速度规划需2~3秒跟随降低的目标，若进匝道过快，建议从20(2.0秒)开始测试。过高会在弯道前更早减速。",
+      "min": 5,
+      "max": 30,
+      "default": 10,
+      "unit": 1
     },
     {
       "group": "조향일반",

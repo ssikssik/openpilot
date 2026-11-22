@@ -291,6 +291,10 @@ Slow or invalid model predictions and isolated yaw-rate spikes are excluded. Lat
 
 The relationship is approximately inverse-square-root: changing 100% to 120% produces about `1 / √1.2`, or 91% of the previous calculated speed. Raise it one step if curves are too fast; lower it if they are too slow.
 
+### `AutoCurveSpeedResponse`
+
+Response time reserved before the remaining distance to a curve. Units of 0.1 s, default 10 (1.0 s), range 5–30. Higher values lower the approach ceiling earlier for the same curve, so slowing starts sooner; the curve target itself is unchanged. The planner follows a lowered ceiling over 2–3 s, so if slowing starts only just before ramps (EV4, 2026-11-17), start testing at 20. In log replay, 20 moved the start of slowing about 0.7–0.9 s earlier on fast ramp entries, with at most 0.06% unnecessary ceiling drops on highway straights and gentle curves. Not yet road-validated.
+
 ### `AutoCurveSpeedLowerLimit`
 
 This floor applies to vision-curve and route-turn candidates. For vision curves, it applies to the curve target before remaining distance determines the current approach ceiling. Raising it prevents those sources from selecting a lower speed, which can leave insufficient slowing for a sharp curve. It is not an automatically safe minimum.

@@ -242,6 +242,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"DisableMinSteerSpeed", {PERSISTENT, INT, "0"}},
     {"AutoCurveSpeedLowerLimit", {PERSISTENT, INT, "30"}},
     {"AutoCurveSpeedFactor", {PERSISTENT, INT, "120"}},
+    {"AutoCurveSpeedResponse", {PERSISTENT, INT, "10"}},
 
     {"AutoTurnControl", {PERSISTENT, INT, "0"}},
     {"AutoTurnControlRightLaneChange", {PERSISTENT, INT, "0"}},

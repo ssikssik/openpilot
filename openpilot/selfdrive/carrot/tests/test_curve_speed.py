@@ -177,3 +177,27 @@ def test_model_loss_resets_exit_confirmation():
     state.update(CurveSpeed(100.), t)
   assert state.update(None, .2) == 30.
   assert state.update(CurveSpeed(100.), .25) == 30.
+
+
+def test_response_time_default_is_unchanged():
+  m = model(20., .025, 60.)
+  assert curve_speed(m, 15.).approach_kph == curve_speed(m, 15., response_time=1.0).approach_kph
+
+
+def test_longer_response_lowers_far_ceiling_but_not_curve_target():
+  # EV4 ramp entries: the MPC follows a lowered ceiling over 2-3 s, so a longer
+  # response must start slowing earlier (lower approach) for a curve ahead.
+  m = model(20., .025, 60.)
+  base, longer = curve_speed(m, 15.), curve_speed(m, 15., response_time=2.0)
+  assert longer.approach_kph < base.approach_kph
+  assert longer.curve_kph == base.curve_kph
+  # Inside the curve there is no braking distance left: both equal the curve target.
+  here = model(20., .025, 0.)
+  assert curve_speed(here, 15., response_time=2.0).approach_kph == pytest.approx(curve_speed(here, 15.).approach_kph)
+
+
+def test_response_time_is_clamped_and_validated():
+  m = model(20., .025, 60.)
+  assert curve_speed(m, 15., response_time=99.).approach_kph == curve_speed(m, 15., response_time=3.0).approach_kph
+  assert curve_speed(m, 15., response_time=0.).approach_kph == curve_speed(m, 15., response_time=0.5).approach_kph
+  assert curve_speed(m, 15., response_time=math.nan) is None
