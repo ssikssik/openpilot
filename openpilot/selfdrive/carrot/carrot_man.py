@@ -303,6 +303,31 @@ def calculate_curvature(p1, p2, p3):
     #curvature_cache[key] = curvature
     return curvature
 
+
+ROUTE_FINE_CHORD = 2  # resampled points (20 m at the 10 m route resampling)
+
+
+def route_curvature_at(points, i, sample=4, fine=ROUTE_FINE_CHORD):
+    """Curvature of the route segment starting at points[i].
+
+    The 40 m chord (sample=4 at 10 m spacing) flattens tight ramps: a logged
+    EV4 45 m-radius ramp read as ~R85-95 m, so the route speed stayed above the
+    entry speed (2026-11-17). A 20 m chord resolves it, but single GPS route
+    points can kink it, so use the median of three 20 m readings around the same
+    middle point, and only when it agrees in direction and is tighter.
+    """
+    coarse = calculate_curvature(points[i], points[i + sample], points[i + 2 * sample])
+    mid = i + sample
+    if fine <= 0 or mid - 1 - fine < 0 or mid + 1 + fine >= len(points):
+        return coarse
+    fine_values = sorted(calculate_curvature(points[m - fine], points[m], points[m + fine])
+                         for m in (mid - 1, mid, mid + 1))
+    fine_median = fine_values[1]
+    if fine_median * coarse > 0 and abs(fine_median) > abs(coarse):
+        return fine_median
+    return coarse
+
+
 class CarrotMan:
   def __init__(self):
     print("************************************************CarrotMan init************************************************")
@@ -540,8 +565,7 @@ class CarrotMan:
             speeds = []
             for i in range(len(resampled_points) - sample * 2):
                 distance += distance_interval
-                p1, p2, p3 = resampled_points[i], resampled_points[i + sample], resampled_points[i + sample * 2]
-                curvature = calculate_curvature(p1, p2, p3)
+                curvature = route_curvature_at(resampled_points, i, sample)
                 curvatures.append(curvature)
                 speed = np.interp(abs(curvature), V_CURVE_LOOKUP_BP, V_CRUVE_LOOKUP_VALS)
                 if abs(curvature) < 0.02:

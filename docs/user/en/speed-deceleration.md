@@ -319,6 +319,8 @@ In mode 2, route-turn speed enters only when turn distance is roughly between -5
 
 80% lowers the received value; 100% keeps it; 120% raises it. `AutoCurveSpeedLowerLimit` is then applied as the floor. Valid supported route-speed input is required.
 
+Route speed resamples the navigation route at 10 m and measures curvature over a 40 m chord. A 40 m chord flattens tight ramps of about 50 m radius (an EV4 45 m ramp read as 48 km/h on 2026-11-17), so the median of three 20 m readings at the same point is used when it is tighter in the same direction. The median rejects a single kinked route point; gentle curves and straights are unchanged. In log replay that ramp's route speed fell to 35–39 km/h (with `AutoNaviSpeedDecelRate` 80 and factor 100), with no unnecessary slowing at 397 route-active points above 40 km/h. Not yet checked with highway route data.
+
 ### `ApplyModelSpeed`
 
 This is not curve-only. It applies the driving model's `desiredVelocity` to cruise set speed:
