@@ -67,7 +67,25 @@ CANFD_NAVI_PROFILE_MSG = "CANFD_NAVI_PROFILE_093"
 CANFD_NAVI_SEGMENT_MSG = "CANFD_NAVI_SEGMENT_099"
 CANFD_NAVI_STATUS_MSG = "CANFD_NAVI_STATUS_380"
 CANFD_NAVI_PROSHORT_MSG = "CANFD_NAVI_PROSHORT_094"
+CANFD_NAVI_RAMP_MSG = "CANFD_NAVI_RAMP_098"
+CANFD_NAVI_STUB_MSG = "CANFD_NAVI_STUB_09A"
+LEGACY_NAVI_PROSHORT_MSG = "NEW_MSG_4BA"
+LEGACY_NAVI_STUB_MSG = "NEW_MSG_4BF"
 LEGACY_NAVI_PROFILE_4B8_MSG = "NEW_MSG_4B8"  # Alternate 8-byte PROLONG address, selected by receipt rather than vehicle model.
+VEHICLE_NAVI_MAX_CURVES = 64
+VEHICLE_NAVI_CURVE_MAX_DISTANCE = 8190.0  # 13-bit offset; 8191 is the invalid sentinel
+VEHICLE_NAVI_CURVE_RADIUS_SCALE = 4.4  # Empirical Hyundai/Kia CAN-FD scale: R ~= 4.4 * |v0 - 511| m
+VEHICLE_NAVI_CURVE_DISTANCE_FACTOR = 2.0
+VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_DISTANCE = 10.0
+VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_SPEED = 60.0
+VEHICLE_NAVI_CURVE_TARGET_LAT_ACCEL = 1.9
+VEHICLE_NAVI_CURVE_ALLOWED_LINK_CLASSES = (1, 2)  # Freeway and IC/JC ramp only
+VEHICLE_NAVI_RAMP_FRWINFO_VALUES = (1, 2, 3, 4)  # Fork warning within ~500 m
+VEHICLE_NAVI_HDA_TIMEOUT_NS = 2_000_000_000
+VEHICLE_NAVI_STUB_EXIT_BRANCH_TYPE = 0x49
+VEHICLE_NAVI_STUB_MERGE_BRANCH_TYPE = 0x01
+VEHICLE_NAVI_JUNCTION_MAX_DISTANCE = 2500.0
+VEHICLE_NAVI_MAX_JUNCTIONS = 16
 CANFD_NAVI_CAMERA_ACTIVE_BIT = 0x40
 CANFD_NAVI_STATUS_TIMEOUT_NS = 1_000_000_000
 STANDSTILL_THRESHOLD = 12 * 0.03125 * CV.KPH_TO_MS
@@ -242,15 +260,30 @@ class CarState(CarStateBase):
     self.navi_position_msg = CANFD_NAVI_POSITION_MSG if self.canfd_wrapped_navi_full else "NEW_MSG_4B4"
     self.navi_segment_msg = CANFD_NAVI_SEGMENT_MSG if self.canfd_wrapped_navi_full else "NEW_MSG_4B9"
     self.navi_profile_msg = CANFD_NAVI_PROFILE_MSG if (self.canfd_wrapped_navi or self.canfd_wrapped_navi_full) else "NEW_MSG_4BE"
+    self.navi_proshort_msg = CANFD_NAVI_PROSHORT_MSG if (self.canfd_wrapped_navi or self.canfd_wrapped_navi_full) else LEGACY_NAVI_PROSHORT_MSG
+    self.navi_ramp_msg = CANFD_NAVI_RAMP_MSG if (self.canfd_wrapped_navi or self.canfd_wrapped_navi_full) else None
+    self.navi_stub_msg = CANFD_NAVI_STUB_MSG if (self.canfd_wrapped_navi or self.canfd_wrapped_navi_full) else LEGACY_NAVI_STUB_MSG
     self.vehicleNaviZoneControlSupported = not self.canfd_wrapped_navi  # Legacy kind-7 profile zones only
     self.hda_info_4a3 = None
     self.navi_position_4b4 = None
     self.navi_segment_4b9 = None
+    self.navi_curve_segment_099 = None
     self.navi_profile_4be = None
     self.navi_profile_4b8 = None
     self.navi_status_380 = None
     self.navi_proshort_094 = None
+    self.navi_ramp_098 = None
+    self.navi_stub_09a = None
     self.vehicleNaviProshortTimestamp = 0
+    self.vehicleNaviCurveSegmentTimestamp = 0
+    self.vehicleNaviRampTimestamp = 0
+    self.vehicleNaviStubTimestamp = 0
+    self.vehicleNaviCurves = []
+    self.vehicleNaviRampCurves = []
+    self.vehicleNaviJunctions = []
+    self.vehicleNaviCurveRouteActive = False
+    self.vehicleNaviCurveRouteState = 3
+    self.vehicleNaviCurvePathIndex = None
     self.ev4Section = None  # {"start", "end", "speed"} in totalDistance coordinates
     self.ev4SectionMismatchNanos = None
     self.pv5_section_start_prev = False
@@ -314,6 +347,7 @@ class CarState(CarStateBase):
     self.tunnel_hold_enabled = self.op_params.get_bool("TunnelLaneChangeHold")
     self.vehicleSpeedCameraParamsCounter = 0
     self.vehicleNaviEvents = []
+    self._read_vehicle_navi_curve_params()
     # joongyu01/speedcam: stock-navigation camera-kind policy (mobile zones, +-button skip, section average)
     self.speedcam_policy = SpeedcamPolicy()
     self.speedcam_accel_swallow = False
@@ -569,6 +603,10 @@ class CarState(CarStateBase):
           if self.canfd_wrapped_navi:
             add_and_cache(self.cp, CANFD_HDA_INFO_MSG, "hda_info_4a3")
             add_and_cache(self.cp, CANFD_NAVI_PROFILE_MSG, "navi_profile_4be")
+            add_and_cache(self.cp, CANFD_NAVI_SEGMENT_MSG, "navi_curve_segment_099")
+            add_and_cache(self.cp, CANFD_NAVI_PROSHORT_MSG, "navi_proshort_094")
+            add_and_cache(self.cp, CANFD_NAVI_RAMP_MSG, "navi_ramp_098")
+            add_and_cache(self.cp, CANFD_NAVI_STUB_MSG, "navi_stub_09a")
             if self.cp_alt is not None:
               add_and_cache(self.cp_alt, CANFD_NAVI_STATUS_MSG, "navi_status_380")
           else:
@@ -580,6 +618,11 @@ class CarState(CarStateBase):
               add_and_cache(self.cp_alt, CANFD_NAVI_STATUS_MSG, "navi_status_380")
             if self.canfd_wrapped_navi_full:
               add_and_cache(self.cp, CANFD_NAVI_PROSHORT_MSG, "navi_proshort_094")
+              add_and_cache(self.cp, CANFD_NAVI_RAMP_MSG, "navi_ramp_098")
+              add_and_cache(self.cp, CANFD_NAVI_STUB_MSG, "navi_stub_09a")
+            else:
+              add_and_cache(self.cp, LEGACY_NAVI_PROSHORT_MSG, "navi_proshort_094")
+              add_and_cache(self.cp, LEGACY_NAVI_STUB_MSG, "navi_stub_09a")
           add_and_cache(self.cp, LEGACY_NAVI_PROFILE_4B8_MSG, "navi_profile_4b8")
           add_and_cache(self.cp, "STEER_TOUCH_2AF", "steer_touch_2af")
         elif self.controls_ready_count == 124:
@@ -876,8 +919,38 @@ class CarState(CarStateBase):
         self._clear_vehicle_navi_school_zone()
     self.roundabout_hold_enabled = self.op_params.get_bool("RoundaboutLaneChangeHold")
     self.tunnel_hold_enabled = self.op_params.get_bool("TunnelLaneChangeHold")
+    self._read_vehicle_navi_curve_params()
     self._read_speedcam_params()
     return changed
+
+  def _read_op_int(self, key, default):
+    try:
+      return self.op_params.get_int(key)
+    except (KeyError, AssertionError, TypeError, ValueError):
+      return default
+
+  def _read_op_bool(self, key, default):
+    try:
+      return bool(self.op_params.get_bool(key))
+    except (KeyError, AssertionError, TypeError, ValueError):
+      return default
+
+  def _read_vehicle_navi_curve_params(self):
+    raw_factor = self._read_op_int("VehicleNaviCurveSpeedFactor", 100)
+    if raw_factor <= 0:
+      raw_factor = 100
+    raw_lower = self._read_op_int("AutoCurveSpeedLowerLimit", 30)
+    if raw_lower <= 0:
+      raw_lower = 30
+    raw_decel = self._read_op_int("AutoNaviSpeedDecelRate", 120)
+    if raw_decel <= 0:
+      raw_decel = 120
+    raw_ctrl_end = self._read_op_int("VehicleNaviCurveCtrlEnd", 3)
+    self.vehicleNaviCurveSpeedFactor = min(2.0, max(0.5, raw_factor * 0.01))
+    self.vehicleNaviCurveLowerLimit = max(5.0, float(raw_lower))
+    self.vehicleNaviCurveDecelRate = max(0.01, raw_decel * 0.01)
+    self.vehicleNaviCurveControlEnd = max(0.0, float(raw_ctrl_end))
+    self.vehicleNaviRampCurveControl = self._read_op_bool("VehicleNaviRampCurveControl", True)
 
   def _read_speedcam_params(self):
     # AutoNaviSpeedCtrlMode 3 (+mobile cameras) also decelerates for stock mobile zones (0x4BE kind 3).
@@ -1057,6 +1130,311 @@ class CarState(CarStateBase):
     self.vehicleNaviCameraTarget = None
     self.vehicleNaviCameraStatusEvent = None
     self.speedcam_policy.clear()
+
+  def _clear_vehicle_navi_curves(self):
+    self.vehicleNaviCurves = []
+    self.vehicleNaviRampCurves = []
+    self.vehicleNaviJunctions = []
+
+  @staticmethod
+  def _decode_hyundai_navi_curvature(value):
+    """Decode Hyundai CAN-FD PROSHORT ptype=1 10-bit radius code: R ~= 4.4 * |v0 - 511| m (+left / -right)."""
+    value = int(value)
+    if not 0 <= value < 1023 or value == 511:
+      return None
+    coded = value - 511
+    radius = abs(coded) * VEHICLE_NAVI_CURVE_RADIUS_SCALE
+    return (1.0 / radius) if coded > 0 else (-1.0 / radius)
+
+  @staticmethod
+  def _decode_vehicle_navi_curve(values):
+    if int(values.get("PROSHORT_PROFILE_TYPE", 0)) != 1:
+      return None
+    offset = int(values.get("PROSHORT_OFFSET", 8191))
+    path_index = int(values.get("PROSHORT_PATH_INDEX", 63))
+    distance = int(values.get("PROSHORT_DISTANCE", 1023))
+    raw_curvature = int(values.get("PROSHORT_VALUE_0", 1023))
+    if not 0 <= offset <= VEHICLE_NAVI_CURVE_MAX_DISTANCE:
+      return None
+    curvature = CarState._decode_hyundai_navi_curvature(raw_curvature)
+    if curvature is None:
+      return None
+    return {
+      "offset": offset,
+      "path_index": path_index,
+      "span": distance * VEHICLE_NAVI_CURVE_DISTANCE_FACTOR if 0 <= distance < 1023 else 0.0,
+      "curvature": curvature,
+      "raw_curvature": raw_curvature,
+    }
+
+  @staticmethod
+  def _vehicle_navi_curve_reference_speed(curvature):
+    if abs(curvature) < 1e-7:
+      return 250.0
+    return min(250.0, max(5.0, math.sqrt(VEHICLE_NAVI_CURVE_TARGET_LAT_ACCEL / abs(curvature)) * CV.MS_TO_KPH))
+
+  def _add_vehicle_navi_curve(self, target_list, curve, *, is_ramp=False):
+    target = self.totalDistance + curve["offset"]
+    reference_speed = self._vehicle_navi_curve_reference_speed(curve["curvature"])
+    # Ignore isolated sub-10 m turn-node discontinuities on main road, while keeping dense 10 m (dist=5) ramp samples on 0x098.
+    short_spot = not is_ramp and 0.0 < curve["span"] < VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_DISTANCE
+    if short_spot and reference_speed <= VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_SPEED:
+      return
+    nearest = min(target_list, key=lambda item: abs(item["target"] - target), default=None)
+    if nearest is not None and abs(nearest["target"] - target) <= 2.0:
+      nearest.update(target=target, span=curve["span"], curvature=curve["curvature"], speed=reference_speed)
+    else:
+      target_list.append({
+        "target": target,
+        "span": curve["span"],
+        "curvature": curve["curvature"],
+        "speed": reference_speed,
+      })
+    target_list.sort(key=lambda item: item["target"])
+    del target_list[VEHICLE_NAVI_MAX_CURVES:]
+
+  @staticmethod
+  def _decode_vehicle_navi_junction_zone(values):
+    if int(values.get("PROSHORT_PROFILE_TYPE", 31)) != 16:
+      return None
+    v0 = int(values.get("PROSHORT_VALUE_0", 1023))
+    if v0 not in (1, 2):
+      return None
+    offset = int(values.get("PROSHORT_OFFSET", 8191))
+    if not 0 <= offset <= VEHICLE_NAVI_JUNCTION_MAX_DISTANCE:
+      return None
+    distance = int(values.get("PROSHORT_DISTANCE", 0))
+    v1 = int(values.get("PROSHORT_VALUE_1", 0))
+    return {
+      "offset": offset,
+      "path_index": int(values.get("PROSHORT_PATH_INDEX", 63)),
+      "type": v0,
+      "length": float(max(0, distance)) if 0 <= distance < 1023 else 0.0,
+      "lane": max(0, v1 >> 1),
+      "side": 0,
+      "source": "taper",
+    }
+
+  @staticmethod
+  def _decode_vehicle_navi_stub(values):
+    offset = int(values.get("STUB_OFFSET", 8191))
+    if not 0 <= offset <= VEHICLE_NAVI_JUNCTION_MAX_DISTANCE:
+      return None
+    btype = int(values.get("STUB_BRANCH_TYPE", 0xff))
+    if btype not in (VEHICLE_NAVI_STUB_EXIT_BRANCH_TYPE, VEHICLE_NAVI_STUB_MERGE_BRANCH_TYPE):
+      return None
+    path_index = int(values.get("STUB_PATH_INDEX", 63))
+    turn_angle = float(values.get("STUB_TURN_ANGLE", 0.0))
+    jtype = 1 if btype == VEHICLE_NAVI_STUB_EXIT_BRANCH_TYPE else 2
+    if turn_angle > 0.0:
+      side = 2
+    elif turn_angle < 0.0:
+      side = 1
+    else:
+      side = 2 if jtype == 1 else 0
+    return {
+      "offset": offset,
+      "path_index": path_index,
+      "type": jtype,
+      "length": 0.0,
+      "lane": 0,
+      "side": side,
+      "source": "stub",
+    }
+
+  def _add_vehicle_navi_junction(self, junction):
+    target = self.totalDistance + junction["offset"]
+    length = junction["length"]
+    end = target + max(30.0 if junction["source"] == "stub" else 0.0, length)
+    jtype = junction["type"]
+    if junction["source"] == "stub":
+      nearby_tapers = [j for j in self.vehicleNaviJunctions
+                       if j["type"] == jtype and j["source"] == "taper" and abs(j["start"] - target) <= 350.0]
+      if nearby_tapers:
+        nearest_taper = min(nearby_tapers, key=lambda j: abs(j["start"] - target))
+        if junction["side"] in (1, 2):
+          nearest_taper["side"] = junction["side"]
+        return
+      nearby_stubs = [j for j in self.vehicleNaviJunctions
+                      if j["type"] == jtype and j["source"] == "stub" and abs(j["start"] - target) <= 50.0]
+      if nearby_stubs:
+        nearby_stubs[0].update(start=target, end=end, side=junction["side"] or nearby_stubs[0]["side"])
+        return
+    else:
+      nearby_stubs = [j for j in self.vehicleNaviJunctions
+                      if j["type"] == jtype and j["source"] == "stub" and abs(j["start"] - target) <= 350.0]
+      inherited_side = next((j["side"] for j in sorted(nearby_stubs, key=lambda item: abs(item["start"] - target))
+                             if j["side"] in (1, 2)), 0)
+      if nearby_stubs:
+        stub_set = set(map(id, nearby_stubs))
+        self.vehicleNaviJunctions = [j for j in self.vehicleNaviJunctions if id(j) not in stub_set]
+      nearby_tapers = [j for j in self.vehicleNaviJunctions
+                       if j["type"] == jtype and j["source"] == "taper" and abs(j["start"] - target) <= 50.0]
+      if nearby_tapers:
+        nearby_tapers[0].update(
+          start=target,
+          end=max(nearby_tapers[0]["end"], end),
+          lane=junction["lane"] or nearby_tapers[0]["lane"],
+          side=inherited_side or nearby_tapers[0]["side"],
+        )
+        return
+      junction = {**junction, "side": inherited_side or junction["side"]}
+
+    self.vehicleNaviJunctions.append({
+      "start": target,
+      "end": end,
+      "type": jtype,
+      "side": junction["side"],
+      "lane": junction["lane"],
+      "source": junction["source"],
+    })
+    self.vehicleNaviJunctions.sort(key=lambda item: item["start"])
+    del self.vehicleNaviJunctions[VEHICLE_NAVI_MAX_JUNCTIONS:]
+
+  def _apply_vehicle_navi_curve_segment(self, segment, timestamp):
+    route = segment["calculated_route"]
+    path_index = segment["path_index"]
+    if route == 1:
+      if self.vehicleNaviCurveRouteState != 1 or self.vehicleNaviCurvePathIndex != path_index:
+        self._clear_vehicle_navi_curves()
+      self.vehicleNaviCurveRouteState = 1
+      self.vehicleNaviCurveRouteActive = True
+      self.vehicleNaviCurvePathIndex = path_index
+    elif route == 0:
+      if self.vehicleNaviCurveRouteState != 0 or self.vehicleNaviCurvePathIndex != path_index:
+        self._clear_vehicle_navi_curves()
+      self.vehicleNaviCurveRouteState = 0
+      self.vehicleNaviCurveRouteActive = False
+      self.vehicleNaviCurvePathIndex = path_index
+    elif route == 2:
+      self.vehicleNaviRouteResetTimestamp = timestamp
+      self.vehicleNaviCurveRouteState = 2
+      self.vehicleNaviCurveRouteActive = False
+      self.vehicleNaviCurvePathIndex = None
+      self._clear_vehicle_navi_curves()
+    else:
+      self.vehicleNaviCurveRouteState = 3
+      self.vehicleNaviCurveRouteActive = False
+      self.vehicleNaviCurvePathIndex = None
+
+  def _consume_vehicle_navi_proshort(self, cp):
+    if self.navi_proshort_094 is None or self.navi_proshort_msg not in cp.ts_nanos:
+      return
+    timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_proshort_msg)
+    if timestamp <= self.vehicleNaviProshortTimestamp:
+      return
+    self.vehicleNaviProshortTimestamp = timestamp
+    if timestamp <= self.vehicleNaviRouteResetTimestamp:
+      return
+    ptype = int(self.navi_proshort_094.get("PROSHORT_PROFILE_TYPE", 0))
+    if ptype == 1:
+      curve = self._decode_vehicle_navi_curve(self.navi_proshort_094)
+      if curve is not None:
+        path_matches = self.vehicleNaviCurvePathIndex is None or curve["path_index"] == self.vehicleNaviCurvePathIndex
+        if path_matches:
+          self._add_vehicle_navi_curve(self.vehicleNaviCurves, curve, is_ramp=False)
+    elif ptype == 16:
+      junction = self._decode_vehicle_navi_junction_zone(self.navi_proshort_094)
+      if junction is not None:
+        path_matches = self.vehicleNaviCurvePathIndex is None or junction["path_index"] == self.vehicleNaviCurvePathIndex
+        if path_matches:
+          self._add_vehicle_navi_junction(junction)
+      elif self.canfd_wrapped_navi_full:
+        section = self._decode_ev4_navi_section(self.navi_proshort_094)
+        if section is not None and self._vehicle_navi_profile_allowed("camera", {"path_index": section[3]}):
+          offset, length, speed, _ = section
+          start = self.totalDistance + offset
+          self.ev4Section = {"start": start, "end": start + length, "speed": speed}
+          self.ev4SectionMismatchNanos = None
+
+  def _consume_vehicle_navi_ramp_and_stub(self, cp):
+    if self.navi_ramp_msg is not None and self.navi_ramp_098 is not None and self.navi_ramp_msg in cp.ts_nanos:
+      timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_ramp_msg)
+      if timestamp > self.vehicleNaviRampTimestamp:
+        self.vehicleNaviRampTimestamp = timestamp
+        if timestamp > self.vehicleNaviRouteResetTimestamp:
+          curve = self._decode_vehicle_navi_curve(self.navi_ramp_098)
+          if curve is not None and (self.vehicleNaviCurvePathIndex is None or curve["path_index"] != self.vehicleNaviCurvePathIndex):
+            self._add_vehicle_navi_curve(self.vehicleNaviRampCurves, curve, is_ramp=True)
+
+    if self.navi_stub_09a is not None and self.navi_stub_msg in cp.ts_nanos:
+      timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_stub_msg)
+      if timestamp > self.vehicleNaviStubTimestamp:
+        self.vehicleNaviStubTimestamp = timestamp
+        if timestamp > self.vehicleNaviRouteResetTimestamp:
+          stub = self._decode_vehicle_navi_stub(self.navi_stub_09a)
+          if stub is not None and (self.vehicleNaviCurvePathIndex is None or stub["path_index"] == self.vehicleNaviCurvePathIndex):
+            self._add_vehicle_navi_junction(stub)
+
+  def _vehicle_navi_hda_state(self, cp):
+    if self.hda_info_4a3 is None or self.hda_info_msg not in cp.ts_nanos:
+      return 0, 0, False
+    ts = self._vehicle_navi_message_timestamp(cp, self.hda_info_msg)
+    now = getattr(cp, "_last_update_nanos", ts)
+    if ts <= 0 or not (0 <= now - ts <= VEHICLE_NAVI_HDA_TIMEOUT_NS):
+      return 0, 0, False
+    return int(self.hda_info_4a3.get("LinkClass", 0)), int(self.hda_info_4a3.get("Frwinfo", 0)), True
+
+  def _update_vehicle_navi_junction_output(self, ret, link_class, frw_info, hda_fresh):
+    self.vehicleNaviJunctions = [j for j in self.vehicleNaviJunctions if j["end"] >= self.totalDistance]
+    road_ok = not hda_fresh or link_class in VEHICLE_NAVI_CONTROLLED_ACCESS_LINK_CLASSES
+    if road_ok and self.vehicleNaviCurveRouteState in (0, 1):
+      candidates = [j for j in self.vehicleNaviJunctions if j["start"] - self.totalDistance <= 600.0]
+      if candidates:
+        best = min(candidates, key=lambda j: (max(0.0, j["start"] - self.totalDistance), 0 if j["source"] == "taper" else 1))
+        ret.vehicleNaviJunctionType = best["type"]
+        ret.vehicleNaviJunctionSide = best["side"]
+        ret.vehicleNaviJunctionDistance = max(0.0, best["start"] - self.totalDistance)
+        ret.vehicleNaviJunctionLane = best["lane"]
+        return
+    if hda_fresh and link_class in VEHICLE_NAVI_CONTROLLED_ACCESS_LINK_CLASSES and frw_info in VEHICLE_NAVI_RAMP_FRWINFO_VALUES:
+      ret.vehicleNaviJunctionType = 1
+      ret.vehicleNaviJunctionSide = 0
+      ret.vehicleNaviJunctionDistance = 500.0
+      ret.vehicleNaviJunctionLane = 0
+
+  def _update_vehicle_navi_curve_output(self, ret, link_class, frw_info, hda_fresh):
+    self.vehicleNaviCurves = [curve for curve in self.vehicleNaviCurves if curve["target"] >= self.totalDistance]
+    self.vehicleNaviRampCurves = [curve for curve in self.vehicleNaviRampCurves if curve["target"] >= self.totalDistance]
+    curve_road_allowed = hda_fresh and link_class in VEHICLE_NAVI_CURVE_ALLOWED_LINK_CLASSES
+    ret.vehicleNaviCurveRoadAllowed = curve_road_allowed
+    ret.vehicleNaviCurveRouteActive = self.vehicleNaviCurveRouteActive
+    ret.vehicleNaviCurveRouteState = self.vehicleNaviCurveRouteState
+    ret.vehicleNaviFrwInfo = frw_info if hda_fresh else 0
+    if not curve_road_allowed or self.vehicleNaviCurveRouteState not in (0, 1):
+      return
+
+    candidates_raw = [(curve, False) for curve in self.vehicleNaviCurves]
+    left_blinker = bool(getattr(ret, "leftBlinker", False))
+    right_blinker = bool(getattr(ret, "rightBlinker", False))
+    single_blinker = left_blinker != right_blinker
+    blinker_side = 1 if left_blinker else (2 if right_blinker else 0)
+    upcoming_exits = [j for j in self.vehicleNaviJunctions
+                      if j["type"] == 1 and j["end"] >= self.totalDistance and j["start"] - self.totalDistance <= 600.0]
+    expected_exit_side = next((j["side"] for j in upcoming_exits if j["side"] in (1, 2)), 2)
+    ramp_armed = bool(self.vehicleNaviRampCurveControl and frw_info in VEHICLE_NAVI_RAMP_FRWINFO_VALUES and
+                      single_blinker and blinker_side == expected_exit_side)
+    if ramp_armed:
+      candidates_raw.extend((curve, True) for curve in self.vehicleNaviRampCurves)
+
+    candidates = []
+    for curve, is_ramp in candidates_raw:
+      if curve["speed"] >= 250.0:
+        continue
+      distance = curve["target"] - self.totalDistance
+      target_speed = max(self.vehicleNaviCurveLowerLimit, curve["speed"] * self.vehicleNaviCurveSpeedFactor)
+      safe_speed = target_speed / CV.MS_TO_KPH
+      decel_distance = max(0.0, distance - safe_speed * self.vehicleNaviCurveControlEnd)
+      preview_speed = math.sqrt(safe_speed ** 2 + 2.0 * self.vehicleNaviCurveDecelRate * decel_distance) * CV.MS_TO_KPH
+      candidates.append((preview_speed, distance, target_speed, curve, is_ramp))
+
+    if candidates:
+      _, distance, target_speed, curve, is_ramp = min(candidates, key=lambda item: item[0])
+      ret.vehicleNaviCurveDistance = distance
+      ret.vehicleNaviCurveSpeed = curve["speed"]
+      ret.vehicleNaviCurveTargetSpeed = target_speed
+      ret.vehicleNaviCurveCurvature = curve["curvature"]
+      ret.vehicleNaviCurveIsRamp = is_ramp
 
   def _clear_vehicle_navi_route_filtered_events(self):
     if self.vehicleNaviCanControl < 2:
@@ -1395,6 +1773,19 @@ class CarState(CarStateBase):
     ret.vehicleNaviActive = False
     ret.vehicleNaviSectionActive = False
     ret.vehicleNaviSpeed = 0.0
+    ret.vehicleNaviCurveDistance = 0.0
+    ret.vehicleNaviCurveSpeed = 0.0
+    ret.vehicleNaviCurveCurvature = 0.0
+    ret.vehicleNaviCurveRouteActive = self.vehicleNaviCurveRouteActive
+    ret.vehicleNaviCurveRouteState = self.vehicleNaviCurveRouteState
+    ret.vehicleNaviCurveTargetSpeed = 0.0
+    ret.vehicleNaviCurveIsRamp = False
+    ret.vehicleNaviCurveRoadAllowed = False
+    ret.vehicleNaviJunctionType = 0
+    ret.vehicleNaviJunctionSide = 0
+    ret.vehicleNaviJunctionDistance = 0.0
+    ret.vehicleNaviJunctionLane = 0
+    ret.vehicleNaviFrwInfo = 0
     if self.canfd_wrapped_navi:
       self._update_pv5_navi_section(cp, cp_alt)
     self._update_ev4_navi_status(cp, cp_alt)
@@ -1440,6 +1831,7 @@ class CarState(CarStateBase):
       if timestamp > self.vehicleNaviSegmentTimestamp and not all(int(self.navi_segment_4b9.get(f"BYTE_{i + 1}", 0)) == 0xff for i in range(8)):
         self.vehicleNaviSegmentTimestamp = timestamp
         segment = self._decode_vehicle_navi_segment(self.navi_segment_4b9)
+        self._apply_vehicle_navi_curve_segment(segment, timestamp)
         previous_route_state = self.vehicleNaviRouteState
         previous_path_index = self.vehicleNaviRoutePathIndex
         self.vehicleNaviRouteState = segment["calculated_route"]
@@ -1457,12 +1849,25 @@ class CarState(CarStateBase):
                (previous_route_state == 1 and previous_path_index != segment["path_index"]))):
           self._clear_vehicle_navi_route_filtered_events()
 
+    if self.canfd_wrapped_navi and self.navi_curve_segment_099 is not None and CANFD_NAVI_SEGMENT_MSG in cp.ts_nanos:
+      timestamp = self._vehicle_navi_message_timestamp(cp, CANFD_NAVI_SEGMENT_MSG)
+      if timestamp > self.vehicleNaviCurveSegmentTimestamp and not all(int(self.navi_curve_segment_099.get(f"BYTE_{i + 1}", 0)) == 0xff for i in range(8)):
+        self.vehicleNaviCurveSegmentTimestamp = timestamp
+        curve_segment = self._decode_vehicle_navi_segment(self.navi_curve_segment_099)
+        self._apply_vehicle_navi_curve_segment(curve_segment, timestamp)
+
     route_age = getattr(cp, "_last_update_nanos", max(profile_timestamp, self.vehicleNaviSegmentTimestamp)) - self.vehicleNaviSegmentTimestamp
     if (self.vehicleNaviCanControl >= 2 and self.vehicleNaviRouteState == 1 and
         (route_age < 0 or route_age > VEHICLE_NAVI_ROUTE_TIMEOUT_NS)):
       self.vehicleNaviRouteState = 0
       self.vehicleNaviRoutePathIndex = None
       self._clear_vehicle_navi_route_filtered_events()
+
+    self._consume_vehicle_navi_proshort(cp)
+    self._consume_vehicle_navi_ramp_and_stub(cp)
+    link_class, frw_info, hda_fresh = self._vehicle_navi_hda_state(cp)
+    self._update_vehicle_navi_curve_output(ret, link_class, frw_info, hda_fresh)
+    self._update_vehicle_navi_junction_output(ret, link_class, frw_info, hda_fresh)
 
     on_controlled_access_road = self._vehicle_navi_is_controlled_access_road()
     if on_controlled_access_road:
@@ -1969,15 +2374,19 @@ class CarState(CarStateBase):
     wrapped_navi = CP.carFingerprint == CAR.KIA_PV5
     wrapped_navi_full = CP.carFingerprint == CAR.KIA_EV4
     if wrapped_navi:
-      msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan)]
+      msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan),
+              (CANFD_NAVI_SEGMENT_MSG, math.nan), (CANFD_NAVI_PROSHORT_MSG, math.nan),
+              (CANFD_NAVI_RAMP_MSG, math.nan), (CANFD_NAVI_STUB_MSG, math.nan)]
       alt_msgs = [(CANFD_NAVI_STATUS_MSG, math.nan)]
     elif wrapped_navi_full:
       msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_POSITION_MSG, math.nan),
               (CANFD_NAVI_SEGMENT_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan),
-              (CANFD_NAVI_PROSHORT_MSG, math.nan)]
+              (CANFD_NAVI_PROSHORT_MSG, math.nan), (CANFD_NAVI_RAMP_MSG, math.nan),
+              (CANFD_NAVI_STUB_MSG, math.nan)]
       alt_msgs = [(CANFD_NAVI_STATUS_MSG, math.nan)]
     else:
-      msgs = [("NEW_MSG_4B4", math.nan), ("NEW_MSG_4B9", math.nan), ("NEW_MSG_4BE", math.nan)]
+      msgs = [("NEW_MSG_4B4", math.nan), ("NEW_MSG_4B9", math.nan), ("NEW_MSG_4BE", math.nan),
+              (LEGACY_NAVI_PROSHORT_MSG, math.nan), (LEGACY_NAVI_STUB_MSG, math.nan)]
       alt_msgs = []
     if CP.carFingerprint == CAR.GENESIS_GV80:
       msgs += [("SPAS2", math.nan)]

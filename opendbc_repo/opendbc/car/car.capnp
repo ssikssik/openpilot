@@ -301,6 +301,19 @@ struct CarState {
   naviMotorway @118 :Bool; # joongyu01: fresh stock HDA 0x4A3 LinkClass 1 (motorway); road-class fallback when carrotNavi cannot say
   cruiseCancelState @119 :Bool; # Carrot cruise CANCEL latch, cleared by SET/RES or +/-.
   paddlePause @120 :Bool; # Hyundai camera SCC pauses longitudinal control while a paddle is held.
+  vehicleNaviCurveDistance @121 :Float32; # distance to controlling stock-navi 0x094/0x4BA/0x098 curvature spot, m
+  vehicleNaviCurveSpeed @122 :Float32; # 100% reference speed from radius-decoded curvature, kph
+  vehicleNaviCurveCurvature @123 :Float32; # decoded signed curvature (+left / -right), 1/m
+  vehicleNaviCurveRouteActive @124 :Bool; # 0x099/0x4B9 CalculatedRoute == 1
+  vehicleNaviCurveRouteState @125 :UInt8; # 0 MPP, 1 calculated route, 2 recalculating, 3 invalid
+  vehicleNaviCurveTargetSpeed @126 :Float32; # factor-adjusted apex target speed, kph
+  vehicleNaviCurveIsRamp @127 :Bool; # true when controlling spot comes from 0x098 branch ramp profile
+  vehicleNaviCurveRoadAllowed @128 :Bool; # true when fresh 0x364/0x4A3 LinkClass is 1 (freeway) or 2 (IC/JC ramp)
+  vehicleNaviJunctionType @129 :UInt8; # 0 none, 1 diverge/exit fork, 2 merge/on-ramp
+  vehicleNaviJunctionSide @130 :UInt8; # 0 unknown, 1 left, 2 right
+  vehicleNaviJunctionDistance @131 :Float32; # meters to upcoming junction/taper (0 while inside active taper)
+  vehicleNaviJunctionLane @132 :UInt8; # 1-indexed lane number from 0x094 ptype=16 v1>>1 (0 unknown)
+  vehicleNaviFrwInfo @133 :UInt8; # fresh 0x364/0x4A3 Frwinfo (0 none, 1..4 fork within ~500 m)
 
   struct TeslaTrafficControl {
     available @0 :Bool;

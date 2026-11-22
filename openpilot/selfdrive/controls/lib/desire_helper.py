@@ -103,6 +103,7 @@ class DesireHelper:
     self.auto_overtake_return_pending = False
     self.auto_overtake_return_wait_timer = 0.0
     self.auto_overtake_return_clear_timer = 0.0
+    self.vehicleNaviJunctionAssist = False
 
     # centerline wrong-way return guard (yellow line on right -> return right when safe)
     self.centerlineReturnGuard = True
@@ -190,6 +191,10 @@ class DesireHelper:
       self.autoOvertakeEnabled = self.params.get_bool("AutoOvertakeEnabled")
       self.autoOvertakeReturnEnabled = self.params.get_bool("AutoOvertakeReturnEnabled")
       self.centerlineReturnGuard = self.params.get_bool("CenterlineReturnGuard")
+      try:
+        self.vehicleNaviJunctionAssist = bool(self.params.get_bool("VehicleNaviJunctionAssist"))
+      except (KeyError, AssertionError, TypeError, ValueError):
+        self.vehicleNaviJunctionAssist = False
     if self.frame % 100 == 0:
       self.laneChangeNeedTorque = self.params.get_int("LaneChangeNeedTorque")
       self.laneChangeBsd = self.params.get_int("LaneChangeBsd")
@@ -286,6 +291,17 @@ class DesireHelper:
       return BLINKER_RIGHT
     return BLINKER_NONE
 
+  def _vehicle_navi_junction_overtake_blocked(self, carstate, carrotMan) -> bool:
+    if not self.vehicleNaviJunctionAssist:
+      return False
+    frw_info = int(getattr(carstate, "vehicleNaviFrwInfo", 0))
+    jtype = int(getattr(carstate, "vehicleNaviJunctionType", 0))
+    jdist = float(getattr(carstate, "vehicleNaviJunctionDistance", 0.0))
+    if jtype not in (1, 2) and carrotMan is not None:
+      jtype = int(getattr(carrotMan, "vehicleNaviJunctionType", 0))
+      jdist = float(getattr(carrotMan, "vehicleNaviJunctionDistance", 0.0))
+    return frw_info > 0 or (jtype in (1, 2) and 0.0 <= jdist <= 500.0)
+
   def _update_auto_overtake(self, carstate, lateral_active, below_lane_change_speed, trailer_maneuver_blocked,
                             carrotMan, radarState, driver_enabled, stalk_press, remote):
     self.auto_overtake_cooldown = max(0.0, self.auto_overtake_cooldown - DT_MDL)
@@ -308,6 +324,7 @@ class DesireHelper:
       return
 
     if below_lane_change_speed or remote or self.turn_desire_state or \
+       self._vehicle_navi_junction_overtake_blocked(carstate, carrotMan) or \
        getattr(carrotMan, "atcType", "") not in ("", "none", "none prepare", "straight", "straight prepare"):
       self.auto_overtake_slow_timer = 0.0
       self.auto_overtake_return_clear_timer = 0.0
