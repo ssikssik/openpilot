@@ -198,6 +198,9 @@ LANE_CENTER_THRESHOLD_DEFAULT = 0.20  # m, 중앙에서 이만큼 벗어나면 �
 LANE_CENTER_MIN_SPEED_MAX_KPH = 150
 LANE_CENTER_LANE_CHANGE_HOLDOFF_SEC = 2.0  # s
 LANE_CENTER_SLEW_RATE = 0.01  # 1/m/s, 클램프와 동일
+LANE_CENTER_ENTRY_HOLD_NS = 300_000_000
+LANE_CENTER_ENTRY_RAMP_NS = 400_000_000
+LANE_CENTER_ENTRY_MAX_FRAME_GAP_NS = 150_000_000
 LANE_CENTER_GEOMETRY_WINDOW_NS = 320_000_000
 LANE_CENTER_GEOMETRY_HOLD_NS = 1_000_000_000
 LANE_CENTER_GEOMETRY_RECOVERY_NS = 200_000_000
@@ -497,12 +500,52 @@ class LaneCenterCorrector:
     self._lane_change_holdoff_until = 0.0
     self._prev_kappa = 0.0
     self._prev_time = None
-    # 불감대 게이트 상태: 벗어남이 임계값을 넘으면 True, 절반 아래로
-    # 떨어지면 False.
-    self._correction_active = False
     self._reset_geometry()
 
+  def _reset_entry(self):
+    self._correction_active = False
+    self._entry_since = None
+    self._entry_side = 0
+    self._entry_last_frame = None
+    self._entry_threshold = None
+    self._ramp_since = None
+
+  def _entry_scale(self, stamp, offset, threshold):
+    if stamp <= 0:
+      self._reset_entry()
+      return 0.0
+    last = self._entry_last_frame
+    if last is not None and (stamp < last or stamp - last > LANE_CENTER_ENTRY_MAX_FRAME_GAP_NS
+                             or (not self._correction_active and threshold != self._entry_threshold)):
+      self._reset_entry()
+    # controlsd runs faster than the model, so repeated samples do not accrue time.
+    if stamp != self._entry_last_frame:
+      self._entry_last_frame = stamp
+      self._entry_threshold = threshold
+      magnitude = abs(offset)
+      side = 1 if offset > 0.0 else -1
+      if self._correction_active and (magnitude < threshold / 2.0 or side != self._entry_side):
+        self._correction_active = False
+        self._entry_since = None
+        self._entry_side = 0
+      if not self._correction_active:
+        if magnitude > threshold:
+          if self._entry_since is None or side != self._entry_side:
+            self._entry_since = stamp
+            self._entry_side = side
+          if stamp - self._entry_since >= LANE_CENTER_ENTRY_HOLD_NS:
+            self._correction_active = True
+            self._ramp_since = stamp
+        else:
+          self._entry_since = None
+          self._entry_side = 0
+    if not self._correction_active:
+      return 0.0
+    progress = min(1.0, (stamp - self._ramp_since) / LANE_CENTER_ENTRY_RAMP_NS)
+    return progress * progress * (3.0 - 2.0 * progress)
+
   def _reset_geometry(self):
+    self._reset_entry()
     self._geometry_history = []
     self._geometry_hold_until = 0
     self._geometry_suppressed = False
@@ -616,7 +659,6 @@ class LaneCenterCorrector:
     if not enabled or gain <= 0.0:
       self.left_active = False
       self.right_active = False
-      self._correction_active = False
       self._reset_geometry()
       return 0.0
     # 차선변경 중에는 선을 넘는 것이 의도된 동작이므로 보정하지 않는다.
@@ -625,20 +667,18 @@ class LaneCenterCorrector:
     if lane_changing:
       self.left_active = False
       self.right_active = False
-      self._correction_active = False
       self._reset_geometry()
       self._lane_change_holdoff_until = now + LANE_CENTER_LANE_CHANGE_HOLDOFF_SEC
       return 0.0
     if now < self._lane_change_holdoff_until:
-      self._correction_active = False
+      self._reset_entry()
       return 0.0
     # 저속 페이드인: 5km/h 이하 0, 10km/h 이상 100% (클램프와 동일 구간)
     if not math.isfinite(v_ego):
-      self._correction_active = False
+      self._reset_entry()
       return 0.0
     strength = float(np.interp(v_ego * 3.6, [5.0, 10.0], [0.0, 1.0]))
     if strength <= 0.0:
-      self._correction_active = False
       self._reset_geometry()
       return 0.0
     try:
@@ -651,18 +691,16 @@ class LaneCenterCorrector:
     try:
       return self._compute(md, v_ego, threshold, gain, strength, speed_eligible=v_ego >= min_speed)
     except Exception:
-      self._correction_active = False
+      self._reset_entry()
       return 0.0
 
   def _compute(self, md, v_ego, threshold, gain, strength, *, speed_eligible):
-    if not speed_eligible:
-      self._correction_active = False
     lane_lines = md.laneLines
     lines_ok = (len(lane_lines) >= 4 and len(lane_lines[1].y) >= 2
                 and len(lane_lines[2].y) >= 2 and len(md.laneLineProbs) >= 3)
     pos_ok = (len(md.position.x) >= 2 and len(md.position.y) >= 2)
     if not pos_ok or not lines_ok:
-      self._correction_active = False
+      self._reset_entry()
       return 0.0
 
     # 확률 히스테리시스: 0.5를 넘으면 켜고 0.3 아래로 떨어져야 끈다
@@ -671,7 +709,7 @@ class LaneCenterCorrector:
     r_prob = float(md.laneLineProbs[2])
     if not (math.isfinite(l_prob) and math.isfinite(r_prob)):
       self.left_active = self.right_active = False
-      self._correction_active = False
+      self._reset_entry()
       return 0.0
     if l_prob > LANE_CENTER_PROB_ON:
       self.left_active = True
@@ -688,31 +726,22 @@ class LaneCenterCorrector:
     left_y = float(np.interp(lookahead, lane_lines[1].x, lane_lines[1].y))
     right_y = float(np.interp(lookahead, lane_lines[2].x, lane_lines[2].y))
     if not (math.isfinite(path_y) and math.isfinite(left_y) and math.isfinite(right_y)):
-      self._correction_active = False
+      self._reset_entry()
       return 0.0
 
     # 차선 중앙: 양쪽 차선의 중간. 경로가 중앙에서 벗어난 만큼 보정한다.
     center_y = (left_y + right_y) / 2.0
-    if not self._geometry_usable(getattr(md, "timestampEof", 0), lookahead, path_y, center_y,
-                                 right_y - left_y, min(l_prob, r_prob)):
-      self._correction_active = False
+    stamp = getattr(md, "timestampEof", 0)
+    if not self._geometry_usable(stamp, lookahead, path_y, center_y, right_y - left_y, min(l_prob, r_prob)):
+      self._reset_entry()
       return 0.0
     # Keep watching for boundary jumps below the selected speed, so crossing
     # the threshold cannot bypass an active geometry holdoff.
     if not speed_eligible or not (self.left_active and self.right_active):
+      self._reset_entry()
       return 0.0
     offset = path_y - center_y  # 양수면 경로가 중앙보다 우측
-    # 불감대 (히스테리시스): 벗어남이 임계값을 넘으면 켜지고, 절반 아래로
-    # 떨어져야 꺼진다. 작은 벗어남은 무시해 정상 주행에서 보정이 자꾸
-    # 켜지는 것을 막는다. 보정 크기 자체는 줄이지 않는다(게이트만 건다).
-    if self._correction_active:
-      if abs(offset) < threshold / 2.0:
-        self._correction_active = False
-    elif abs(offset) > threshold:
-      self._correction_active = True
-    if not self._correction_active:
-      return 0.0
-    y_corr = (center_y - path_y) * strength
+    y_corr = -offset * strength * self._entry_scale(stamp, offset, threshold)
     if y_corr == 0.0:
       return 0.0
 
