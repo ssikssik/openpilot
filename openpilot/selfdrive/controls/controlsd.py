@@ -19,7 +19,7 @@ from opendbc.car.hyundai.stop_object import signal_stop_object_requested
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
 from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
-from openpilot.selfdrive.controls.lib.drive_helpers import ClampSteerCorrector, LaneCenterCorrector, clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb, read_lat_accel_limits
+from openpilot.selfdrive.controls.lib.drive_helpers import ClampSteerCorrector, EntryLeadCorrector, LaneCenterCorrector, clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb, read_lat_accel_limits
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
@@ -112,6 +112,8 @@ class Controls:
     # 경로 클램프가 조향에 닿지 않으므로, 여기서 모델 곡률에 직접 보정한다.
     self.clamp_steer_corrector = ClampSteerCorrector(self.params)
     self.lane_center_corrector = LaneCenterCorrector(self.params)
+    # 커브 진입 동안만 미리 꺾는 선행 보정 (LatEntryLead, 기본 0=꺼짐)
+    self.entry_lead_corrector = EntryLeadCorrector(self.params)
 
   def update(self):
     self.sm.update(15)
@@ -267,6 +269,14 @@ class Controls:
 
     actuators.curvature = float(self.desired_curvature)
 
+    # 진입 선행: |목표 곡률|이 커지는 동안만 LaC 입력 곡률에 더한다 (목표 곡률 상태와 로그는 그대로).
+    # 차선변경·깜빡이·핸들 개입 중에는 끄고, MEB 곡률 PID 경로에는 적용하지 않는다.
+    entry_suppress = (CS.steeringPressed or CS.leftBlinker or CS.rightBlinker
+                      or model_v2.meta.desire != log.Desire.none
+                      or model_v2.meta.laneChangeState != log.LaneChangeState.off)
+    entry_lead = self.entry_lead_corrector.update(self.desired_curvature, CS.vEgo,
+                                                  CC.latActive and not self.is_vw_meb, entry_suppress)
+
     # VW MEB 폐루프 곡률 보정 = infiniteCable2 LatControlCurvature.update() 정확 복제.
     # carrot엔 곡률 전용 횡제어기가 없어 모델 목표곡률을 open-loop로 보내면 EPS가 명령만큼 안 꺾여
     # 차선 쏠림 발생. infiniteCable2 기본설정(EnableCurvatureController=1 -> PID ON,
@@ -299,7 +309,7 @@ class Controls:
     # 주의: MEB는 위 곡률 PID가 실제 조향을 만들고, 아래 LaC(LatControlAngle)와 lac_log는
     # 파이프라인 형식 유지를 위한 더미임 (로그의 angleState는 실제 제어 상태가 아님).
     steer, steeringAngleDeg, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
-                                                       self.steer_limited_by_safety, self.desired_curvature,
+                                                       self.steer_limited_by_safety, self.desired_curvature + entry_lead,
                                                        CC, curvature_limited,
                                                        model_data=self.sm['modelV2'])
     actuators.torque = float(steer)

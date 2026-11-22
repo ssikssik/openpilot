@@ -546,6 +546,8 @@ The ATC right lane-change distance uses 0m for off and 50m steps up to 500m. The
 
 The ej menu interpolates lateral acceleration limits between low speed (at or below 80km/h) and high speed (at or above 120km/h). `LatAccelMaxLow` and `LatAccelMaxHigh` default to 45 and 30 (4.5 and 3.0m/s²); their displayed range is 20–60. `LatJerkMax` defaults to 50 (5.0m/s³), with a displayed range of 20–100. Saved limits apply immediately to target curvature; they do not change MDPS protection limits. The current EV4 steering angle limit is 175°.
 
+`LatEntryLead` (curve entry lead) steers ahead by the target-curvature rate × the set time, only while the target curvature magnitude is growing. Units are 1/100 s, default 0 (off), range 0–50. It is zero in steady curve sections, on curve exits, and during lane changes, blinkers or driver steering; the lead never exceeds 35% of the current target curvature or 0.01 1/m. It only adds to the value passed to the angle controller and leaves the target curvature, lateral limits and logs unchanged. Based on EV4 entry logs (actual turning lagged the target by 0.26 s), start testing at 25–35. Not yet validated on the road.
+
 `ComfortBrake` defaults to 24 (2.4m/s²), with a range of 15–35. Lower values use a gentler braking reference. Safe mode applies a factor of 0.9; the running planner periodically rereads the value.
 
 `RobotFaceUI` replaces the normal view with a face reflecting vehicle state. `RobotFaceTest` selects live expressions at 0 and test expressions at 1–25. When face mode is disabled, a test clears after 10 seconds. Existing screen-off, touch-wake and alert-wake behavior remains effective in face mode. Safety alerts appear above the face.

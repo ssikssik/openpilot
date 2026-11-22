@@ -894,7 +894,8 @@
           "params": [
             "LatAccelMaxLow",
             "LatAccelMaxHigh",
-            "LatJerkMax"
+            "LatJerkMax",
+            "LatEntryLead"
           ]
         },
         {
@@ -5888,6 +5889,22 @@
       "min": 0,
       "max": 20,
       "default": 10,
+      "unit": 1
+    },
+    {
+      "group": "ej",
+      "name": "LatEntryLead",
+      "title": "커브 진입 선행 조향(0)",
+      "descr": "커브에 들어설 때만 목표 회전이 커지는 만큼 미리 더 꺾습니다. 1/100초 단위이며 0이면 끕니다. 완만한 커브의 꾸준한 구간과 커브 탈출에는 영향이 없습니다. EV4 로그 기준 25~35부터 시험하세요. 높으면 진입 때 안쪽으로 파고들 수 있습니다. 저장하면 0.5초 안에 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Curve entry lead(0)",
+      "edescr": "Steers ahead only while the target curvature is growing at a curve entry. Units of 1/100 s, 0 disables. Steady curve sections and curve exits are unchanged. Start testing at 25-35 (EV4 logs). Too high may cut into the inside on entry. Applies within 0.5 s after saving.",
+      "cgroup": "ej",
+      "ctitle": "弯道入口预转向(0)",
+      "cdescr": "仅在进入弯道、目标曲率增大时提前多转一些。单位1/100秒，0为关闭。稳定弯道段和出弯不受影响。EV4建议从25~35开始测试。过高可能在入弯时切入内侧。保存后0.5秒内生效。",
+      "min": 0,
+      "max": 50,
+      "default": 0,
       "unit": 1
     },
     {

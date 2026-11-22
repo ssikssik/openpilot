@@ -744,3 +744,72 @@ def get_curvature_from_plan(yaws, yaw_rates, t_idxs, vego, action_t):
   psi_target = np.interp(action_t, t_idxs, yaws)
   psi_rate = yaw_rates[0]
   return curv_from_psis(psi_target, psi_rate, vego, action_t)
+
+
+# 진입 전용 선행 조향 (LatEntryLead). EV4 커브·램프 진입 11건(2026-11-17/18/21 로그)에서
+# 실제 회전이 목표 곡률을 0.26초 늦게 따라가 진입 동안 목표의 약 80%만 돌았다. 꾸준한
+# 곡률 구간은 이미 안쪽(11~25cm)이라 조향비를 올리면 완만한 커브에서 파고든다.
+# 그래서 |목표 곡률|이 커지는 동안에만 곡률 변화율 × 선행시간만큼 미리 더 꺾는다.
+ENTRY_LEAD_RATE_TAU = 0.15     # s, 곡률 변화율 저역 필터 (모델 20Hz 계단을 평탄화)
+ENTRY_LEAD_MAX_FRACTION = 0.35  # 선행량 상한: 현재 |목표 곡률|의 35%
+ENTRY_LEAD_MAX_CURVATURE = 0.01  # 1/m, 절대 상한
+ENTRY_LEAD_SPEED_BP = (8.0, 12.0)  # m/s, 이 구간에서 0 -> 100% 페이드인
+ENTRY_LEAD_MAX_SECONDS = 0.5
+ENTRY_LEAD_PARAM_PERIOD = 50   # 프레임마다 파라미터 재읽기 (0.5초)
+
+
+class EntryLeadCorrector:
+  """커브 진입(목표 곡률 크기가 커지는 중)에만 선행 곡률을 낸다. 양수/음수 부호는 목표 곡률과 같다.
+
+  LatEntryLead 파라미터: 1/100초 단위 선행시간, 0이면 꺼짐(기본). 꾸준한 곡률과
+  탈출(크기가 줄어드는 중)에는 0이며, 상한은 현재 목표 곡률의 일정 비율로 묶어
+  직선에서 출렁이지 않게 한다. 결과는 LaC에 넘기는 곡률에만 더하고 목표 곡률
+  상태(평활·한도·로그)는 바꾸지 않는다.
+  """
+
+  def __init__(self, params, dt=DT_CTRL):
+    self.params = params
+    self.dt = dt
+    self.lead_time = 0.0
+    self._frame = 0
+    self.reset()
+
+  def reset(self):
+    self._prev = None
+    self._rate = 0.0
+    self.last_lead = 0.0
+
+  def _read_lead_time(self):
+    try:
+      raw = self.params.get("LatEntryLead", return_default=True)
+      value = float(raw) * 0.01 if raw is not None else 0.0
+    except Exception:
+      value = 0.0
+    if not math.isfinite(value):
+      value = 0.0
+    return float(np.clip(value, 0.0, ENTRY_LEAD_MAX_SECONDS))
+
+  def update(self, desired_curvature, v_ego, active, suppress=False):
+    if self._frame % ENTRY_LEAD_PARAM_PERIOD == 0:
+      self.lead_time = self._read_lead_time()
+    self._frame += 1
+
+    k = float(desired_curvature)
+    if not active or not math.isfinite(k) or not math.isfinite(v_ego):
+      self.reset()
+      return 0.0
+    if self._prev is None:
+      self._prev = k
+    raw_rate = (k - self._prev) / self.dt
+    self._prev = k
+    alpha = self.dt / (ENTRY_LEAD_RATE_TAU + self.dt)
+    self._rate += alpha * (raw_rate - self._rate)
+
+    # 필터된 변화율과 이번 프레임 변화율이 모두 '커지는 중'일 때만 (정점 직후 필터 지연으로 더 꺾지 않게)
+    if suppress or self.lead_time <= 0.0 or self._rate * k <= 0.0 or raw_rate * k <= 0.0:
+      self.last_lead = 0.0
+      return 0.0
+    strength = float(np.interp(v_ego, ENTRY_LEAD_SPEED_BP, [0.0, 1.0]))
+    limit = min(ENTRY_LEAD_MAX_FRACTION * abs(k), ENTRY_LEAD_MAX_CURVATURE)
+    self.last_lead = float(np.clip(self.lead_time * self._rate * strength, -limit, limit))
+    return self.last_lead
