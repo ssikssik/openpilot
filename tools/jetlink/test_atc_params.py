@@ -73,12 +73,12 @@ def test_catalog_exposes_additional_distance_slider():
   assert params[KEY]['default'] == 0
 
 
-@pytest.mark.parametrize('stored,expected', [(0,0),(1,250),(250,250),(300,300),(350,350),(400,400),(500,500),(-1,0),(501,0)])
+@pytest.mark.parametrize('stored,expected', [(0,0),(1,250),(250,250),(300,300),(350,350),(400,400),(500,500),(-1,0),(1000,1000),(2000,2000),(2001,0)])
 def test_runtime_distance_and_restored_legacy_value(stored, expected):
   assert right_lane_change_distance(Params(1, stored)) == expected
 
 
-@pytest.mark.parametrize('distance', [0,50,250,300,350,400,500])
+@pytest.mark.parametrize('distance', [0,50,250,300,350,400,500,1000,2000])
 def test_migration_preserves_explicit_metres(distance):
   params = Params(1, distance)
   migrate_atc_params(params)

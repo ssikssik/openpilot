@@ -540,7 +540,7 @@ Manual indication projects 0.3s of measured boundary approach, advancing the cen
 
 After confirmed turn entry, the TBT indicator ends its hold as the wheel returns within ±15 degrees while moving, without waiting for the remaining 30m. Pre-turn traffic-light waits remain held; see [lane changes](lane-change.md) for the entry conditions.
 
-The ATC right lane-change distance uses 0m for off and 50m steps up to 500m. The former ON setting migrates to 250m at restart.
+The ATC right lane-change distance uses 0m for off and 50m steps up to 2,000m. The former ON setting migrates to 250m at restart.
 
 ## ej integration in carrot-dev
 
@@ -585,3 +585,5 @@ Centering now suppresses abrupt midpoint changes until geometry recovers. `ej > 
 Selectable maxima are low-speed 120 (12.0m/s²), high-speed 80 (8.0m/s²), and lateral jerk 150 (15.0m/s³). Minimum 20, defaults 45/30/50 and stored values remain unchanged. The low-speed parameter read cap is 12.0m/s². These ranges do not establish vehicle capability; existing Hyundai command, angle and EPS limits still apply. Physical driving at higher settings is unvalidated.
 
 An already confirmed manual turn may retain its peak for up to 0.3 seconds and 5 degrees of small unwind while same-direction driver effort and yaw continue through rearm. Existing waiting and cancellation gates remain. carrot-dev retains Joongyu SPAS admission; the carrot-wip 60-second unanswered-probe cache is not applied.
+
+`AutoTurnControlRightLaneChange` accepts up to 2,000m (2km), in 50m steps. Zero disables it; default zero, saved values and legacy migration remain unchanged. A wider range permits earlier condition checks, not unconditional lane changes. Existing driver, lane, BSD and front-target gates remain.

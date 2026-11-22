@@ -3,7 +3,7 @@ def right_lane_change_distance(params):
   distance = params.get_int("AutoTurnControlRightLaneChange")
   if distance == 1:
     return 250
-  return distance if 0 <= distance <= 500 else 0
+  return distance if 0 <= distance <= 2000 else 0
 
 
 def migrate_atc_params(params):
