@@ -195,6 +195,7 @@ LANE_CENTER_MAX_CURVATURE = 0.02
 LANE_CENTER_GAIN_DEFAULT = 1.0
 LANE_CENTER_GAIN_MAX = 2.0
 LANE_CENTER_THRESHOLD_DEFAULT = 0.20  # m, 중앙에서 이만큼 벗어나면 보정 시작
+LANE_CENTER_MIN_SPEED_MAX_KPH = 150
 LANE_CENTER_LANE_CHANGE_HOLDOFF_SEC = 2.0  # s
 LANE_CENTER_SLEW_RATE = 0.01  # 1/m/s, 클램프와 동일
 LANE_CENTER_GEOMETRY_WINDOW_NS = 320_000_000
@@ -641,12 +642,21 @@ class LaneCenterCorrector:
       self._reset_geometry()
       return 0.0
     try:
-      return self._compute(md, v_ego, threshold, gain, strength)
+      min_speed_kph = float(self.params.get("LaneCenterMinSpeed", return_default=True) or 0)
+    except Exception:
+      min_speed_kph = 0.0
+    if not math.isfinite(min_speed_kph):
+      min_speed_kph = 0.0
+    min_speed = min(max(min_speed_kph, 0.0), LANE_CENTER_MIN_SPEED_MAX_KPH) / 3.6
+    try:
+      return self._compute(md, v_ego, threshold, gain, strength, speed_eligible=v_ego >= min_speed)
     except Exception:
       self._correction_active = False
       return 0.0
 
-  def _compute(self, md, v_ego, threshold, gain, strength):
+  def _compute(self, md, v_ego, threshold, gain, strength, *, speed_eligible):
+    if not speed_eligible:
+      self._correction_active = False
     lane_lines = md.laneLines
     lines_ok = (len(lane_lines) >= 4 and len(lane_lines[1].y) >= 2
                 and len(lane_lines[2].y) >= 2 and len(md.laneLineProbs) >= 3)
@@ -687,7 +697,9 @@ class LaneCenterCorrector:
                                  right_y - left_y, min(l_prob, r_prob)):
       self._correction_active = False
       return 0.0
-    if not (self.left_active and self.right_active):
+    # Keep watching for boundary jumps below the selected speed, so crossing
+    # the threshold cannot bypass an active geometry holdoff.
+    if not speed_eligible or not (self.left_active and self.right_active):
       return 0.0
     offset = path_y - center_y  # 양수면 경로가 중앙보다 우측
     # 불감대 (히스테리시스): 벗어남이 임계값을 넘으면 켜지고, 절반 아래로
