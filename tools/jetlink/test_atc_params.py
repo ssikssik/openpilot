@@ -71,6 +71,7 @@ def test_catalog_exposes_additional_distance_slider():
   assert params[KEY]['detail_parent'] == 'AutoTurnControl'
   assert params[KEY]['control'] == 'slider'
   assert params[KEY]['default'] == 0
+  assert params[KEY]['max'] == 2000
 
 
 @pytest.mark.parametrize('stored,expected', [(0,0),(1,250),(250,250),(300,300),(350,350),(400,400),(500,500),(-1,0),(1000,1000),(2000,2000),(2001,0)])

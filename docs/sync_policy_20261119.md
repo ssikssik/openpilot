@@ -25,3 +25,23 @@ Merge Carrot 5c970aa5 after already-contained Joongyu ddeb4677. On carrot-wip ac
 ## November 21 evening
 
 Merge Carrot 77dd3335 after already-contained Joongyu ddeb4677. Preserve Joongyu APRK/SPAS implementation and tests: upstream no-reply probe cache assumes a different output-owner lease, so exclude it on carrot-dev, including automatically merged cache references. Adopt compatible shared manual-turn peak recovery (0.3s/5deg, existing rearm gates). Do not describe or expose the lower-priority 60-second cache on dev. Retain user EV4 avoidance extension, midpoint protection, lateral-setting maxima120/80/150, model picker, HUD and DM changes. carrot-wip accepts upstream probe cache and turn recovery.
+
+## November 22 ATC integration
+
+Merge Carrot 839140999 after already-contained Joongyu ddeb4677. Keep Joongyu
+SPAS/control and external-device-only admission. Exclude Carrot's new native TBT
+permission journal, Kick/DesireHelper promotion and matching catalog wording:
+this branch deliberately does not opt into that lower-priority native ownership
+path. Accept generic TBT cancellation diagnostics, prior-lamp isolation guard
+and distance-window support to 2000m. Keep the user's dev distance selection
+valid through 2000m on all roads; do not impose Carrot's new local-road 500m
+clamp. carrot-wip accepts the original highway-only extension/native admission.
+Preserve model selection, EV4 centering/avoidance/ranges, navigation changes,
+DM/HUD/Orin NX and existing user features. No device writes.
+
+Validation: dev ATC/Kick/DesireHelper 432 pass/93 branch-native skips; shared
+indicator/Wiki 339 pass/32 branch-native skips; web settings navigation 13 pass.
+Wip corresponding groups: 560 pass/2 platform skips, 448 pass and web 13 pass.
+The old source-loop 501m-rejection fixture was updated to the retained 2000m
+contract, including accepted 501/2000m and rejected 2001m cases. Device build,
+physical actuation and driving were not tested.

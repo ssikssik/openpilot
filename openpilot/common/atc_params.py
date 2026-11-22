@@ -1,3 +1,6 @@
+RIGHT_LANE_CHANGE_MAX_M = 2000
+
+
 def right_lane_change_distance(params):
   """Read metres, including an enabled value restored from the former toggle."""
   distance = params.get_int("AutoTurnControlRightLaneChange")
