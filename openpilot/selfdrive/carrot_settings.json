@@ -884,6 +884,7 @@
           "zh": "车道居中",
           "params": [
             "LaneCenterEnable",
+            "LaneCenterMinSpeed",
             "LaneCenterThreshold",
             "LaneCenterGain",
             "LaneAvoidanceMode"
@@ -5764,6 +5765,23 @@
       "default": 1,
       "unit": 1,
       "control": "toggle"
+    },
+    {
+      "group": "ej",
+      "name": "LaneCenterMinSpeed",
+      "title": "중앙 유지 최소 작동 속도",
+      "descr": "레인리스 중앙 유지 보정은 실제 차량 속도가 설정값 이상일 때 적용됩니다. 기준보다 느려지면 보정을 서서히 줄입니다. 0은 추가 속도 제한 없이 기존 동작을 사용합니다. 저장하면 재시작 없이 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Minimum lane centering speed",
+      "edescr": "Laneless centering applies at or above this vehicle speed. Below it, the correction gradually fades out. 0 keeps the existing behavior without an additional speed limit. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "车道居中最低车速",
+      "cdescr": "车速达到或超过设定值时，无车道线模式下的居中修正才会生效。低于此速度时逐步减小修正。0 表示保留原有行为，不增设车速限制。保存后立即生效，无需重启。",
+      "min": 0,
+      "max": 150,
+      "default": 0,
+      "unit": 1,
+      "display_unit": "speedKph"
     },
     {
       "group": "ej",

@@ -174,16 +174,64 @@ def make_lane_center_corrector(params=None):
   return namespace['LaneCenterCorrector'](SimpleNamespace(get=lambda key, **_: settings.get(key))), clock
 
 
-def center_step(corrector, clock, md, *, fresh=True, lane_changing=False, **kwargs):
+def center_step(corrector, clock, md, *, fresh=True, lane_changing=False, speed=EGO_SPEED, **kwargs):
   clock.now += STEP
   if fresh:
     md.timestampEof = round(clock.now * 1e9)
-  return corrector.update(md, EGO_SPEED, lane_changing, **kwargs)
+  return corrector.update(md, speed, lane_changing, **kwargs)
 
 
 def shift_center(md, delta, *, width_delta=0.0):
   md.laneLines[1].y += delta - width_delta / 2.0
   md.laneLines[2].y += delta + width_delta / 2.0
+
+
+def test_lane_center_min_speed_is_inclusive_and_live():
+  params = {'LaneCenterMinSpeed': 45}
+  corrector, clock = make_lane_center_corrector(params)
+  md = model()
+  threshold = 45 / 3.6
+  for _ in range(20):
+    assert center_step(corrector, clock, md, speed=math.nextafter(threshold, 0.0)) == 0.0
+  assert center_step(corrector, clock, md, speed=threshold) > 0.0
+
+  # Raising the limit while engaged releases the current correction at the
+  # usual slew rate. Decelerating below it takes the same path.
+  for _ in range(20):
+    baseline = center_step(corrector, clock, md, speed=threshold)
+  params['LaneCenterMinSpeed'] = 50
+  first = center_step(corrector, clock, md, speed=threshold)
+  assert baseline - first == pytest.approx(0.01 * STEP)
+  for _ in range(20):
+    last = center_step(corrector, clock, md, speed=threshold)
+  assert last == 0.0
+  assert center_step(corrector, clock, md, speed=50 / 3.6) > 0.0
+  assert center_step(corrector, clock, md, speed=threshold) == pytest.approx(0.0)
+
+
+def test_lane_center_min_speed_keeps_geometry_jump_protection():
+  corrector, clock = make_lane_center_corrector({'LaneCenterMinSpeed': 45})
+  md = model()
+  for _ in range(12):
+    assert center_step(corrector, clock, md, speed=12.0) == 0.0
+  shift_center(md, 1.0)
+  assert center_step(corrector, clock, md, speed=12.0) == 0.0
+  for _ in range(19):
+    assert center_step(corrector, clock, md, speed=45 / 3.6) == 0.0
+  for _ in range(12):
+    result = center_step(corrector, clock, md, speed=45 / 3.6)
+  assert result > 0.0
+
+
+@pytest.mark.parametrize('setting', [0, 'invalid', float('nan')])
+def test_lane_center_min_speed_defaults_preserve_the_low_speed_fade(setting):
+  default, default_clock = make_lane_center_corrector()
+  configured, clock = make_lane_center_corrector({'LaneCenterMinSpeed': setting})
+  md, configured_md = model(), model()
+  for _ in range(20):
+    expected = center_step(default, default_clock, md, speed=7.5 / 3.6)
+    assert center_step(configured, clock, configured_md, speed=7.5 / 3.6) == expected
+  assert expected > 0.0
 
 
 @pytest.mark.parametrize('side', [-1, 1])
