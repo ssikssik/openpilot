@@ -335,3 +335,117 @@ def test_ev4_section_releases_after_sustained_blank_limit(ev4):
     assert school_receive(state, parsers, t, status=(0, 0)).vehicleNaviSectionActive, t
     t = round(t + 0.5, 3)
   assert not school_receive(state, parsers, round(lost_start + 8.0, 3), status=(0, 0)).vehicleNaviSectionActive
+
+
+# 00000348--52a1230766 (2026-11-22). 0x094 announces the section once, with the
+# start camera's 0x093 profile: 16:41:51 offset 1990 m, 397 x 20 m, 90 km/h;
+# the driver confirmed the 16:43-16:51 section (7.9 km by odometer).
+EV4_SECTION_094_7940 = bytes.fromhex('34a1c8ffffffffffc607f9c60000136e' + 'ff' * 16)
+EV4_CURVE_094 = bytes.fromhex('7db8aaffffffffffce07f94f0460006a' + 'ff' * 16)  # type 1 curve slot
+EV4_STATUS[(0, 90)] = bytes.fromhex('f210690000002000000000125a1071000000000000000000')
+
+
+def section_094_receive(state, parsers, time_s, distance, status=(0, 90), proshort=None):
+  state.totalDistance = distance
+  frames = [(0x380, EV4_STATUS[status], parsers[Bus.alt].bus)] if status is not None else []
+  if proshort is not None:
+    frames.append((0x94, proshort, parsers[Bus.pt].bus))
+  receive(state, parsers, time_s, frames)
+  return school_output(state, parsers)
+
+
+def section_094_announced(ev4):
+  state, parsers, _ = ev4
+  state.controls_ready_count = 122
+  ret = section_094_receive(state, parsers, 1.0, 1000., proshort=EV4_SECTION_094_7940)
+  assert state.navi_proshort_094 is parsers[Bus.pt].vl[carstate.CANFD_NAVI_PROSHORT_MSG]
+  return state, parsers, ret
+
+
+def test_ev4_094_decodes_logged_section():
+  values = {'PROSHORT_OFFSET': 1990, 'PROSHORT_PATH_INDEX': 8, 'PROSHORT_DISTANCE': 397,
+            'PROSHORT_VALUE_0': 0, 'PROSHORT_VALUE_1': 608, 'PROSHORT_PROFILE_TYPE': 16}
+  assert carstate.CarState._decode_ev4_navi_section(values) == (1990, 7940, 90, 8)
+  assert carstate.CarState._decode_ev4_navi_section({**values, 'PROSHORT_VALUE_1': 544})[2] == 80
+
+
+@pytest.mark.parametrize('change', [{'PROSHORT_PROFILE_TYPE': 1}, {'PROSHORT_VALUE_0': 2},
+                                    {'PROSHORT_VALUE_1': 10}, {'PROSHORT_VALUE_1': 0x80},
+                                    {'PROSHORT_DISTANCE': 0}, {'PROSHORT_OFFSET': 0}])
+def test_ev4_094_rejects_non_section_profiles(change):
+  values = {'PROSHORT_OFFSET': 1990, 'PROSHORT_PATH_INDEX': 8, 'PROSHORT_DISTANCE': 397,
+            'PROSHORT_VALUE_0': 0, 'PROSHORT_VALUE_1': 608, 'PROSHORT_PROFILE_TYPE': 16}
+  assert carstate.CarState._decode_ev4_navi_section({**values, **change}) is None
+
+
+def test_ev4_094_section_spans_start_to_end(ev4):
+  state, parsers, ret = section_094_announced(ev4)
+  assert not ret.vehicleNaviSectionActive  # start camera is still 1990 m ahead
+  t = 1.0
+  for distance, inside in ((2989., False), (2990., True), (6000., True), (10929., True), (10930., False)):
+    t = round(t + 0.5, 3)
+    ret = section_094_receive(state, parsers, t, distance)
+    assert ret.vehicleNaviSectionActive == inside, distance
+    if inside:
+      assert ret.vehicleNaviSpeed == 90
+  assert state.ev4Section is None
+
+
+def test_ev4_094_curve_slot_is_not_a_section(ev4):
+  state, parsers, _ = ev4
+  state.controls_ready_count = 122
+  section_094_receive(state, parsers, 1.0, 1000., proshort=EV4_CURVE_094)
+  assert state.ev4Section is None
+  assert not section_094_receive(state, parsers, 1.5, 3000.).vehicleNaviSectionActive
+
+
+def test_ev4_094_section_kept_through_different_approach_limit(ev4):
+  state, parsers, _ = ev4
+  state.controls_ready_count = 122
+  # 16:11:03 / 16:57:59 / 17:31:58: announced while still on a 40/90/70 road.
+  section_094_receive(state, parsers, 1.0, 1000., status=(0, 60), proshort=EV4_SECTION_094_7940)
+  t = 1.0
+  for _ in range(20):
+    t = round(t + 0.5, 3)
+    assert not section_094_receive(state, parsers, t, 2000., status=(0, 60)).vehicleNaviSectionActive
+  assert state.ev4Section is not None
+  assert section_094_receive(state, parsers, t + 0.5, 3000.).vehicleNaviSectionActive
+
+
+def test_ev4_094_section_survives_blank_and_brief_other_limit(ev4):
+  state, parsers, _ = section_094_announced(ev4)
+  # Inside: 0x380 blanks its limit, and a ramp limit flickers for <3 s
+  # (suspended meanwhile, never capped at the wrong road's limit).
+  t, distance = 1.0, 3000.
+  for status in [(0, 0)] * 10 + [(0, 60)] * 5 + [(0, 90)] * 2:
+    t = round(t + 0.5, 3)
+    distance += 10.
+    ret = section_094_receive(state, parsers, t, distance, status=status)
+    assert ret.vehicleNaviSectionActive == (status != (0, 60)), (t, status)
+  assert state.ev4Section is not None
+
+
+def test_ev4_094_section_drops_when_leaving_the_road(ev4):
+  state, parsers, _ = section_094_announced(ev4)
+  # 16:15:17: the driver took a 60 km/h exit; the start point is then reached
+  # on that other road, which suspends and then drops the section.
+  t = 1.0
+  for _ in range(6):  # first 60 past the start at 1.5 s; still held at 4.0 s
+    t = round(t + 0.5, 3)
+    assert not section_094_receive(state, parsers, t, 3000., status=(0, 60)).vehicleNaviSectionActive
+  assert state.ev4Section is not None
+  section_094_receive(state, parsers, 4.5, 3000., status=(0, 60))
+  assert state.ev4Section is None
+  assert not section_094_receive(state, parsers, 5.0, 4000.).vehicleNaviSectionActive
+
+
+def test_ev4_094_section_needs_navi_can_control(ev4):
+  state, parsers, _ = section_094_announced(ev4)
+  state.vehicleNaviCanControl = 0
+  assert not section_094_receive(state, parsers, 1.5, 3000.).vehicleNaviSectionActive
+
+
+def test_ev4_094_section_cleared_by_route_reset(ev4):
+  state, parsers, _ = section_094_announced(ev4)
+  state._clear_vehicle_navi_events()
+  assert not section_094_receive(state, parsers, 1.5, 3000.).vehicleNaviSectionActive
