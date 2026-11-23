@@ -587,3 +587,5 @@ Selectable maxima are low-speed 120 (12.0m/s²), high-speed 80 (8.0m/s²), and l
 An already confirmed manual turn may retain its peak for up to 0.3 seconds and 5 degrees of small unwind while same-direction driver effort and yaw continue through rearm. Existing waiting and cancellation gates remain. carrot-dev retains Joongyu SPAS admission; the carrot-wip 60-second unanswered-probe cache is not applied.
 
 `AutoTurnControlRightLaneChange` accepts up to 2,000m (2km), in 50m steps. Zero disables it; default zero, saved values and legacy migration remain unchanged. A wider range permits earlier condition checks, not unconditional lane changes. Existing driver, lane, BSD and front-target gates remain.
+
+`CanfdBlinkerMenuTest` supports 0=off, 1=left and 2=right. The GV80 parking-active body trials 3/4 have been removed. Updated Panda firmware is applied at the next normal startup; this does not establish physical lamp acceptance.

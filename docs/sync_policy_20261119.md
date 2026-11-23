@@ -45,3 +45,27 @@ Wip corresponding groups: 560 pass/2 platform skips, 448 pass and web 13 pass.
 The old source-loop 501m-rejection fixture was updated to the retained 2000m
 contract, including accepted 501/2000m and rejected 2001m cases. Device build,
 physical actuation and driving were not tested.
+
+## November 23 Joongyu GV80 rollback
+
+Merge Joongyu f12389801 (including Carrot 839140999), then verify Carrot is
+already contained. Accept the explicit GV80 parking-body trial 3/4 revert:
+menu remains 0/1/2, remove park-body generation, DBC byte5/6/7 fields and the
+matching Panda exception/tests. Keep existing native manual/TBT admission and
+APRK no-reply-cache exclusions: the newly merged cache is described upstream
+as inert on Joongyu cars, and retaining isolated initialization/dispatch pieces
+without its excluded implementation would be inconsistent. Preserve the user
+2000m distance on all roads and the matching descriptions, instead of importing
+prose promising native Kick admission or a local-road 500m cap. Preserve manual
+observation refinements and alternate-profile descriptions. Navigation parser
+ordering is immaterial; keep user 0x363/0x094/slot1/section queue and HUD fixes.
+No vehicle writes.
+
+Validation: Hyundai controller/SPAS/steering/cluster 409 passed; native safety,
+settings schema, ATC/TBT and Wiki generator group 523 passed. Added a rejection
+regression for the retired GV80 parking-active body; focused safety 12 passed.
+Host libsafety was compiled from the merged sources. Settings-schema validation
+used an isolated temporary HARDWARE import stub, in addition to the existing
+monitoring harness, because this macOS environment lacks native hardware imports.
+Generated dev-only Wiki draft validated (808 Markdown files); public wip Wiki
+is unchanged. No actual device build, physical actuation or driving validation.
