@@ -69,3 +69,17 @@ used an isolated temporary HARDWARE import stub, in addition to the existing
 monitoring harness, because this macOS environment lacks native hardware imports.
 Generated dev-only Wiki draft validated (808 Markdown files); public wip Wiki
 is unchanged. No actual device build, physical actuation or driving validation.
+
+## November 23 PV5 cluster display integration
+
+Merge Carrot 6a9225b54 after already-contained Joongyu f12389801. Preserve
+fresh original PV5 0x161 display states with the upstream 250ms controller-clock
+expiry and source/integrity checks. Keep Joongyu vision lane rendering and
+unseen-line policy: do not import the conflicting lower-priority lane_display
+gate or its alternate fallback. Place PV5 stock rendering after existing vision
+color selection, keeping warning/availability priorities. Retain both CI test
+entries. Non-PV5 output remains unchanged, including EV4 ccNC dashed lines.
+No changes to navigation, steering limits, DM, models, HUD or Orin NX support.
+
+Validation: 523 controller/SPAS/cluster/steering/lane-crossing tests plus 29
+vision-marking tests passed. No device installation, build or driving validation.
