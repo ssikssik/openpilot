@@ -1544,11 +1544,11 @@ class CarrotServ:
       (atc_desired, "atc"),
       (atc_desired_next, "atc2"),
       (sdi_speed, sdi_source),
+      (vehicle_section_zone_speed, "hda_section"),
       (vehicle_camera_speed, "hda"),
       (vehicle_bump_speed, "hda_bump"),
       (vehicle_curve_speed, "hda_ramp" if vehicle_curve_is_ramp else "hda_curve"),
       (vehicle_school_zone_speed, "school"),
-      (vehicle_section_zone_speed, "hda_section"),
       (limit_speed, "road"),
     ]
     if self.turnSpeedControlMode in [1,2]:

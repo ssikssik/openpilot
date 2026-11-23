@@ -90,6 +90,7 @@ def _car_state(distance_time_tenths=60):
   state.vehicleNaviCameraStatusTarget = None
   state.vehicleNaviSpeedZoneActive = False
   state.vehicleNaviSpeedZoneSpeed = 0.0
+  state.vehicleNaviSpeedZoneUsesPosition = False
   state.vehicleNaviSpeedZoneUsesNaviStatus = False
   state.vehicleNaviSpeedZoneLostNanos = None
   state.vehicleNaviSchoolZoneActive = False

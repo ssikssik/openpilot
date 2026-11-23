@@ -183,3 +183,23 @@ def test_connected_external_camera_wins_over_closer_stock_bump(navigation_update
   assert (result.desiredSource, result.desiredSpeed) == ("cam", 60)
   assert result.xSpdCountDown == 2
   assert result.nRoadLimitSpeed == 30
+
+
+def test_hda_section_beats_hda_when_camera_and_section_tie(navigation_update):
+  serv, CS, update = navigation_update
+  CS.vehicleNaviSectionActive = True
+  CS.vehicleNaviSpeed = 90
+  CS.speedLimit = 90
+  CS.speedLimitDistance = 1.0
+  CS.vEgo = 25.0
+
+  result = update()
+  assert (result.desiredSource, result.desiredSpeed) == ("hda_section", 90)
+
+  # Once the section is unlocked (bank allowance above camera limit), approaching end camera slows via hda.
+  CS.vehicleNaviSpeed = 200
+  CS.speedLimitDistance = 50.0
+  CS.vEgo = 110.0 / 3.6
+  result = update()
+  assert result.desiredSource == "hda"
+  assert result.desiredSpeed < 200

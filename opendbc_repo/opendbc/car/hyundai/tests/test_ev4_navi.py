@@ -449,3 +449,343 @@ def test_ev4_094_section_cleared_by_route_reset(ev4):
   state, parsers, _ = section_094_announced(ev4)
   state._clear_vehicle_navi_events()
   assert not section_094_receive(state, parsers, 1.5, 3000.).vehicleNaviSectionActive
+
+
+# Real logged EV4 bus 0 0x363 frames (16B):
+# - avg=0 during Route 348 S2 (POS_OFFSET=12, POS_RANGE_AVG_SPEED=0)
+# - avg=510 (0x1FE) cold-boot invalid from 0000031f--0
+EV4_POS_363_ZERO = bytes.fromhex('10f88600000000000c0009403092d004')
+EV4_POS_363_BOOT_510 = bytes.fromhex('32b20000000000000000c03f00000000')
+# EV9 0x4B4 active payload (0c00454b3092d08c, POS_RANGE_AVG_SPEED=90) in CANFD 0x363 wrapper
+EV4_POS_363_AVG_90 = bytes.fromhex('00000000000000000c00454b3092d08c')
+# Real EV4 bus 0 0x093 frames:
+# - end90: Route 348 seg 49 t=3279.81, kind=0 90 km/h @ 1998 m (section end camera)
+# - slot1: Route 348 seg 53 t=3523.60, slot 0 = ff*8, slot 1 = kind=2 40 km/h @ 840 m
+EV4_PROFILE_093_END90 = bytes.fromhex('e61a72ffffffffff30010000cee7080cffffffffffffffff')
+EV4_PROFILE_093_SLOT1_ONLY = bytes.fromhex('62c676ffffffffffffffffffffffffff9200000048e30904')
+
+
+def _hda_frame(packer, bus, limit_kph, map_source=1):
+  return packer.make_can_msg(carstate.CANFD_HDA_INFO_MSG, bus, {
+    'LinkClass': 1,
+    'SPEED_LIMIT': limit_kph,
+    'CountryCode': 410,
+    'MapSource': map_source,
+  })
+
+
+def _pos_363_receive(state, parsers, time_s, distance, frame_363, *, speed=90., status=None):
+  state.totalDistance = distance
+  frames = [(0x363, frame_363, parsers[Bus.pt].bus)] if frame_363 is not None else []
+  if status is not None:
+    frames.append((0x380, EV4_STATUS[status], parsers[Bus.alt].bus))
+  receive(state, parsers, time_s, frames)
+  ret = SimpleNamespace(speedLimit=speed, vEgo=20.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret, False, parsers[Bus.alt])
+  return ret
+
+
+def test_ev4_363_position_dbc_ignores_zero_and_boot_invalid_and_keeps_094_and_380(ev4):
+  state, parsers, _ = ev4
+  state.controls_ready_count = 122
+  parser = parsers[Bus.pt]
+
+  ret = _pos_363_receive(state, parsers, 1.0, 100., EV4_POS_363_ZERO)
+  assert state.navi_position_4b4 is parser.vl[carstate.CANFD_NAVI_POSITION_MSG]
+  assert state.navi_position_4b4['POS_OFFSET'] == 12
+  assert state.navi_position_4b4['POS_RANGE_AVG_SPEED'] == 0
+  assert not ret.vehicleNaviSectionActive
+
+  ret = _pos_363_receive(state, parsers, 1.2, 105., EV4_POS_363_BOOT_510)
+  assert state.navi_position_4b4['POS_RANGE_AVG_SPEED'] == 510
+  assert not ret.vehicleNaviSectionActive
+
+  # Streaming avg=0 on 0x363 must never clear an active 0x094 section.
+  section_094_receive(state, parsers, 1.5, 1000., proshort=EV4_SECTION_094_7940)
+  ret = _pos_363_receive(state, parsers, 2.0, 3500., EV4_POS_363_ZERO, speed=0., status=(0, 90))
+  assert ret.vehicleNaviSectionActive
+  assert ret.vehicleNaviSpeed == 90
+  assert state.ev4Section is not None
+
+  # Nor may avg=0 clear an active A-CAN 0x380 kind-7 section.
+  state.ev4Section = None
+  school_receive(state, parsers, 2.2, status=(0x10, 100))
+  school_receive(state, parsers, 2.6, status=(0x10, 100), profile=EV4_PROFILE_SECTION_100)
+  ret = _pos_363_receive(state, parsers, 3.0, 3520., EV4_POS_363_ZERO, speed=0., status=(0, 100))
+  assert ret.vehicleNaviSectionActive
+  assert ret.vehicleNaviSpeed == 100
+
+
+def test_ev4_363_range_average_activates_overrides_and_releases(ev4, monkeypatch):
+  state, parsers, _ = ev4
+  state.controls_ready_count = 122
+
+  # Active 0x094 section takes backseat when 0x363 provides authoritative range average,
+  # and both release cleanly when 0x363 drops back to 0 near section end.
+  section_094_receive(state, parsers, 1.0, 1000., proshort=EV4_SECTION_094_7940)
+  assert _pos_363_receive(state, parsers, 1.5, 3000., EV4_POS_363_ZERO, speed=0., status=(0, 90)).vehicleNaviSectionActive
+
+  ret = _pos_363_receive(state, parsers, 2.0, 3050., EV4_POS_363_AVG_90, speed=90.)
+  assert ret.vehicleNaviSectionActive
+  assert ret.vehicleNaviSpeed == 90
+  assert state.vehicleNaviSpeedZoneUsesPosition
+
+  ret = _pos_363_receive(state, parsers, 2.5, 10880., EV4_POS_363_ZERO, speed=90.)
+  assert not ret.vehicleNaviSectionActive
+  assert not state.vehicleNaviSpeedZoneUsesPosition
+  assert state.ev4Section is None
+
+  # 0x363 timeout releases the position-latched section.
+  ret = _pos_363_receive(state, parsers, 3.0, 12000., EV4_POS_363_AVG_90, speed=90.)
+  assert ret.vehicleNaviSectionActive
+  assert _pos_363_receive(state, parsers, 3.8, 12020., None, speed=90.).vehicleNaviSectionActive
+  assert not _pos_363_receive(state, parsers, 4.1, 12030., None, speed=90.).vehicleNaviSectionActive
+
+  # PV5 (canfd_wrapped_navi) also registers CANFD_NAVI_POSITION_363 and honors avg > 0.
+  params = Mock()
+  params.get_int.return_value = 0
+  params.get_bool.side_effect = lambda key: key == 'ControlsReady'
+  params.get.return_value = '{0: {}, 1: {}, 2: {}}'
+  monkeypatch.setattr(carstate, 'Params', lambda: params)
+  monkeypatch.setattr(hyundaicanfd, 'Params', lambda: params)
+  pv5_cp = structs.CarParams(carFingerprint=CAR.KIA_PV5,
+                             flags=int(HyundaiFlags.CANFD | HyundaiFlags.EV | HyundaiFlags.CANFD_CAMERA_SCC),
+                             safetyConfigs=[{}])
+  pv5_state = carstate.CarState(pv5_cp)
+  pv5_state.is_metric = True
+  pv5_state.vehicleNaviCanControl = 1
+  pv5_parsers = pv5_state.get_can_parsers(pv5_cp)
+  for p in pv5_parsers.values():
+    p.controls_ready = True
+  pv5_state.controls_ready_count = 122
+  assert _pos_363_receive(pv5_state, pv5_parsers, 1.0, 100., EV4_POS_363_AVG_90, speed=90.).vehicleNaviSectionActive
+  assert not _pos_363_receive(pv5_state, pv5_parsers, 1.5, 120., EV4_POS_363_ZERO, speed=90.).vehicleNaviSectionActive
+
+
+def test_ev4_093_end_camera_snap_and_filters(ev4):
+  state, parsers, packer = ev4
+  state.controls_ready_count = 122
+  bus = parsers[Bus.pt].bus
+
+  section_094_receive(state, parsers, 1.0, 1000., proshort=EV4_SECTION_094_7940)
+  assert state.ev4Section['end'] == 10930.
+
+  # Mid-section 90 km/h kind=3 mobile camera near end, wrong-speed kind=0, and far kind=0 must NOT snap.
+  state.totalDistance = 10000.
+  ignored_frames = [
+    packer.make_can_msg(carstate.CANFD_NAVI_PROFILE_MSG, bus,
+                        {'PROLONG_VALUE': 0x133, 'PROLONG_OFFSET': 880, 'PROLONG_CYCLIC_COUNTER': 1, 'PROLONG_PROFILE_TYPE': 16}),
+    packer.make_can_msg(carstate.CANFD_NAVI_PROFILE_MSG, bus,
+                        {'PROLONG_VALUE': 0x110, 'PROLONG_OFFSET': 890, 'PROLONG_CYCLIC_COUNTER': 2, 'PROLONG_PROFILE_TYPE': 16}),
+    packer.make_can_msg(carstate.CANFD_NAVI_PROFILE_MSG, bus,
+                        {'PROLONG_VALUE': 0x130, 'PROLONG_OFFSET': 400, 'PROLONG_CYCLIC_COUNTER': 3, 'PROLONG_PROFILE_TYPE': 16}),
+  ]
+  for i, frame in enumerate(ignored_frames):
+    receive(state, parsers, 2.0 + i * 0.2, [frame])
+    school_output(state, parsers)
+  assert state.ev4Section['end'] == 10930.
+  assert not state.ev4Section['end_snapped']
+
+  # Too close to start (<= start + 500 m) cannot snap either.
+  state.totalDistance = 3000.
+  receive(state, parsers, 3.0, [packer.make_can_msg(carstate.CANFD_NAVI_PROFILE_MSG, bus, {
+    'PROLONG_VALUE': 0x130, 'PROLONG_OFFSET': 400, 'PROLONG_CYCLIC_COUNTER': 0, 'PROLONG_PROFILE_TYPE': 16})])
+  school_output(state, parsers)
+  assert state.ev4Section['end'] == 10930.
+
+  # Real logged 0x093 kind=0 90 km/h @ 1998 m from d=8880 -> target=10878 (52 m before 10930).
+  state.totalDistance = 8880.
+  receive(state, parsers, 4.0, [(0x93, EV4_PROFILE_093_END90, bus)])
+  school_output(state, parsers)
+  assert state.ev4Section['end'] == 10878.
+  assert state.ev4Section['end_snapped']
+  assert section_094_receive(state, parsers, 4.5, 10877.).vehicleNaviSectionActive
+  assert not section_094_receive(state, parsers, 5.0, 10878.).vehicleNaviSectionActive
+
+
+def test_ev4_364_mapsource_falling_syncs_start_and_end(ev4):
+  state, parsers, packer = ev4
+  state.controls_ready_count = 122
+  bus = parsers[Bus.pt].bus
+
+  section_094_receive(state, parsers, 1.0, 1000., proshort=EV4_SECTION_094_7940)  # start=2990, end=10930
+
+  # Start approach: MapSource=2 at 2960, drops 2->1 at 2975 (15 m before 2990).
+  state.totalDistance = 2960.
+  receive(state, parsers, 1.5, [_hda_frame(packer, bus, 90, map_source=2)])
+  assert not state._update_vehicle_navi_events(parsers[Bus.pt], SimpleNamespace(speedLimit=90., vEgo=20.), True, parsers[Bus.alt])
+  state.totalDistance = 2975.
+  receive(state, parsers, 2.0, [_hda_frame(packer, bus, 90, map_source=1)])
+  ret = SimpleNamespace(speedLimit=90., vEgo=20.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret, False, parsers[Bus.alt])
+  assert state.ev4Section['start'] == 2975.
+  assert state.ev4Section['end'] == 10915.
+  assert state.ev4Section['entered']
+  assert ret.vehicleNaviSectionActive
+
+  # Mid-section MapSource 2->1 at d=5000 must NOT end the section.
+  state.totalDistance = 4900.
+  receive(state, parsers, 2.5, [_hda_frame(packer, bus, 90, map_source=2)])
+  state._update_vehicle_navi_events(parsers[Bus.pt], SimpleNamespace(speedLimit=90., vEgo=20.), True, parsers[Bus.alt])
+  state.totalDistance = 5000.
+  receive(state, parsers, 3.0, [_hda_frame(packer, bus, 90, map_source=1)])
+  ret = SimpleNamespace(speedLimit=90., vEgo=20.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret, False, parsers[Bus.alt])
+  assert ret.vehicleNaviSectionActive
+  assert state.ev4Section is not None
+
+  # End camera MapSource 2->1 at d=10865 (50 m before 10915) finishes immediately.
+  state.totalDistance = 10700.
+  receive(state, parsers, 3.5, [_hda_frame(packer, bus, 90, map_source=2)])
+  state._update_vehicle_navi_events(parsers[Bus.pt], SimpleNamespace(speedLimit=90., vEgo=20.), True, parsers[Bus.alt])
+  state.totalDistance = 10865.
+  receive(state, parsers, 4.0, [_hda_frame(packer, bus, 90, map_source=1)])
+  ret = SimpleNamespace(speedLimit=90., vEgo=20.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret, False, parsers[Bus.alt])
+  assert not ret.vehicleNaviSectionActive
+  assert state.ev4Section is None
+
+
+def test_ev4_093_slot1_decodes_logged_frame_and_queues_camera(ev4):
+  state, parsers, packer = ev4
+  state.controls_ready_count = 122
+  bus = parsers[Bus.pt].bus
+
+  state.totalDistance = 200.
+  receive(state, parsers, 1.0, [(0x93, EV4_PROFILE_093_SLOT1_ONLY, bus)])
+  school_output(state, parsers)
+  assert len(state.vehicleNaviEvents) == 1
+  assert state.vehicleNaviEvents[0] == {'type': 'camera', 'speed': 40, 'kind': 2, 'target': 1040.0}
+
+  # Zero-padded slot 1 (from CANPacker single-slot msg) is ignored cleanly.
+  state.vehicleNaviEvents.clear()
+  receive(state, parsers, 2.0, [packer.make_can_msg(carstate.CANFD_NAVI_PROFILE_MSG, bus, {
+    'PROLONG_VALUE': 0xffffffff, 'PROLONG_OFFSET': 8191, 'PROLONG_PROFILE_TYPE': 31})])
+  school_output(state, parsers)
+  assert state.vehicleNaviEvents == []
+
+
+def test_ev4_094_queues_back_to_back_next_section(ev4):
+  state, parsers, packer = ev4
+  state.controls_ready_count = 122
+  bus = parsers[Bus.pt].bus
+
+  section_094_receive(state, parsers, 1.0, 1000., proshort=EV4_SECTION_094_7940)  # A: 2990..10930, 90 kph
+  assert section_094_receive(state, parsers, 1.5, 3000.).vehicleNaviSectionActive
+
+  # Approaching A's end at d=9000, announce B starting at 9000 + 1990 = 10990 (80 kph, 6520 m).
+  next_094 = packer.make_can_msg(carstate.CANFD_NAVI_PROSHORT_MSG, bus, {
+    'PROSHORT_OFFSET': 1990, 'PROSHORT_PATH_INDEX': 8, 'PROSHORT_DISTANCE': 326,
+    'PROSHORT_VALUE_0': 0, 'PROSHORT_VALUE_1': 17 << 5, 'PROSHORT_PROFILE_TYPE': 16})[1]
+  ret = section_094_receive(state, parsers, 2.0, 9000., proshort=next_094)
+  assert ret.vehicleNaviSectionActive and ret.vehicleNaviSpeed == 90
+  assert state.ev4NextSection is not None and state.ev4NextSection['speed'] == 80
+
+  # Exiting A promotes B without activating early before 10990.
+  ret = section_094_receive(state, parsers, 2.5, 10930.)
+  assert not ret.vehicleNaviSectionActive
+  assert state.ev4Section is not None and state.ev4Section['speed'] == 80
+  assert state.ev4NextSection is None
+
+  # Entering B at 10990 activates 80 kph cap.
+  ret = section_094_receive(state, parsers, 3.0, 10990., status=(0, 0))
+  assert ret.vehicleNaviSectionActive and ret.vehicleNaviSpeed == 80
+
+
+def test_ev4_364_limit_mismatch_fallback_drops_section_when_380_blank(ev4):
+  state, parsers, packer = ev4
+  state.controls_ready_count = 122
+  bus = parsers[Bus.pt].bus
+
+  section_094_receive(state, parsers, 1.0, 1000., proshort=EV4_SECTION_094_7940)
+  assert section_094_receive(state, parsers, 1.5, 3000., status=(0, 90)).vehicleNaviSectionActive
+
+  # 0x380 blanks limit to 0 on exit ramp, while fresh 0x364 switches SPEED_LIMIT to 60.
+  state.totalDistance = 3100.
+  t = 2.0
+  for step in range(6):
+    t = round(2.0 + step * 0.5, 2)
+    receive(state, parsers, t, [(0x380, EV4_STATUS[(0, 0)], parsers[Bus.alt].bus), _hda_frame(packer, bus, 60)])
+    assert not school_output(state, parsers).vehicleNaviSectionActive
+  assert state.ev4Section is not None  # < 3 s elapsed (2.0..4.5 = 2.5 s)
+
+  receive(state, parsers, 5.0, [(0x380, EV4_STATUS[(0, 0)], parsers[Bus.alt].bus), _hda_frame(packer, bus, 60)])
+  assert not school_output(state, parsers).vehicleNaviSectionActive
+  assert state.ev4Section is None
+
+
+def test_ev4_363_zero_does_not_latch_unconfirmed_kind7(ev4):
+  state, parsers, _ = ev4
+  state.controls_ready_count = 122
+
+  _pos_363_receive(state, parsers, 1.0, 100., EV4_POS_363_ZERO, speed=100.)
+  for time_s, cam_active in ((1.4, False), (1.8, True)):
+    receive(state, parsers, time_s, [(0x93, EV4_PROFILE_SECTION_100, parsers[Bus.pt].bus),
+                                     (0x363, EV4_POS_363_ZERO, parsers[Bus.pt].bus)])
+    ret = SimpleNamespace(speedLimit=100. if cam_active else 0., vEgo=20.)
+    state._update_vehicle_navi_events(parsers[Bus.pt], ret, cam_active, parsers[Bus.alt])
+    assert not ret.vehicleNaviSectionActive
+    assert not state.vehicleNaviSpeedZoneActive
+
+
+def test_ev4_route_reset_keeps_entered_section_but_clears_unentered_and_next(ev4):
+  state, parsers, packer = ev4
+  state.controls_ready_count = 122
+  bus = parsers[Bus.pt].bus
+  reset_raw = (2 << 22) | (1 << 24)
+  reset_msg = lambda: packer.make_can_msg(
+    carstate.CANFD_NAVI_SEGMENT_MSG, bus, {f'BYTE_{i + 1}': (reset_raw >> (8 * i)) & 255 for i in range(8)})
+
+  # Before entry, CalculatedRoute == 2 still clears the pending announcement.
+  section_094_receive(state, parsers, 1.0, 1000., proshort=EV4_SECTION_094_7940)
+  assert state.ev4Section is not None and not state.ev4Section['entered']
+  receive(state, parsers, 1.2, [reset_msg()])
+  assert not school_output(state, parsers).vehicleNaviSectionActive
+  assert state.ev4Section is None
+
+  # Once entered (e.g., tunnel GPS re-anchor), CalculatedRoute == 2 preserves ev4Section
+  # while still dropping any queued ev4NextSection.
+  section_094_receive(state, parsers, 2.0, 1000., proshort=EV4_SECTION_094_7940)
+  assert section_094_receive(state, parsers, 2.5, 3000.).vehicleNaviSectionActive
+  next_094 = packer.make_can_msg(carstate.CANFD_NAVI_PROSHORT_MSG, bus, {
+    'PROSHORT_OFFSET': 1990, 'PROSHORT_PATH_INDEX': 8, 'PROSHORT_DISTANCE': 326,
+    'PROSHORT_VALUE_0': 0, 'PROSHORT_VALUE_1': 17 << 5, 'PROSHORT_PROFILE_TYPE': 16})[1]
+  assert section_094_receive(state, parsers, 3.0, 9000., proshort=next_094).vehicleNaviSectionActive
+  assert state.ev4NextSection is not None
+
+  state.totalDistance = 9050.
+  receive(state, parsers, 3.5, [reset_msg(), (0x380, EV4_STATUS[(0, 90)], parsers[Bus.alt].bus)])
+  ret = school_output(state, parsers)
+  assert ret.vehicleNaviSectionActive
+  assert ret.vehicleNaviSpeed == 90
+  assert state.ev4Section is not None and state.ev4Section['entered']
+  assert state.ev4NextSection is None
+
+
+def test_ev4_section_end_clears_matching_380_kind7_zone(ev4):
+  state, parsers, packer = ev4
+  state.controls_ready_count = 122
+  bus = parsers[Bus.pt].bus
+
+  sec_100 = packer.make_can_msg(carstate.CANFD_NAVI_PROSHORT_MSG, bus, {
+    'PROSHORT_OFFSET': 1990, 'PROSHORT_PATH_INDEX': 8, 'PROSHORT_DISTANCE': 397,
+    'PROSHORT_VALUE_0': 0, 'PROSHORT_VALUE_1': 21 << 5, 'PROSHORT_PROFILE_TYPE': 16})[1]
+  section_094_receive(state, parsers, 1.0, 1000., status=(0, 100), proshort=sec_100)  # 2990..10930
+  assert section_094_receive(state, parsers, 1.5, 3000., status=(0, 100)).vehicleNaviSectionActive
+
+  # Late-section repeat of 0x380 0x10 + 0x093 kind=7 at the same 100 km/h limit.
+  state.totalDistance = 10500.
+  receive(state, parsers, 2.0, [(0x380, EV4_STATUS[(0x10, 100)], parsers[Bus.alt].bus)])
+  school_output(state, parsers)
+  receive(state, parsers, 2.2, [(0x380, EV4_STATUS[(0x10, 100)], parsers[Bus.alt].bus),
+                                (0x93, EV4_PROFILE_SECTION_100, bus)])
+  ret = school_output(state, parsers)
+  assert ret.vehicleNaviSectionActive and ret.vehicleNaviSpeed == 100
+  assert state.vehicleNaviSpeedZoneUsesNaviStatus
+
+  # Advancing past the section endpoint releases both ev4Section and matching kind-7 latch
+  # even if 0x380 stays at highway limit (0, 100).
+  ret = section_094_receive(state, parsers, 2.5, 10930., status=(0, 100))
+  assert state.ev4Section is None
+  assert not ret.vehicleNaviSectionActive
+  assert not state.vehicleNaviSpeedZoneActive
