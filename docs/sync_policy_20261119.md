@@ -98,3 +98,9 @@ Fresh host libsafety build: CAN-FD native safety and piggyback 692 passed,
 325 failures no longer occur with the user-provided test correction. Passing
 this branch-specific suite does not establish stock openpilot safety parity or
 physical vehicle validation. No vehicle writes.
+
+Then merge Carrot 2e8908ef8: prepare bundled pyserial before AGNOS updater
+imports; native bootstrap remains after OS initialization. Clean merge retains
+the dev launcher changes. Bash syntax plus 39 launch/import/offline installer
+tests pass. No setting changes or device operations. Both source tips must be
+ancestors before normal publication.
