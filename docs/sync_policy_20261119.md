@@ -83,3 +83,18 @@ No changes to navigation, steering limits, DM, models, HUD or Orin NX support.
 
 Validation: 523 controller/SPAS/cluster/steering/lane-crossing tests plus 29
 vision-marking tests passed. No device installation, build or driving validation.
+
+## November 25 SPAS counter integration after test repair
+
+Start from current origin d55839234, which aligns the legacy CAN-FD suite
+with current Carrot DBC names and existing hook behavior. Merge Joongyu
+b8d8c0467: SPAS2 hazard values 1/2 trail stock by one, retain that offset
+through zero frames for 200ms, and use +1 for Kick/menu 3..7. Preserve all
+previous exclusions and user d50f93145 EV4 low-speed torque/smoothing changes.
+No test-repair-driven runtime safety policy changes were made by this sync.
+
+Fresh host libsafety build: CAN-FD native safety and piggyback 692 passed,
+245 base/inapplicable skips. Controller/SPAS/EV4 steering 151 passed. Previous
+325 failures no longer occur with the user-provided test correction. Passing
+this branch-specific suite does not establish stock openpilot safety parity or
+physical vehicle validation. No vehicle writes.
