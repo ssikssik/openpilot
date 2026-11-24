@@ -13,7 +13,9 @@ from opendbc.car.hyundai.palisade_cgw_test import PalisadeCgwTest, cgw_frame
 from opendbc.car.hyundai.steering_handover import SteeringHandover
 from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import HyundaiFlags, HyundaiSafetyFlags, Buttons, CarControllerParams, CAR, CAN_GEARS, HyundaiExtFlags, steering_angle_max
+from opendbc.car.hyundai.values import (HyundaiFlags, HyundaiSafetyFlags, Buttons, CarControllerParams, CAR, CAN_GEARS,
+                                        HyundaiExtFlags, steering_angle_max, steering_angle_max_torque,
+                                        steering_angle_smooth_tau)
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.hyundai.values import get_pedal_interceptor_params
@@ -304,6 +306,12 @@ class CarController(CarControllerBase):
   def steer_angle_max(self, v_ego_raw):
     return steering_angle_max(self.CP.carFingerprint, v_ego_raw, self.params.ANGLE_LIMITS.STEER_ANGLE_MAX)
 
+  def steer_angle_max_torque(self, v_ego_raw):
+    return steering_angle_max_torque(self.CP.carFingerprint, v_ego_raw, self.angle_max_torque)
+
+  def steer_angle_smooth_tau(self, v_ego_raw):
+    return steering_angle_smooth_tau(self.CP.carFingerprint, v_ego_raw)
+
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
     self.CAN = CanBus(CP)
@@ -388,6 +396,7 @@ class CarController(CarControllerBase):
     self.button_spam3 = 1
 
     self.apply_angle_last = 0
+    self.apply_angle_filtered = None
     self.steering_template_ready = False
     self.lkas_max_torque = 0
     self.angle_max_torque = 250
@@ -845,8 +854,22 @@ class CarController(CarControllerBase):
     #apply_angle = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_angle_last, CS.out.vEgoRaw,
     #                                           CS.out.steeringAngleDeg, CC.latActive, self.params.ANGLE_LIMITS)
 
+    desired_angle = float(actuators.steeringAngleDeg)
+    if not CC.latActive:
+      self.apply_angle_filtered = float(CS.out.steeringAngleDeg)
+    else:
+      smooth_tau = self.steer_angle_smooth_tau(CS.out.vEgoRaw)
+      if smooth_tau > 0.0:
+        if self.apply_angle_filtered is None or not np.isfinite(self.apply_angle_filtered):
+          self.apply_angle_filtered = float(self.apply_angle_last)
+        smooth_alpha = DT_CTRL / (smooth_tau + DT_CTRL)
+        self.apply_angle_filtered += smooth_alpha * (desired_angle - self.apply_angle_filtered)
+        desired_angle = self.apply_angle_filtered
+      else:
+        self.apply_angle_filtered = desired_angle
+
     apply_angle = apply_steer_angle_limits_physics(
-      actuators.steeringAngleDeg,
+      desired_angle,
       self.apply_angle_last,
       CS.out.vEgoRaw,
       CS.out.steeringAngleDeg,
@@ -861,7 +884,7 @@ class CarController(CarControllerBase):
     if angle_control:
       apply_steer_req = CC.latActive
 
-    angle_torque_cap = self.angle_max_torque
+    angle_torque_cap = self.steer_angle_max_torque(CS.out.vEgoRaw)
 
     steering_pressed_rising = CS.out.steeringPressed and not self.steering_pressed_prev
     if steering_pressed_rising:
@@ -920,7 +943,7 @@ class CarController(CarControllerBase):
     elif pre_override_yield > 0.0:
       # Start handing off gently before steeringPressed flips to avoid a sharp torque drop.
       torque_delta = PRE_OVERRIDE_MAX_TORQUE_DELTA * pre_override_yield
-    elif self.lkas_max_torque >= self.angle_max_torque:
+    elif self.lkas_max_torque >= angle_torque_cap:
       # Once fully recovered, hold full authority until the next driver override.
       torque_delta = 0.0
     elif self.override_latched:
@@ -950,13 +973,13 @@ class CarController(CarControllerBase):
         [0, 1, 2, 3],
         [0.1, 1.0, 2.0, 3.0],
       )))
-      base_rate_up = (self.angle_max_torque - self.params.ANGLE_MIN_TORQUE) * DT_CTRL / recovery_time
+      base_rate_up = (angle_torque_cap - self.params.ANGLE_MIN_TORQUE) * DT_CTRL / recovery_time
 
       # During recovery, taper the rate to zero. Only steeringPressed can reduce authority.
       torque_delta = base_rate_up * float(np.interp(torque_ratio, [0.6, 0.8], [1.0, 0.0]))
     self.lkas_max_torque = clip_float(self.lkas_max_torque + torque_delta, self.params.ANGLE_MIN_TORQUE, angle_torque_cap)
 
-    if not CS.out.steeringPressed and self.recovering_from_override and self.lkas_max_torque >= self.angle_max_torque:
+    if not CS.out.steeringPressed and self.recovering_from_override and self.lkas_max_torque >= angle_torque_cap:
       self.recovering_from_override = False
       self.full_recovery_frames = 1
     elif not CS.out.steeringPressed and self.full_recovery_frames > 0:
@@ -994,7 +1017,7 @@ class CarController(CarControllerBase):
       steering_authority = self.steer_handover.update(
         # Combined convergence/release recovery is standard for angle control.
         mode=3, now=now_nanos * 1e-9, baseline=self.lkas_max_torque,
-        minimum=self.params.ANGLE_MIN_TORQUE, maximum=self.angle_max_torque,
+        minimum=self.params.ANGLE_MIN_TORQUE, maximum=angle_torque_cap,
         driver=driver_torque, threshold=torque_threshold, pressed=CS.out.steeringPressed,
         target_error=actuators.steeringAngleDeg - CS.out.steeringAngleDeg,
         command_error=apply_angle - CS.out.steeringAngleDeg, speed=CS.out.vEgoRaw,

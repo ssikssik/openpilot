@@ -1141,3 +1141,20 @@ if __name__ == "__main__":
 
 def steering_angle_max(fingerprint, v_ego_raw, standard_max=CarControllerParams.ANGLE_LIMITS.STEER_ANGLE_MAX):
   return standard_max
+
+
+def steering_angle_max_torque(fingerprint, v_ego_raw, standard_max=250.0):
+  if fingerprint != CAR.KIA_EV4:
+    return float(standard_max)
+  # EV4 stock LFA_ALT (0xCB) sends ~109-124 max torque at 20-40 kph and up to ~192 at 40-60 kph.
+  # Holding 250 at low speed over-stiffens the MDPS angle loop and excites 9-10 Hz column shudder.
+  v_kph = max(0.0, float(v_ego_raw) * CV.MS_TO_KPH)
+  return float(np.interp(v_kph, (0.0, 30.0, 40.0, 60.0, 80.0), (135.0, 135.0, 155.0, 200.0, float(standard_max))))
+
+
+def steering_angle_smooth_tau(fingerprint, v_ego_raw):
+  if fingerprint != CAR.KIA_EV4:
+    return 0.0
+  # Smooth stale-carControl 0-step / 2x-jump impulses on 0xCB at low/mid speed without adding highway lag.
+  v_kph = max(0.0, float(v_ego_raw) * CV.MS_TO_KPH)
+  return float(np.interp(v_kph, (0.0, 45.0, 60.0), (0.030, 0.025, 0.0)))
