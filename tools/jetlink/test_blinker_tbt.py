@@ -309,6 +309,9 @@ def test_actual_source_loop_only_emits_physical_indicator(monkeypatch, atc, addo
 
 @pytest.mark.parametrize('speed,mask,expected', [(20.,0,True),(20.,2,False),(6.,0,True)])
 def test_native_source_distinguishes_steering_and_display(monkeypatch, speed, mask, expected):
+  from opendbc.car.hyundai.values import HyundaiSafetyFlags
+  if not HyundaiSafetyFlags.CANFD_BLINKER_KICK:
+    pytest.skip("carrot-wip native Kick is off on this branch (CANFD_BLINKER_KICK = 0)")
   test_actual_source_loop_only_emits_physical_indicator(monkeypatch, 1, 400, 0, False,
     expected, 'none', 'clear', native=True, speed=speed, mask=mask)
 

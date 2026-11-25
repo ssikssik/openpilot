@@ -224,6 +224,9 @@ def test_lamp_and_synthesized_stalk_feedback_cannot_request_steering(monkeypatch
 @pytest.mark.parametrize('lane_available', [True, False, 'changed_after_observation'])
 @pytest.mark.parametrize('observed', [False, True])
 def test_actual_source_loop_journals_then_taps_legacy_or_holds_observation(monkeypatch, atc, state, nav_fresh, lane_available, observed, transport, acknowledged):
+  from opendbc.car.hyundai.values import HyundaiSafetyFlags
+  if transport == 'kick' and not HyundaiSafetyFlags.CANFD_BLINKER_KICK:
+    pytest.skip("carrot-wip native Kick is off on this branch (CANFD_BLINKER_KICK = 0)")
   import sys
   import json
   import types

@@ -495,6 +495,8 @@ def test_missing_heading_cancels_turn_without_blocking_lane_mode():
 def test_tbt_source_preserves_confirmed_hold_through_receiver_override(monkeypatch, initial_ack, peer_after, kick):
   import blink_source as source
   from opendbc.car.hyundai.values import HyundaiSafetyFlags
+  if kick and not HyundaiSafetyFlags.CANFD_BLINKER_KICK:
+    pytest.skip("carrot-wip native Kick is off on this branch (CANFD_BLINKER_KICK = 0)")
   import json
   import types
   from contextlib import nullcontext
