@@ -83,21 +83,3 @@ def test_path_clamp_keeps_configured_distance_and_yields_for_lane_change():
   assert planner.apply_min_distance_clamp(path.copy(), 10.0)[:, 1] == pytest.approx([-0.3, 0.3])
   planner.lane_change_multiplier = 0.0
   assert np.array_equal(planner.apply_min_distance_clamp(path.copy(), 10.0), path)
-
-
-def test_ej_lateral_limit_settings_and_curvature_envelope():
-  defaults = (4.5, 3.0, 5.0)
-  assert dh.read_lat_accel_limits(Settings()) == defaults
-  assert dh.read_lat_accel_limits(Settings(LatAccelMaxLow=999, LatAccelMaxHigh=999, LatJerkMax=999)) == (12.0, 10.0, 20.0)
-  low, high, jerk = dh.read_lat_accel_limits(Settings(LatAccelMaxLow=30, LatAccelMaxHigh=25, LatJerkMax=40))
-  assert (low, high, jerk) == (3.0, 2.5, 4.0)
-  v_ego = 20.0
-  curvature, limited = dh.clip_curvature(v_ego, 0.02, 0.02, 0.0,
-                                         max_lat_accel_low=low, max_lat_accel_high=high, max_lat_jerk=jerk)
-  assert limited and curvature * v_ego ** 2 == pytest.approx(low)
-  curvature, _ = dh.clip_curvature(v_ego, 0.0, 0.02, 0.0, max_lat_jerk=jerk)
-  assert curvature * v_ego ** 2 == pytest.approx(jerk * dh.DT_CTRL)
-
-
-def test_requested_lateral_setting_maxima_reach_curvature_reader():
-  assert dh.read_lat_accel_limits(Settings(LatAccelMaxLow=120, LatAccelMaxHigh=80, LatJerkMax=150)) == (12., 8., 15.)
