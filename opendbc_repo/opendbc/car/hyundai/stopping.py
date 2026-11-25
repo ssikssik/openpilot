@@ -65,7 +65,8 @@ class CanfdStopping:
     self.reason = reason
 
   def update(self, *, active: bool, requested: bool, speed: float, held: bool,
-             accel: float, previous_value: float, jerk_u: float, jerk_l: float) -> StopCommand | None:
+             accel: float, previous_value: float, jerk_u: float, jerk_l: float,
+             smooth_lead_stop: bool = False) -> StopCommand | None:
     # Caller validates sensor values and applies pedal/CAN/hold interlocks.
     if not active or not requested:
       self.reset()
@@ -102,6 +103,6 @@ class CanfdStopping:
       return StopCommand(1, 0.0, 0.0, STOP_LOWER_BAND)
 
     # Preserve the existing approach deceleration until initial low-speed entry.
-    raw = min(accel, APPROACH_ACCEL)
+    raw = min(accel, 0.0 if smooth_lead_stop else APPROACH_ACCEL)
     value = min(0.0, max(previous_value - jerk_l * DT, min(raw, previous_value + jerk_u * DT)))
     return StopCommand(0, raw, value, STOP_LOWER_BAND)

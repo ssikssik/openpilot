@@ -10,6 +10,7 @@ from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
+from openpilot.selfdrive.controls.lib.longitudinal_stop_profile import stopped_lead_profile
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, N
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import T_IDXS as T_IDXS_MPC
 from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_from_plan, is_volkswagen_meb
@@ -68,6 +69,11 @@ class LongitudinalPlanner:
     self.prev_accel_clip = [ACCEL_MIN, ACCEL_MAX]
     self.output_a_target = 0.0
     self.output_a_target_base = 0.0
+    self.smooth_lead_stop = False
+    self.smooth_lead_track_id = -1
+    self.smooth_lead_min_range = 0.0
+    self.smooth_lead_accel = 0.0
+    self.smooth_lead_jerk = 0.0
     self.output_v_target_now = 0.0
     self.output_j_target_now = 0.0
     self.output_should_stop = False
@@ -419,6 +425,39 @@ class LongitudinalPlanner:
     self.output_v_target_now = output_v_target_now
     self.output_j_target_now = self.j_desired_trajectory[0]
 
+    self.smooth_lead_stop = False
+    if (getattr(self.CP, "carFingerprint", "") == "KIA_K8_HEV_1ST_GEN" and self.CP.openpilotLongitudinalControl
+        and self.params.get_bool("SmoothLeadStop") and self.mpc.mode == "acc"
+        and self.mpc.source == "lead0" and self.mpc.solution_status == 0
+        and not reset_state and not force_slow_decel and not self.fcw
+        and cutin_predecel_limit is None and not carrot.lane_change_active and not carrot.prepare_control_active
+        and not (carrot.start_decision and carrot.start_decision.hold)
+        and sm.all_checks(["carState", "carControl", "radarState"])):
+      cs = sm["carState"]
+      orientation = sm["carControl"].orientationNED
+      lead_one, lead_two = leads
+      if (lead_one.status and lead_one.radar and lead_one.radarTrackId >= 0
+          and len(lead_track_frames) > 0 and lead_track_frames[0] >= 10
+          and abs(lead_one.vLead) <= 0.25 and abs(lead_one.aLeadK) <= 0.3
+          and abs(lead_one.vRel + cs.vEgo) <= 0.3
+          and (not lead_two.status or lead_two.radarTrackId == lead_one.radarTrackId
+               or lead_two.dRel > lead_one.dRel + 2.0)
+          and len(orientation) == 3 and abs(orientation[1]) <= 0.025
+          and cs.gearShifter == "drive" and not cs.standstill and not cs.brakePressed and not cs.gasPressed
+          and output_a_target >= -2.0 and carrot.stop_distance >= 3.2):
+        distance = lead_one.dRel - carrot.stop_distance - 0.35
+        profile = stopped_lead_profile(cs.vEgo, cs.aEgo, distance, action_t)
+        if profile is not None:
+          _, accel, jerk, duration = profile
+          # Existing planner still owns a more urgent stop or appreciably stronger braking.
+          relief = 0.25 if output_a_target >= -1.0 else 0.0
+          if accel <= output_a_target + relief and (not self.output_should_stop or duration <= action_t + 1.0):
+            self.smooth_lead_stop = True
+            self.smooth_lead_track_id = lead_one.radarTrackId
+            self.smooth_lead_min_range = max(carrot.stop_distance, lead_one.dRel - cs.vEgo * 0.15 - 0.25)
+            self.smooth_lead_accel = accel
+            self.smooth_lead_jerk = jerk
+
     self.update_coasting(sm, carrot, v_cruise_kph, v_cruise, reset_state,
                          force_slow_decel, coasting_turn_blocked, cutin_predecel_limit)
     self.apply_stop_go_assist(sm, carrot, reset_state, accel_limits_turns[1], lead_track_frames, v_cruise, force_slow_decel)
@@ -588,6 +627,12 @@ class LongitudinalPlanner:
     longitudinalPlan.vTargetNow = float(self.output_v_target_now)
     longitudinalPlan.jTargetNow = float(self.output_j_target_now)
     longitudinalPlan.shouldStop = bool(self.output_should_stop)
+    longitudinalPlan.smoothLeadStop = bool(self.smooth_lead_stop)
+    if self.smooth_lead_stop:
+      longitudinalPlan.smoothLeadTrackId = self.smooth_lead_track_id
+      longitudinalPlan.smoothLeadMinRange = self.smooth_lead_min_range
+      longitudinalPlan.smoothLeadAccel = self.smooth_lead_accel
+      longitudinalPlan.smoothLeadJerk = self.smooth_lead_jerk
     longitudinalPlan.allowBrake = True
     longitudinalPlan.allowThrottle = bool(self.allow_throttle)
 

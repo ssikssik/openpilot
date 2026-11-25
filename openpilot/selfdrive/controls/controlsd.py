@@ -200,11 +200,15 @@ class Controls:
     # accel PID loop
     pid_accel_limits = self.CI.get_pid_accel_limits(self.CP, CS.vEgo, CS.vCruise * CV.KPH_TO_MS)
     t_since_plan = (self.sm.frame - self.sm.recv_frame['longitudinalPlan']) * DT_CTRL
-    accel, aTarget, jerk = self.LoC.update(long_active, CS, long_plan, pid_accel_limits, t_since_plan, self.sm['radarState'])
+    accel, aTarget, jerk = self.LoC.update(
+      long_active, CS, long_plan, pid_accel_limits, t_since_plan, self.sm['radarState'],
+      radar_valid=not long_plan.smoothLeadStop or self.sm.all_checks(['radarState']),
+    )
     actuators.longControlState = self.LoC.long_control_state
     actuators.accel = float(accel)
     actuators.aTarget = float(aTarget)
     actuators.jerk = float(jerk)
+    actuators.smoothLeadStop = self.LoC.smooth_lead_stop
 
     # Steering PID loop and lateral MPC
     lat_plan = self.sm['lateralPlan']

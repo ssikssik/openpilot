@@ -533,6 +533,7 @@ struct CarControl {
     jerk @9: Float32;  # m/s^3
     aTarget @10: Float32;  # m/s^2
     stopObjectActive @11 :Bool; # synthetic signal-stop object included in the generated SCC packet
+    smoothLeadStop @12 :Bool;
 
     enum LongControlState @0xe40f3a917d908282{
       off @0;

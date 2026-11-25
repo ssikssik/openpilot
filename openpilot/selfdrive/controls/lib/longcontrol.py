@@ -71,6 +71,7 @@ class LongControl:
                              (CP.longitudinalTuning.kiBP, CP.longitudinalTuning.kiV),
                              k_f=CP.longitudinalTuning.kf, rate=1 / DT_CTRL)
     self.last_output_accel = 0.0
+    self.smooth_lead_stop = False
     self.coasting = CruiseCoastingControl()
 
 
@@ -134,7 +135,7 @@ class LongControl:
     self.pid.reset()
     self.coasting.reset()
 
-  def update(self, active, CS, long_plan, accel_limits, t_since_plan, radarState):
+  def update(self, active, CS, long_plan, accel_limits, t_since_plan, radarState, radar_valid=True):
 
     soft_hold_active = CS.softHoldActive > 0
     a_target_ff = long_plan.aTarget
@@ -154,15 +155,32 @@ class LongControl:
     self.pid.neg_limit = accel_limits[0]
     self.pid.pos_limit = accel_limits[1]
 
+    smooth_lead_stop = (
+      active and radar_valid and not soft_hold_active and not CS.brakePressed and not CS.gasPressed and not CS.standstill
+      and self.long_control_state in (LongCtrlState.pid, LongCtrlState.stopping)
+      and getattr(long_plan, "smoothLeadStop", False) and not long_plan.fcw
+      and 0.0 <= t_since_plan <= 0.15 and -2.0 <= long_plan.smoothLeadAccel <= 0.0
+      and (lead := radarState.leadOne).status and lead.radar and abs(lead.vLead) <= 0.25
+      and lead.radarTrackId == long_plan.smoothLeadTrackId and lead.dRel >= long_plan.smoothLeadMinRange
+      and (not (other := radarState.leadTwo).status or other.radarTrackId == lead.radarTrackId
+           or other.dRel > lead.dRel + 2.0)
+    )
     self.long_control_state = long_control_state_trans(self.CP, active, self.long_control_state, CS.vEgo,
                                                        should_stop, CS.brakePressed,
                                                        CS.cruiseState.standstill, CS.aEgo, self.stopping_accel, radarState)
     if active and soft_hold_active:
       self.long_control_state = LongCtrlState.stopping
-
+    self.smooth_lead_stop = smooth_lead_stop and self.long_control_state in (LongCtrlState.pid, LongCtrlState.stopping)
     if self.long_control_state == LongCtrlState.off:
       self.reset()
       output_accel = 0.
+
+    elif self.smooth_lead_stop:
+      # The reference already matches measured position and speed at each solve.
+      a_target_ff = long_plan.smoothLeadAccel
+      j_target_now = long_plan.smoothLeadJerk
+      output_accel = a_target_ff
+      self.reset()
 
     elif self.long_control_state == LongCtrlState.stopping:
       output_accel = self.last_output_accel
