@@ -625,6 +625,7 @@ class VCruiseCarrot:
       allowed = (self.assistant_speed_valid and CS.canValid and CC.enabled and getattr(CC, 'longActive', False) and
                  self.CP.openpilotLongitudinalControl and CS.cruiseState.available and CS.gearShifter == GearShifter.drive and
                  not (CS.brakePressed or CS.gasPressed or CS.buttonEvents or remote or self.button_cnt or self._hold_interlock_active) and
+                 not (self._paddle_decel_active or self._paddle_resume_kph > 0) and
                  self._soft_hold_active == 0 and minimum <= v_cruise_kph <= self._cruise_speed_max and
                  not (self.CP.pcmCruise and (self.speed_from_pcm == 1 or (self.speed_from_pcm == 3 and self.CP.brand == 'toyota'))) and
                  self.carrot_cmd_index_last == self.carrot_cmd_index)

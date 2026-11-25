@@ -55,7 +55,7 @@ def test_speed_up_uses_remote_res_behavior_without_lateral_enable(voice):
   assert result['current'] == actual and result['status'] == 'applied'
 
 
-@pytest.mark.parametrize('condition', ['stale', 'disabled', 'long_inactive', 'brake', 'gas', 'park', 'can_invalid', 'stock_long', 'pcm_follow'])
+@pytest.mark.parametrize('condition', ['stale', 'disabled', 'long_inactive', 'brake', 'gas', 'park', 'can_invalid', 'stock_long', 'pcm_follow', 'paddle_decel', 'paddle_resume'])
 def test_unsafe_or_unavailable_state_rejects_and_never_runs_later(voice, condition):
   helper, root = voice
   cs = make_cs()
@@ -76,6 +76,10 @@ def test_unsafe_or_unavailable_state_rejects_and_never_runs_later(voice, conditi
     cs.canValid = False
   elif condition == 'stock_long':
     helper.CP.openpilotLongitudinalControl = False
+  elif condition == 'paddle_decel':
+    helper._paddle_decel_active = True
+  elif condition == 'paddle_resume':
+    helper._paddle_resume_kph = 83
   elif condition == 'pcm_follow':
     helper.params.values['SpeedFromPCM'] = 1
   request(root, 'speed_set', 100)

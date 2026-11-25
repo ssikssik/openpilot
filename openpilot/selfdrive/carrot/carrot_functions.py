@@ -47,6 +47,32 @@ def get_driving_mode_comfort_brake_factor(driving_mode: DrivingMode) -> float:
   """Keep Eco efficient while giving Safe a modestly earlier braking profile."""
   return 0.9 if driving_mode == DrivingMode.Safe else 1.0
 
+
+COMFORT_BRAKE_DEFAULT = 2.4
+COMFORT_BRAKE_MIN = 1.0
+COMFORT_BRAKE_MAX = 5.0
+
+
+def read_comfort_brake(params):
+  """ej 탭 ComfortBrake 파라미터(0.1 단위 정수)를 m/s²로 읽는다.
+
+  파일이 없거나(최초 설치) 구 빌드(미등록 키)에서는 기본값 2.4를 쓴다.
+  0 이하 값은 v²/(2·CB) 안전거리 계산을 망가뜨리므로 1.0~5.0으로 클립한다.
+  """
+  try:
+    value = params.get("ComfortBrake", return_default=True)
+  except Exception:
+    return COMFORT_BRAKE_DEFAULT
+  if value is None:
+    return COMFORT_BRAKE_DEFAULT
+  try:
+    brake = float(value) * 0.1
+  except (TypeError, ValueError):
+    return COMFORT_BRAKE_DEFAULT
+  if not np.isfinite(brake):
+    return COMFORT_BRAKE_DEFAULT
+  return float(np.clip(brake, COMFORT_BRAKE_MIN, COMFORT_BRAKE_MAX))
+
 class TrafficState(Enum):
   off = 0
   red = 1
@@ -131,7 +157,7 @@ class CarrotPlanner:
 
     self.stop_distance = 6.0
     self.trafficStopDistanceAdjust = 2.5 #params.get_float("TrafficStopDistanceAdjust") / 100.
-    self.comfortBrake = 2.4
+    self.comfortBrake = read_comfort_brake(self.params)
     self.comfort_brake = self.comfortBrake
 
     self.soft_hold_active = 0
@@ -196,6 +222,8 @@ class CarrotPlanner:
     self._traffic_stop_model_lead_matcher = TrafficStopModelLeadMatcher()
     self.trafficStopModelLeadOffset = 0.0
     self.last_event_time = 0.0
+    self.vehicle_navi_junction_assist = False
+    self.vehicle_navi_junction_accel_limited = False
 
   def _params_update(self):
     self.frame += 1
@@ -234,6 +262,7 @@ class CarrotPlanner:
       self.cruiseMaxVals5 = self.params.get_float("CruiseMaxVals5") / 100.
       self.cruiseMaxVals6 = self.params.get_float("CruiseMaxVals6") / 100.
     elif self.params_count == 40:
+      self.comfortBrake = read_comfort_brake(self.params)
       self.stop_distance = self.params.get_float("StopDistanceCarrot") / 100.
       self.eco_over_speed = self.params.get_int("CruiseEcoControl")
       self.autoNaviSpeedDecelRate = float(self.params.get_int("AutoNaviSpeedDecelRate")) * 0.01
@@ -241,6 +270,10 @@ class CarrotPlanner:
       self.stopGoAssist = self.params.get_int("StopGoLongAssist")
       self.trafficStopDistanceAdjust = self.params.get_float("TrafficStopDistanceAdjust") / 100.
       self.paddleSignalPriority = self.params.get_int("PaddleSignalPriority") > 0
+      try:
+        self.vehicle_navi_junction_assist = bool(self.params.get_bool("VehicleNaviJunctionAssist"))
+      except (KeyError, AssertionError, TypeError, ValueError):
+        self.vehicle_navi_junction_assist = False
     elif self.params_count >= 100:
 
       self.params_count = 0
@@ -248,7 +281,10 @@ class CarrotPlanner:
   def get_carrot_accel(self, v_ego):
     cruiseMaxVals = [self.cruiseMaxVals0, self.cruiseMaxVals1, self.cruiseMaxVals2, self.cruiseMaxVals3, self.cruiseMaxVals4, self.cruiseMaxVals5, self.cruiseMaxVals6]
     factor = self.myHighModeFactor if self.myDrivingMode == DrivingMode.High else self.mySafeFactor
-    return np.interp(v_ego, A_CRUISE_MAX_BP_CARROT, cruiseMaxVals) * factor
+    accel = np.interp(v_ego, A_CRUISE_MAX_BP_CARROT, cruiseMaxVals) * factor
+    if self.vehicle_navi_junction_accel_limited:
+      accel = min(accel, 0.8)
+    return accel
 
   def _get_base_t_follow(self, personality, v_ego):
     if personality == log.LongitudinalPersonality.moreRelaxed:
@@ -523,6 +559,16 @@ class CarrotPlanner:
     v_ego = carstate.vEgo
     a_ego = carstate.aEgo
     v_ego_kph = v_ego * CV.MS_TO_KPH
+    jtype = int(getattr(carstate, "vehicleNaviJunctionType", 0))
+    jdist = float(getattr(carstate, "vehicleNaviJunctionDistance", 0.0))
+    if jtype not in (1, 2) and hasattr(sm, "valid") and sm.valid.get("carrotMan", False):
+      carrot_man = sm["carrotMan"]
+      jtype = int(getattr(carrot_man, "vehicleNaviJunctionType", 0))
+      jdist = float(getattr(carrot_man, "vehicleNaviJunctionDistance", 0.0))
+    self.vehicle_navi_junction_accel_limited = bool(
+      self.vehicle_navi_junction_assist and jtype in (1, 2) and 0.0 <= jdist <= 300.0 and
+      v_ego > 10.0 and not carstate.gasPressed
+    )
     v_ego_cluster = carstate.vEgoCluster
     v_ego_cluster_kph = v_ego_cluster * CV.MS_TO_KPH
 

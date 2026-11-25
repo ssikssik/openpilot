@@ -10,7 +10,7 @@ from enum import StrEnum
 
 
 DT = 0.02  # SCC_CONTROL is transmitted at 50 Hz
-ENTRY_SPEED = 0.7  # m/s; retain approach braking above the low-speed stop region
+ENTRY_SPEED = 0.1  # m/s; retain approach braking until nearly stopped, then request stop
 STOP_SPEED = 0.05
 MOVING_SPEED = 0.10
 STOP_CONFIRM_TIME = 0.2

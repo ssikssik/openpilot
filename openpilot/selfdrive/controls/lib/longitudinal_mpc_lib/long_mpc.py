@@ -45,7 +45,7 @@ X_EGO_COST = 0.
 V_EGO_COST = 0.
 A_EGO_COST = 0.
 J_EGO_COST = 20.0
-A_CHANGE_COST = 200.
+A_CHANGE_COST = 300.
 A_CHANGE_COST_STARTING = 10. #30.
 DANGER_ZONE_COST = 100.
 CRASH_DISTANCE = .25
@@ -65,7 +65,7 @@ FCW_IDXS = T_IDXS < 5.0
 PRED_DANGER_IDXS = (T_IDXS > 0.2) & (T_IDXS < 3.0)
 T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 A_CHANGE_FACTORS = tuple(np.interp(t, [0.0, 1.0, 2.0], [1.0, 1.0, 0.0]) for t in T_IDXS[:N])
-COMFORT_BRAKE = 2.5
+COMFORT_BRAKE = 2.4
 STOP_DISTANCE = 6.0
 
 def get_jerk_factor(personality=log.LongitudinalPersonality.standard):

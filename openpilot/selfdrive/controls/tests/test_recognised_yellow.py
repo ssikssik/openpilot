@@ -82,7 +82,7 @@ def test_blinker_keeps_a_live_hold_but_never_restores_an_expired_one():
   assert not late._recognised_yellow('left', 0, 6 * S, changing=True)   # expired before the blinker: stays released
 
 
-def _sides(h, monkeypatch, now_ns=0, blinker=False):
+def _sides(h, monkeypatch, now_ns=0, blinker=False, right_raw=0):
   monkeypatch.setattr(desire_helper.time, 'monotonic_ns', lambda: now_ns)
   seen = {}
   for name in ('left', 'right'):
@@ -90,7 +90,7 @@ def _sides(h, monkeypatch, now_ns=0, blinker=False):
     side.update_lane_geometry = lambda *a, **k: None
     side.update_obstacles = lambda *a, **k: None
     side.compute_lane_change_available = (lambda n: lambda lane_line_info_lt_20, ignore_bsd: seen.__setitem__(n, lane_line_info_lt_20))(name)
-  car = SimpleNamespace(vEgo=20.0, leftLaneLine=0, rightLaneLine=0, leftBlindspot=False, rightBlindspot=False,
+  car = SimpleNamespace(vEgo=20.0, leftLaneLine=0, rightLaneLine=right_raw, leftBlindspot=False, rightBlindspot=False,
                         leftLongDist=0.0, rightLongDist=0.0, leftRearLongDist=0.0, rightRearLongDist=0.0,
                         leftBlindspotOnnx=False, rightBlindspotOnnx=False, leftBlinker=blinker, rightBlinker=False)
   model = SimpleNamespace(laneLines=[None] * 4, laneLineProbs=[0.0] * 4, roadEdges=[None] * 2)
@@ -118,3 +118,37 @@ def test_waiting_with_the_blinker_stays_blocked_past_the_hold(monkeypatch):
   h.lane_marking = None
   for t in range(1, 12):
     assert _sides(h, monkeypatch, t * S, blinker=True)['left'] is False
+
+
+def test_recognised_yellow_respects_overtake_admission_and_does_not_trigger_centerline_return(monkeypatch):
+  h = helper()
+  h.lane_marking = packet(0, left='yellow', right='yellow')
+  h.autoOvertakeEnabled = h.centerlineReturnGuard = True
+  h.right.lane_width = 3.0
+  h.right.side_object_detected = False
+  h.right.bsd_hold_counter = 0
+  car = SimpleNamespace(vEgo=20., vCruise=100., rightBlindspot=False, leftLaneLine=0, rightLaneLine=0,
+                        cruiseState=SimpleNamespace(enabled=True))
+  carrot = SimpleNamespace(atcType='')
+  radar = SimpleNamespace(leadOne=SimpleNamespace(status=True))
+  none = desire_helper.BLINKER_NONE
+  h.auto_overtake_slow_timer = 15.0
+  h.left.lane_change_available = _sides(h, monkeypatch)['left']
+  h._update_auto_overtake(car, True, False, False, carrot, radar, False, none, None)
+  assert not h.auto_overtake_in_progress
+
+  h.centerline_wrong_way_timer = 1.5
+  h._update_centerline_return_guard(car, True, False, False, carrot, False, none, None)
+  assert not h.centerline_return_active  # inferred yellow is a veto, not a return trigger
+  car.rightLaneLine = 20
+  assert _sides(h, monkeypatch, right_raw=20)['right'] is False
+  h.right.lane_width = 3.0
+  h.centerline_wrong_way_timer = 1.5
+  h._update_centerline_return_guard(car, True, False, False, carrot, False, none, None)
+  assert h.centerline_return_active  # existing confirmed camera-yellow recovery
+
+  h.carrot_lane_change_count = 0
+  h.lane_marking = packet(S, left='white')
+  h.left.lane_change_available = _sides(h, monkeypatch, S)['left']
+  h._update_auto_overtake(car, True, False, False, carrot, radar, False, none, None)
+  assert h.auto_overtake_in_progress
