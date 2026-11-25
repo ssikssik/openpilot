@@ -1283,6 +1283,11 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   signalDetectionSuspended @64 :Bool; # fresh vNavi motorway/urban expressway classification
   signalObservationColor @65 :UInt8; # helper current evidence: 0 unknown, 1 red, 2 green, 3 mixed
   signalAssistAction @66 :UInt8; # actual helper action: 0 none, 1 departure veto, 2 preparation, 3 confirmed green transition
+  smoothLeadStop @67 :Bool;
+  smoothLeadTrackId @68 :Int32;
+  smoothLeadMinRange @69 :Float32;
+  smoothLeadAccel @70 :Float32;
+  smoothLeadJerk @71 :Float32;
 
   solverExecutionTime @35 :Float32;
 

@@ -1172,6 +1172,7 @@ class CarController(CarControllerBase):
               msg, self.accel_value_last = hyundaicanfd.create_acc_control_scc2(
                 self.packer, self.CAN, CC.enabled, self.accel_value_last, accel, stopping, CC.cruiseControl.override,
                 set_speed_in_units, hud_control, self.hyundai_jerk, CS, self.canfd_stopping, hud_lateral=hud_lateral,
+                smooth_lead_stop=actuators.smoothLeadStop,
               )
             if msg is not None:
               can_sends.append(msg)
@@ -1182,6 +1183,7 @@ class CarController(CarControllerBase):
               CC.cruiseControl.override, set_speed_in_units, hud_control,
               self.hyundai_jerk.jerk_u, self.hyundai_jerk.jerk_l, CS, self.canfd_stopping,
               accel_value_last=self.accel_value_last,
+              smooth_lead_stop=actuators.smoothLeadStop,
             )
             can_sends.append(msg)
             self.accel_last = accel
