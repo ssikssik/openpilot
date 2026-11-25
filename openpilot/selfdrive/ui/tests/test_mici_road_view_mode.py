@@ -44,6 +44,9 @@ def screen():
   view._fade_texture = object()
   view._plot_mode = 0
   view._alert_renderer.will_render.return_value = (None, False)
+  # The Mochi screensaver stays off here so the road view itself is rendered.
+  view._mochi_screensaver = Mock(gestures_enabled=False)
+  view._mochi_screensaver.is_active.return_value = False
   view._render_diagnostics = Mock()
   view._render_diagnostics.values = {}
   view._render_diagnostics.call.side_effect = lambda label, callback, *args: callback(*args)
