@@ -560,7 +560,6 @@
               "zh": "停车与再起步",
               "params": [
                 "StopDistanceCarrot",
-                "SmoothLeadStop",
                 "StoppingAccel",
                 "VEgoStopping",
                 "AChangeCostStarting"
@@ -922,7 +921,8 @@
           "en": "Braking",
           "zh": "制动",
           "params": [
-            "ComfortBrake"
+            "ComfortBrake",
+            "SmoothLeadStop"
           ]
         },
         {
@@ -1638,14 +1638,14 @@
       "display_unit": "distanceCm"
     },
     {
-      "group": "주행튜닝",
+      "group": "ej",
       "name": "SmoothLeadStop",
       "title": "앞차 앞 부드럽게 정차",
       "descr": "K8 롱컨에서 정지한 앞차가 안정적으로 확인될 때 목표 간격에 맞춰 감속합니다. 기본값은 꺼짐입니다.",
-      "egroup": "LONG",
+      "egroup": "EJ",
       "etitle": "Smooth stop behind a lead",
       "edescr": "On K8 with openpilot longitudinal control, plan a smooth stop at the target gap behind a confirmed stationary lead. Off by default.",
-      "cgroup": "纵向控制",
+      "cgroup": "ej",
       "ctitle": "平顺跟车停车",
       "cdescr": "K8 启用 openpilot 纵向控制时，在确认前车静止后按目标间距平顺停车。默认关闭。",
       "min": 0,
