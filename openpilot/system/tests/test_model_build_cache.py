@@ -22,7 +22,7 @@ def test_launcher_accepts_precompiled_model_without_legacy_chunks(tmp_path, arti
     pytest.skip('bash unavailable')
   models = tmp_path / 'openpilot/selfdrive/modeld/models'
   models.mkdir(parents=True)
-  (models / '.build_stamp').write_text('stamp:')
+  (models / '.build_stamp').write_text('stamp::cheddar')
   (models / '.big_model_build_stamp').write_text('model-sha')
   (models / 'tg_input_devices.json').write_text('{}')
   (models / 'driving_tinygrad.pkl.chunkmanifest').write_text('1')
@@ -31,6 +31,7 @@ def test_launcher_accepts_precompiled_model_without_legacy_chunks(tmp_path, arti
   function = function[:function.index('\n}')+2]
   script = (f'DIR={shlex.quote(tmp_path.as_posix())}\nBIG_MODEL_SHA=model-sha\nFORCE_REBUILD=0\n'
             + 'git() { echo stamp; }\n'
+            + f'python3() {{ case "$*" in *pkl_path*) echo {shlex.quote(str(models / "driving_tinygrad.pkl"))};; *effective_id*) echo cheddar;; *) return 1;; esac; }}\n'
             + f'big_model_artifact_ready() {{ return {0 if artifact_ready else 1}; }}\n'
             + function + '\ninvalidate_modeld_build_if_needed\necho "$FORCE_REBUILD"\n')
   result = subprocess.run([bash, '-c', script], capture_output=True, text=True, check=True)
@@ -181,3 +182,23 @@ def test_scons_rebuilds_model_when_serialization_helper_changes(tmp_path: Path):
   modified_time = helpers_path.stat().st_mtime + 2
   os.utime(helpers_path, (modified_time, modified_time))
   assert run('-q') == 1
+
+
+@pytest.mark.parametrize('active,previous,expected', [('cheddar','cheddar','0'), ('cd210','cheddar','1'), ('cd210','cd210','0')])
+def test_internal_selection_invalidates_build_even_when_both_artifacts_exist(tmp_path, active, previous, expected):
+  models = tmp_path / 'openpilot/selfdrive/modeld/models'
+  models.mkdir(parents=True)
+  (models / '.build_stamp').write_text(f'stamp::{previous}')
+  (models / 'tg_input_devices.json').write_text('{}')
+  for name in ('driving_tinygrad.pkl', 'driving_cd210_tinygrad.pkl'):
+    (models / name).write_bytes(b'compiled')
+  source = (Path(BASEDIR) / 'launch_chffrplus.sh').read_text()
+  function = source[source.index('function invalidate_modeld_build_if_needed {'):]
+  function = function[:function.index('\n}')+2]
+  artifact = models / ('driving_cd210_tinygrad.pkl' if active == 'cd210' else 'driving_tinygrad.pkl')
+  script = (f'DIR={shlex.quote(str(tmp_path))}\nFORCE_REBUILD=0\nBIG_MODEL_SHA=\n'
+            + 'git() { echo stamp; }\n'
+            + f'python3() {{ case "$*" in *pkl_path*) echo {shlex.quote(str(artifact))};; *effective_id*) echo {active};; esac; }}\n'
+            + function + '\ninvalidate_modeld_build_if_needed\necho "$FORCE_REBUILD"\n')
+  result = subprocess.run(['bash','-c',script], capture_output=True, text=True, check=True)
+  assert result.stdout.strip().splitlines()[-1] == expected

@@ -131,4 +131,6 @@ def noo(key):
 
 
 if __name__ == '__main__':
+  from openpilot.common.internal_model_catalog import freeze_boot as freeze_internal
+  freeze_internal()
   print(freeze_boot())

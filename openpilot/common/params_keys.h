@@ -414,6 +414,18 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"PathOffset", {PERSISTENT, INT, "0"}},
     {"CameraYawTrimDeg", {PERSISTENT, INT, "0"}},
 
+    {"ClampEnable", {PERSISTENT, BOOL, "1"}},
+    {"ClampMinDistLane", {PERSISTENT, INT, "135"}},
+    {"ClampMinDistEdge", {PERSISTENT, INT, "115"}},
+    {"ClampSteerGain", {PERSISTENT, INT, "10"}},
+    {"ClampSteerAlert", {PERSISTENT, BOOL, "1"}},
+
+    {"LaneCenterEnable", {PERSISTENT, BOOL, "1"}},
+    {"LaneCenterThreshold", {PERSISTENT, INT, "20"}},
+    {"LaneCenterGain", {PERSISTENT, INT, "10"}},
+    {"LatEntryLead", {PERSISTENT, INT, "0"}},
+    {"LaneAvoidanceMode", {PERSISTENT, INT, "1"}},
+
     {"LateralTorqueCustom", {PERSISTENT, INT, "0"}},
     {"LateralTorqueAccelFactor", {PERSISTENT, INT, "2500"}},
     {"LateralTorqueFriction", {PERSISTENT, INT, "100"}},

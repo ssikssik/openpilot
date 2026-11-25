@@ -19,7 +19,7 @@ from opendbc.car.hyundai.stop_object import signal_stop_object_requested
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
 from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
-from openpilot.selfdrive.controls.lib.drive_helpers import clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb
+from openpilot.selfdrive.controls.lib.drive_helpers import ClampSteerCorrector, EntryLeadCorrector, LaneCenterCorrector, clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
@@ -106,6 +106,12 @@ class Controls:
     elif self.CP.lateralTuning.which() == 'torque':
       self.LaC = LatControlTorque(self.CP, self.CI)
     self.carrot_controls = CarrotControls(self.CP)
+    # 레인리스 조향용 최소거리 클램프 보정기. 레인리스에서는 lateral planner의
+    # 경로 클램프가 조향에 닿지 않으므로, 여기서 모델 곡률에 직접 보정한다.
+    self.clamp_steer_corrector = ClampSteerCorrector(self.params)
+    self.lane_center_corrector = LaneCenterCorrector(self.params)
+    # 커브 진입 동안만 미리 꺾는 선행 보정 (LatEntryLead, 기본 0=꺼짐)
+    self.entry_lead_corrector = EntryLeadCorrector(self.params)
 
   def update(self):
     self.sm.update(15)
@@ -226,12 +232,44 @@ class Controls:
       else:
         curvature = get_lag_adjusted_curvature(self.CP, CS.vEgo, lat_plan.psis, lat_plan.curvatures, steer_actuator_delay + lat_smooth_seconds, lat_plan.distances)
         new_desired_curvature = smooth_value(curvature, self.desired_curvature, lat_smooth_seconds)
-    else:      
-      new_desired_curvature = smooth_value(model_v2.action.desiredCurvature, self.desired_curvature, 0.1)
+    else:
+      # 레인리스: 모델 곡률에 최소거리 클램프 보정을 더한다. lateral planner의
+      # 경로 클램프는 레인리스 조향에 닿지 않으므로 여기서 직접 보정한다.
+      # 차가 선에 가까울 때만 위반한 만큼 개입하고, 평상시에는 0이다.
+      # 차선변경 중에는 클램프 보정을 끈다. desire만으로는 부족하다: desire는
+      # laneChangeStarting/Finishing에서만 서고, Finishing 종료는 타이머
+      # 기준이라 차가 새 차선에 안착하기 전에 꺼질 수 있다. laneChangeState는
+      # preLaneChange부터 서 있어 의도 단계부터 커버하고, 깜빡이는 FSM과
+      # 무관한 독립 신호다. 종료 후 홀드오프·슬루 제한은 보정기 내부에서 처리한다.
+      lane_changing = (model_v2.meta.desire != log.Desire.none
+                       or model_v2.meta.laneChangeState != log.LaneChangeState.off
+                       or CS.leftBlinker or CS.rightBlinker
+                       or getattr(self.sm['carrotMan'], 'atc_active', False))
+      clamp_kappa = self.clamp_steer_corrector.update(model_v2, CS.vEgo, lane_changing)
+      avoidance = None
+      lane_avoidance = lat_plan.laneAvoidance
+      if (lane_avoidance.applyEnabled and self.sm.valid['lateralPlan'] and not lane_changing
+          and not (CS.steeringPressed or CS.brakePressed or CS.gasPressed)
+          and 0 <= time.monotonic() - self.sm.logMonoTime['lateralPlan'] * 1e-9 <= 0.20
+          and abs(self.sm.logMonoTime['modelV2'] - lat_plan.modelMonoTime) <= 150_000_000
+          and lane_avoidance.side in (-1, 1) and 0.0 < lane_avoidance.strength <= 1.0
+          and math.isfinite(lane_avoidance.approachStart)):
+        avoidance = lane_avoidance
+      center_kappa = self.lane_center_corrector.update(model_v2, CS.vEgo, lane_changing, avoidance=avoidance)
+      new_desired_curvature = smooth_value(
+        model_v2.action.desiredCurvature + clamp_kappa + center_kappa, self.desired_curvature, 0.1)
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
 
     actuators.curvature = float(self.desired_curvature)
+
+    # 진입 선행: |목표 곡률|이 커지는 동안만 LaC 입력 곡률에 더한다 (목표 곡률 상태와 로그는 그대로).
+    # 차선변경·깜빡이·핸들 개입 중에는 끄고, MEB 곡률 PID 경로에는 적용하지 않는다.
+    entry_suppress = (CS.steeringPressed or CS.leftBlinker or CS.rightBlinker
+                      or model_v2.meta.desire != log.Desire.none
+                      or model_v2.meta.laneChangeState != log.LaneChangeState.off)
+    entry_lead = self.entry_lead_corrector.update(self.desired_curvature, CS.vEgo,
+                                                  CC.latActive and not self.is_vw_meb, entry_suppress)
 
     # VW MEB 폐루프 곡률 보정 = infiniteCable2 LatControlCurvature.update() 정확 복제.
     # carrot엔 곡률 전용 횡제어기가 없어 모델 목표곡률을 open-loop로 보내면 EPS가 명령만큼 안 꺾여
@@ -265,7 +303,7 @@ class Controls:
     # 주의: MEB는 위 곡률 PID가 실제 조향을 만들고, 아래 LaC(LatControlAngle)와 lac_log는
     # 파이프라인 형식 유지를 위한 더미임 (로그의 angleState는 실제 제어 상태가 아님).
     steer, steeringAngleDeg, lac_log = self.LaC.update(CC.latActive, CS, self.VM, lp,
-                                                       self.steer_limited_by_safety, self.desired_curvature,
+                                                       self.steer_limited_by_safety, self.desired_curvature + entry_lead,
                                                        CC, curvature_limited,
                                                        model_data=self.sm['modelV2'])
     actuators.torque = float(steer)
@@ -478,6 +516,12 @@ class Controls:
       cs.lateralControlState.torqueState = lac_log
 
     cs.activeLaneLine = self.lanefull_mode_enabled
+    # 클램프 조향 보정 알림: 레인리스 분기에서 보정이 의미 있게 걸릴 때만
+    # True. selfdrived가 이 플래그로 clampSteerActive 이벤트를 만들어
+    # prompt(띵) 사운드를 울린다. 레인풀/MEB/조향 비활성에서는 보정기가
+    # 돌지 않으므로 플래그를 강제로 내린다 (stale True 방지).
+    cs.clampSteerActive = bool(self.clamp_steer_corrector.alert_active and CC.latActive and
+                               not self.is_vw_meb and not self.lanefull_mode_enabled)
     self.pm.send('controlsState', dat)
 
     # carControl

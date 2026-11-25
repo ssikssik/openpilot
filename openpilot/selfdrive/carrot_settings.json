@@ -856,6 +856,40 @@
       "zh": "ej",
       "groups": [
         {
+          "id": "EJ_CLAMP",
+          "ko": "최소거리 클램프",
+          "en": "Min-distance clamp",
+          "zh": "最小距离钳制",
+          "params": [
+            "ClampEnable",
+            "ClampMinDistLane",
+            "ClampMinDistEdge",
+            "ClampSteerGain",
+            "ClampSteerAlert"
+          ]
+        },
+        {
+          "id": "EJ_CENTER",
+          "ko": "차선 중앙 유지",
+          "en": "Lane Centering",
+          "zh": "车道居中",
+          "params": [
+            "LaneCenterEnable",
+            "LaneCenterThreshold",
+            "LaneCenterGain",
+            "LaneAvoidanceMode"
+          ]
+        },
+        {
+          "id": "EJ_ENTRY",
+          "ko": "커브 진입",
+          "en": "Curve entry",
+          "zh": "弯道进入",
+          "params": [
+            "LatEntryLead"
+          ]
+        },
+        {
           "id": "EJ_UI",
           "ko": "UI",
           "en": "UI",
@@ -5443,6 +5477,190 @@
           "Narrow camera",
           "Wide camera",
           "Speed automatic"
+        ]
+      }
+    },
+    {
+      "group": "ej",
+      "name": "ClampEnable",
+      "title": "최소거리 클램프 사용",
+      "descr": "레인리스에서 경로가 차선·도로경계를 밟지 않도록 최소 거리를 유지합니다. 끄면 클램프가 동작하지 않습니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Min-distance clamp",
+      "edescr": "Keeps the path a minimum distance away from lane lines and road edges in laneless mode. Off disables the clamp. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "最小距离钳制",
+      "cdescr": "在无车道线模式下使路径与车道线和路缘保持最小距离。关闭则停用钳制。保存后立即生效，无需重启。",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": 1,
+      "control": "toggle"
+    },
+    {
+      "group": "ej",
+      "name": "ClampMinDistLane",
+      "title": "차선 최소거리 (135)cm",
+      "descr": "감지된 차선에서 이 거리 안쪽으로 경로가 들어가지 않습니다. 클수록 선에서 멀리 떨어져 주행합니다. 차로가 좁아 양쪽 최소거리 합보다 좁아지면 차선 중앙으로 갑니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Min distance from lane line (135)cm",
+      "edescr": "The path never comes closer than this to a detected lane line. Larger values keep further from the line. If the lane is narrower than the sum of both minimum distances, the path goes to the lane center. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "距车道线最小距离 (135)cm",
+      "cdescr": "路径与检测到的车道线保持至少该距离。数值越大离车道线越远。若车道宽度小于两侧最小距离之和，路径将移至车道中央。保存后立即生效，无需重启。",
+      "min": 60,
+      "max": 200,
+      "default": 135,
+      "unit": 5,
+      "display_unit": "distanceCm"
+    },
+    {
+      "group": "ej",
+      "name": "ClampMinDistEdge",
+      "title": "도로경계 최소거리 (115)cm",
+      "descr": "차선이 안 보일 때 도로경계(연석)에서 유지하는 최소 거리입니다. 클수록 경계에서 멀리 떨어져 주행합니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Min distance from road edge (115)cm",
+      "edescr": "Minimum distance kept from the road edge (curb) when no lane line is visible on that side. Larger values keep further from the edge. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "距路缘最小距离 (115)cm",
+      "cdescr": "该侧看不到车道线时，与路缘（路肩）保持的最小距离。数值越大离路缘越远。保存后立即生效，无需重启。",
+      "min": 40,
+      "max": 180,
+      "default": 115,
+      "unit": 5,
+      "display_unit": "distanceCm"
+    },
+    {
+      "group": "ej",
+      "name": "ClampSteerGain",
+      "title": "클램프 조향 보정 게인(10)",
+      "descr": "레인리스에서 차가 선에 가까울 때 조향을 얼마나 강하게 밀어낼지 정합니다. 10 = 1.0배, 0이면 보정을 끕니다. 높이면 선에서 더 강하게 벗어나지만 과하면 출렁일 수 있습니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Clamp steering correction gain(10)",
+      "edescr": "How strongly steering pushes away from the line in laneless mode when the car gets too close. 10 = 1.0x, 0 disables the correction. Higher values push away harder but may oscillate if too high. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "钳制转向修正增益(10)",
+      "cdescr": "在无车道线模式下，车辆靠近车道线时转向推开的强度。10 = 1.0倍，0 关闭修正。数值越大推开越强，但过高可能摆动。保存后立即生效，无需重启。",
+      "min": 0,
+      "max": 20,
+      "default": 10,
+      "unit": 1
+    },
+    {
+      "group": "ej",
+      "name": "ClampSteerAlert",
+      "title": "클램프 조향 보정 알림",
+      "descr": "레인리스에서 클램프 조향 보정이 걸릴 때 띵 소리와 함께 화면에 표시합니다. 끄면 보정은 그대로 동작하고 알림만 나지 않습니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Clamp steering correction alert",
+      "edescr": "Dings and shows a message when the clamp steering correction kicks in while driving laneless. Off only silences the alert; the correction still works. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "钳制转向修正提醒",
+      "cdescr": "在无车道线模式下钳制转向修正启动时发出提示音并显示消息。关闭后仅静音提醒，修正仍正常工作。保存后立即生效，无需重启。",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": 1,
+      "control": "toggle"
+    },
+    {
+      "group": "ej",
+      "name": "LaneCenterEnable",
+      "title": "차선 중앙 유지 사용",
+      "descr": "레인리스에서 모델 경로가 양쪽 차선의 중간을 벗어나면 중앙 방향 곡률을 추가합니다. 양쪽 차선 인식이 필요하며 5km/h 이하, 차선변경·방향지시등·자동 회전 중에는 중단하고 종료 후 2초 대기합니다. 기존 최종 조향 제한은 유지됩니다. 끄면 추가 중앙 보정은 즉시 0이 되고 기존 목표 곡률의 완화 처리는 유지됩니다. 저장 후 재부팅 없이 반영됩니다.",
+      "egroup": "EJ",
+      "etitle": "Lane centering",
+      "edescr": "Adds curvature toward the midpoint of both model lane lines in laneless mode. Requires both lane lines; suppressed at or below 5km/h, during lane changes, blinkers or automatic turns, and for two seconds afterward. Existing final steering limits remain. Off immediately clears the added correction while existing target smoothing remains. Applies without reboot.",
+      "cgroup": "ej",
+      "ctitle": "车道居中",
+      "cdescr": "无车道模式下向模型两侧车道线中点增加曲率修正。需要双侧车道识别；5km/h及以下、变道、转向灯或自动转弯期间及结束后2秒暂停。保留最终转向限制。关闭立即清零附加修正，保留目标曲率原有平滑，无需重启。",
+      "min": 0,
+      "max": 1,
+      "default": 1,
+      "unit": 1,
+      "control": "toggle"
+    },
+    {
+      "group": "ej",
+      "name": "LaneCenterThreshold",
+      "title": "중앙 유지 시작 거리(cm, 20)",
+      "descr": "차가 차선 중앙에서 이만큼 벗어나면 중앙 유지 보정이 시작됩니다. 작게 하면 더 일찍 잡아주지만 작은 출렁임에도 자주 동작할 수 있고, 크게 하면 벗어남이 커져야 동작합니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Centering start distance (cm, 20)",
+      "edescr": "Centering correction starts when the car drifts this far from the lane center. Smaller values correct earlier but may react to small wobbles; larger values wait for bigger drift. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "居中启动距离(cm, 20)",
+      "cdescr": "车辆偏离车道中央达到该距离时开始居中修正。数值越小修正越早，但可能对小幅摆动也作出反应；数值越大则等偏离变大后才修正。保存后立即生效，无需重启。",
+      "min": 5,
+      "max": 50,
+      "default": 20,
+      "unit": 1
+    },
+    {
+      "group": "ej",
+      "name": "LaneCenterGain",
+      "title": "중앙 유지 보정 게인(10)",
+      "descr": "차선 중앙으로 이끄는 보정의 강도를 정합니다. 10 = 1.0배, 0이면 보정을 끕니다. 높이면 중앙으로 더 강하게 이끌지만 과하면 출렁일 수 있습니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Centering correction gain(10)",
+      "edescr": "How strongly steering guides the car back to the lane center. 10 = 1.0x, 0 disables the correction. Higher values pull to center harder but may oscillate if too high. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "居中修正增益(10)",
+      "cdescr": "引导车辆回到车道中央的修正强度。10 = 1.0倍，0 关闭修正。数值越大回正越强，但过高可能摆动。保存后立即生效，无需重启。",
+      "min": 0,
+      "max": 20,
+      "default": 10,
+      "unit": 1
+    },
+    {
+      "group": "ej",
+      "name": "LatEntryLead",
+      "title": "커브 진입 선행 조향(0)",
+      "descr": "커브에 들어설 때만 목표 회전이 커지는 만큼 미리 더 꺾습니다. 1/100초 단위이며 0이면 끕니다. 완만한 커브의 꾸준한 구간과 커브 탈출에는 영향이 없습니다. EV4 로그 기준 25~35부터 시험하세요. 높으면 진입 때 안쪽으로 파고들 수 있습니다. 저장하면 0.5초 안에 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Curve entry lead(0)",
+      "edescr": "Steers ahead only while the target curvature is growing at a curve entry. Units of 1/100 s, 0 disables. Steady curve sections and curve exits are unchanged. Start testing at 25-35 (EV4 logs). Too high may cut into the inside on entry. Applies within 0.5 s after saving.",
+      "cgroup": "ej",
+      "ctitle": "弯道入口预转向(0)",
+      "cdescr": "仅在进入弯道、目标曲率增大时提前多转一些。单位1/100秒，0为关闭。稳定弯道段和出弯不受影响。EV4建议从25~35开始测试。过高可能在入弯时切入内侧。保存后0.5秒内生效。",
+      "min": 0,
+      "max": 50,
+      "default": 0,
+      "unit": 1
+    },
+    {
+      "group": "ej",
+      "name": "LaneAvoidanceMode",
+      "title": "장애물 회피 중 차선 보정",
+      "descr": "K8 하이브리드와 KIA EV4에서 사용할 수 있는 시험 기능입니다. EV4 실차 검증은 미완료입니다. 0은 끄기, 기본값 1은 회피 후보 기록입니다. 2는 전방·코너 레이더가 차로 가장자리의 정차·서행 차량을 교차 확인하고 모델 경로에 같은 차로 안에서 비켜 갈 여유가 있을 때 레인리스의 차선 중앙 유지(LaneCenter) 보정만 줄입니다. 레인모드는 기존 방식으로 조향합니다. 2는 통제된 시험 환경에서만 사용하세요.",
+      "egroup": "EJ",
+      "etitle": "Lane correction during obstacle avoidance",
+      "edescr": "Trial available on K8 Hybrid and KIA EV4. Physical EV4 validation is incomplete. 0 turns the feature off. The default, 1, records avoidance candidates in the drive log. Mode 2 reduces only the LaneCenter correction in laneless mode when front and corner radar corroborate a stopped or slow-moving vehicle near the lane edge and the model path has room to pass it within the same lane. Lane mode keeps its existing steering behavior. Use mode 2 only in a controlled test environment.",
+      "cgroup": "ej",
+      "ctitle": "避障时的车道修正",
+      "cdescr": "试验支持 K8 混动和 KIA EV4；EV4 实车验证尚未完成。0 为关闭，默认值 1 在行驶日志中记录避让候选。模式 2 在前向和角雷达交叉确认车道边缘有静止或缓行车辆且模型路径在同一车道内留有绕行空间时，仅减小无车道线模式下的车道居中（LaneCenter）修正。车道线模式沿用原有转向逻辑。请仅在受控测试环境中使用模式 2。",
+      "min": 0,
+      "max": 2,
+      "default": 1,
+      "unit": 1,
+      "risk": "high",
+      "control": "select",
+      "options": {
+        "ko": [
+          "끄기",
+          "기록만",
+          "실험 적용"
+        ],
+        "en": [
+          "Off",
+          "Log only",
+          "Apply (experimental)"
+        ],
+        "zh": [
+          "关闭",
+          "仅记录",
+          "应用（实验）"
         ]
       }
     },

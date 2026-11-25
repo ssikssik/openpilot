@@ -1,6 +1,10 @@
 # Cheddar internal-model review, 2026-11-18
 
-## Decision
+## carrot-dev selection policy
+
+The upstream November 20 fixed-CD210 rollback below applies to carrot-wip. This fork's carrot-dev preserves the user's explicit CD210/Cheddar selector, boot-frozen choice, separate ONNX/artifact paths and matching compiler/runtime. Neither the saved selection nor existing default is silently changed. Upstream fixed-label/fixed-artifact changes are deliberately excluded on carrot-dev. The November 20 lane-centering port is also retained.
+
+## Decision (upstream carrot-wip)
 
 On November 20 the owner requested a return to CD210 after disliking Cheddar's driving behavior. Restore the exact previous CD210 ONNX and its vendored tinygrad compiler/ModelState path together, including the fixed model name in Carrot Web. External eGPU/Jetson choices and runtime pins stay unchanged. The isolated Cheddar implementation remains available for explicit experiments but is no longer the internal default. Normal update and restart rebuild the internal artifact; this repository change does not establish installation on a particular vehicle.
 

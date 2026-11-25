@@ -529,3 +529,19 @@ Manual indication projects 0.3s of measured boundary approach, advancing the cen
 After confirmed turn entry, the TBT indicator ends its hold as the wheel returns within ±15 degrees while moving, without waiting for the remaining 30m. Pre-turn traffic-light waits remain held; see [lane changes](lane-change.md) for the entry conditions.
 
 The ATC right lane-change distance uses 0m for off and 50m steps up to 500m. The former ON setting migrates to 250m at restart.
+
+## ej lane centering
+
+The minimum-distance clamp under `ej > Min-distance clamp` uses `ClampEnable` (default on), `ClampMinDistLane` (default 135cm), `ClampMinDistEdge` (default 115cm), `ClampSteerGain` (default 10 = 1.0x) and `ClampSteerAlert` (default on). When the path comes closer than these distances to a lane line or road edge, only the violation is pulled back; in laneless mode the same limits correct the steering curvature. It stays off during lane changes and while a blinker is on, and an alert can sound when it acts.
+
+`LatEntryLead` (curve entry lead) steers ahead by the target-curvature rate × the set time, only while the target curvature magnitude is growing. Units are 1/100 s, default 0 (off), range 0–50. It is zero in steady curve sections, on curve exits, and during lane changes, blinkers or driver steering; the lead never exceeds 35% of the current target curvature or 0.01 1/m. It only adds to the value passed to the angle controller and leaves the target curvature, lateral limits and logs unchanged. Based on EV4 entry logs (actual turning lagged the target by 0.26 s), start testing at 25–35. Not yet validated on the road.
+
+### Lane centering correction
+
+`ej > Lane Centering` exposes `LaneCenterEnable` (default on), `LaneCenterThreshold` (20 cm) and `LaneCenterGain` (10=1.0x). Applies only in laneless mode and retains existing final steering limits. See [operation and suppression conditions](lane-centering.md).
+
+Centering now suppresses abrupt midpoint changes until geometry recovers. `ej > Lane Centering > LaneAvoidanceMode` supports K8 Hybrid and KIA EV4 as a trial: 0 off, default 1 log-only, 2 experimental laneless centering attenuation. Physical EV4 validation is incomplete; defaults and saved values are not automatically changed. See [scope and conditions](lane-centering.md).
+
+## Internal driving model selection
+
+Choose CD210 or Cheddar in the Carrot Web Tools model dialog. Cheddar is the default. Park, turn ignition off and reboot comma to apply the saved choice; it does not immediately change a running model or the external Jetson/eGPU selection. First use requires compilation of the internal model. See [Driving model selection](carrot-web.md#driving-model-selection-carrot-dev) for the procedure.

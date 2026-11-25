@@ -168,6 +168,7 @@ struct OnroadEvent @0xc4fa6047f024e718 {
     teslaTrafficStopTakeover @131;
     pandaCanFault @132;
     stockSccFault @133;
+    clampSteerActive @134;
 
     soundsUnavailableDEPRECATED @47;
   }
@@ -868,6 +869,7 @@ struct ControlsState @0x97ff69c53601abf1 {
   forceDecel @51 :Bool;
 
   activeLaneLine @67 : Bool;
+  clampSteerActive @68 :Bool;  # laneless clamp steering correction meaningfully active (dings via selfdrived)
 
   lateralControlState :union {
     pidState @53 :LateralPIDState;
@@ -1375,6 +1377,15 @@ struct LateralPlan @0xe1e9318e2ae8b51e {
 
   position @35 :XYZTData;
   distances @36 :List(Float32);
+  laneAvoidance @37 :LaneAvoidance;
+
+  struct LaneAvoidance {
+    status @0 :Text;
+    side @1 :Int8;  # Model coordinates: negative is left, positive is right.
+    strength @2 :Float32;
+    applyEnabled @3 :Bool;  # Allows attenuation of the laneless LaneCenter correction.
+    approachStart @4 :Float32;  # Distance in meters before the spatial fade begins.
+  }
 
   struct SolverState {
     x @0 :List(List(Float32));

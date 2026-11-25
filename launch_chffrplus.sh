@@ -293,15 +293,17 @@ function invalidate_modeld_build_if_needed {
   local stamp_path="$DIR/openpilot/selfdrive/modeld/models/.build_stamp"
   local big_stamp_path="$DIR/openpilot/selfdrive/modeld/models/.big_model_build_stamp"
   local tg_devices_path="$DIR/openpilot/selfdrive/modeld/models/tg_input_devices.json"
-  local driving_pkl_path="$DIR/openpilot/selfdrive/modeld/models/driving_tinygrad.pkl"
+  local driving_pkl_path
+  driving_pkl_path="$(python3 -c 'from openpilot.common.internal_model_catalog import pkl_path; print(pkl_path())')" || return 1
   local old_stamp
   local old_big_stamp
 
-  MODEL_BUILD_STAMP_VALUE="$(git rev-parse HEAD:openpilot/selfdrive/modeld HEAD:tinygrad_repo HEAD:openpilot/common/file_chunker.py 2>/dev/null | tr '\n' ':')"
+  MODEL_BUILD_STAMP_VALUE="$(git rev-parse HEAD:openpilot/selfdrive/modeld HEAD:tinygrad_repo HEAD:openpilot/common/file_chunker.py HEAD:openpilot/common/internal_model_catalog.py 2>/dev/null | tr '\n' ':')"
   if [ -z "$MODEL_BUILD_STAMP_VALUE" ]; then
     MODEL_BUILD_STAMP_VALUE="$(git rev-parse HEAD 2>/dev/null || true)"
   fi
 
+  MODEL_BUILD_STAMP_VALUE="$MODEL_BUILD_STAMP_VALUE:$(python3 -c 'from openpilot.common.internal_model_catalog import effective_id; print(effective_id())')"
   old_stamp="$(cat "$stamp_path" 2>/dev/null || true)"
   if [ "$MODEL_BUILD_STAMP_VALUE" != "$old_stamp" ] || [ ! -f "$tg_devices_path" ] || { [ ! -f "$driving_pkl_path" ] && [ ! -f "$driving_pkl_path.chunkmanifest" ]; }; then
     echo "Model/tinygrad inputs changed or artifacts are missing; revalidating with SCons."

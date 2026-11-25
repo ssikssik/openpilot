@@ -64,7 +64,8 @@ def get_tg_input_devices(process_name: str, usbgpu: bool):
 
 def modeld_pkl_path(usbgpu: bool, model_sha256: str | None = None):
   if not usbgpu:
-    return MODELS_DIR / 'driving_tinygrad.pkl'
+    from openpilot.common.internal_model_catalog import pkl_path
+    return pkl_path()
   if model_sha256 is None:
     model = selected_manifest()
     model_sha256 = model.sha256 if model is not None else 'unavailable'

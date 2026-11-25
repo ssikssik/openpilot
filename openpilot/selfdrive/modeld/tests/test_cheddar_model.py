@@ -152,5 +152,3 @@ def test_venus_frame_uses_only_image_planes_not_kernel_padding():
   source = np.arange(total, dtype=np.uint8)
   client.copy_camera_frame(destination, SimpleNamespace(data=source, stride=stride, uv_offset=stride * yh), 6, 4)
   np.testing.assert_array_equal(destination, source[:destination.size])
-
-

@@ -63,11 +63,11 @@ def publish_fixture(brand, flags, enabled):
   sent = {}
   control = NS(CP=cp, sm=Messages(), curvature=0.0, desired_curvature=0.0, calibrated_pose=None,
                physical_blinker_hold=NS(read=lambda valid: 0), is_vw_meb=False,
-               params=NS(get_int=lambda key: 0), lanefull_mode_enabled=False,
+               params=NS(get_int=lambda key: 0), lanefull_mode_enabled=False, clamp_steer_corrector=NS(alert_active=False),
                lat_hud_state=lambda lat_active, lac_log: 0,  # joongyu01: Controls.lat_hud_state is outside the compiled publish()
                LoC=NS(long_control_state='off', pid=NS(p=0.0, i=0.0, f=0.0)),
                pm=NS(send=lambda service, message: sent.update({service: message})))
-  cc = car.CarControl.new_message(enabled=enabled, longActive=enabled)
+  cc = car.CarControl.new_message(enabled=enabled, longActive=enabled, latActive=enabled)
   lac_log = log.ControlsState.LateralPIDState.new_message()
   return control, sent, lambda: namespace['publish'](control, cc, lac_log)
 
@@ -98,3 +98,10 @@ def test_complete_publish_checks_message_age_and_publishes_both_services(brand, 
   assert all(message.valid for message in sent.values())
   expected = brand == 'hyundai' and flags != 0 and enabled and valid and 0 <= age <= 20
   assert sent['carControl'].carControl.hudControl.signalStopObject == expected
+
+
+def test_publish_reports_clamp_activity():
+  control, sent, publish = publish_fixture('hyundai', 0, True)
+  control.clamp_steer_corrector.alert_active = True
+  publish()
+  assert sent['controlsState'].controlsState.clampSteerActive

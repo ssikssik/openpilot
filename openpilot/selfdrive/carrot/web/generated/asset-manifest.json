@@ -34,7 +34,7 @@
       "kind": "bundle",
       "source": "src/entries/tools.js",
       "path": "js/generated/tools.js",
-      "hash": "11cfdcda3f878e2f61930de7022e1acd1f5cd8794ce5ad97b923fb5d315bb1d7"
+      "hash": "4483e22a2e7080b6b71b76c28370a7f2c6814ae9f991a12882837c2db2a78a94"
     },
     {
       "id": "logs.runtime",
@@ -118,7 +118,7 @@
       "kind": "bundle",
       "source": "src/entries/tools.css",
       "path": "css/generated/tools.css",
-      "hash": "19804cc8f092e733e62641a26da2c92d047525e4c227002779655906fa489e1b"
+      "hash": "06f9ab2a06da3ba0ee0ca0e1a3d77969faed9679d0fb2428c94cb1359aa71fb0"
     },
     {
       "id": "logs.styles",

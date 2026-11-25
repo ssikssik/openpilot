@@ -1,4 +1,4 @@
-"""Run the installed CD210 artifact through modeld's actual standby/fallback path."""
+"""Run the boot-selected internal artifact through its matching production path."""
 import argparse
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,6 +10,10 @@ from openpilot.selfdrive.modeld.modeld import ModelState, SEND_RAW_PRED
 
 
 def check(path, width, height):
+  from openpilot.common.internal_model_catalog import effective_id
+  if effective_id() == 'cheddar':
+    from tools.modeld.check_cheddar_model import check as check_cheddar
+    return check_cheddar(path, width, height)
   model = ModelState(width, height, False, path, enable_shadow=False)
   frames = {name: SimpleNamespace(data=np.full(model.frame_buf_params[name][3], 128, np.uint8))
             for name in model.vision_input_names}
