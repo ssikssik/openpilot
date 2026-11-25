@@ -514,7 +514,7 @@ USB-CAN requests the initial blink; the existing vehicle indicator-hold function
 
 A hold-start request without confirmed lamp activation expires after four seconds, allowing the next button press to start a new request.
 
-`AutoTurnControlRightLaneChange` under ATC details adds to modes 1 and 2 and triggers the physical right indicator before a TBT right turn or right fork, at 10km/h or above and within the configured distance, until turning starts. It requires the supported USB2CAN indicator setup, a right lane, fresh OEM BSD and right-front gaps of at least 5 m both now and after three seconds; existing manual/Bluetooth lane-change behavior is unchanged. The maximum setting is 2000m; this branch retains the selected distance on every road class. See [lane changes](lane-change.md).
+`AutoTurnControlRightLaneChange` under ATC details adds to modes 1 and 2 and triggers the physical right indicator before a TBT right turn or right fork, at 10km/h or above and within the configured distance, until turning starts. It requires the supported USB2CAN indicator setup, a right lane, fresh OEM BSD and right-front gaps of at least 5 m both now and after three seconds; existing manual/Bluetooth lane-change behavior is unchanged. The maximum setting is 2000m, with a 500m cap on local roads or when road information is unknown. See [lane changes](lane-change.md).
 
 `ManualTurnIndicator` requests an indicator when driver steering and vehicle rotation agree. The wheel must reach 42 degrees and move at least 22 degrees from the start of steering. Detection resumes two seconds after the previous indication last renewed its hold, once both lamps have also been off for one continuous second. The setting defaults to off and can detect parking turns. [Manual turn conditions](lane-change.md)
 
@@ -586,6 +586,6 @@ Selectable maxima are low-speed 120 (12.0m/s²), high-speed 80 (8.0m/s²), and l
 
 An already confirmed manual turn may retain its peak for up to 0.3 seconds and 5 degrees of small unwind while same-direction driver effort and yaw continue through rearm. Existing waiting and cancellation gates remain. carrot-dev retains Joongyu SPAS admission; the carrot-wip 60-second unanswered-probe cache is not applied.
 
-`AutoTurnControlRightLaneChange` accepts up to 2,000m (2km), in 50m steps. Zero disables it; default zero, saved values and legacy migration remain unchanged. A wider range permits earlier condition checks, not unconditional lane changes. Existing driver, lane, BSD and front-target gates remain.
+`AutoTurnControlRightLaneChange` accepts up to 2,000m (2km), in 50m steps. The setting is used as-is only when fresh navigation data confirms a motorway or expressway; on other roads, or when road data is missing or stale, the smaller of the setting and 500m applies. Zero disables it; default zero, saved values and legacy migration remain unchanged. A wider range permits earlier condition checks, not unconditional lane changes. Existing driver, lane, BSD and front-target gates remain.
 
 `CanfdBlinkerMenuTest` supports 0=off, 1=left and 2=right. The GV80 parking-active body trials 3/4 have been removed. Updated Panda firmware is applied at the next normal startup; this does not establish physical lamp acceptance.

@@ -5,6 +5,7 @@ from openpilot.cereal import log
 from openpilot.common.constants import CV
 from openpilot.common.realtime import DT_MDL
 from openpilot.common.params import Params
+from openpilot.common.tbt_signal import lane_request
 from openpilot.selfdrive.carrot.bluetooth.model import CommandReader, RUNTIME, read_json
 from openpilot.selfdrive.carrot.bluetooth.physical import HOLD_PATH
 from openpilot.selfdrive.carrot.lane_type import marking as lane_marking
@@ -59,6 +60,7 @@ class DesireHelper:
     self.indicator_journal_time = 0.
     self.bluetooth_commands = CommandReader('lane')
     self.assistant_lane = AssistantLane(fingerprint=fingerprint, native_signal=native_voice_signal)
+    self.tbt_lane_signal = False
     self.manual_indicator_minimum = 0.  # carrot-wip a31a59ca: only with kick_supported (False on this branch)
     self.frame = 0
 
@@ -183,6 +185,8 @@ class DesireHelper:
       journal = read_json(RUNTIME/'boundary-indicator.json', {})
       stamp, direction = journal.get('time'), journal.get('mask', journal.get('direction'))
       now = time.monotonic()
+      self.tbt_lane_signal = bool(self.kick_supported and self.params.get_bool("CanfdBlinkerKick") and mode == 2 and
+                                   lane_request(journal, now))
       if (type(stamp) in (int, float) and math.isfinite(stamp) and self.indicator_journal_time < stamp <= now and
           now-stamp < 20 and type(direction) is int and direction in (1, 2, 3)):
         self.boundary_indicator.own(now, direction)
@@ -257,6 +261,14 @@ class DesireHelper:
       self._manual_signal_grace = 0.0
       self._driver_signal_counts = (getattr(carstate, 'leftBlinkerStalkCount', 0),
                                     getattr(carstate, 'rightBlinkerStalkCount', 0))
+    # An admitted native TBT signal is intentional lane-change input, unlike
+    # manual/model/low-speed indication. Require the real lamp and a neutral,
+    # valid driver lever; ordinary lane/BSD/torque/FSM admission still follows.
+    if (self.tbt_lane_signal and valid and lamps == BLINKER_RIGHT and st == BLINKER_NONE and
+        self._manual_signal_direction == BLINKER_NONE and carstate.vEgo >= LANE_CHANGE_SPEED_MIN and
+        not carstate.steeringPressed and not getattr(carstate, 'blinkerLever', 0) and
+        getattr(carstate, 'turnSignalDriverValid', False) and getattr(carstate, 'turnSignalDriverDirection', 0) == 0):
+      st = BLINKER_RIGHT
     changed = st != self.driver_blinker_state
     self.driver_blinker_state = st
 
@@ -611,7 +623,8 @@ class DesireHelper:
         busy=lamp_busy,
         isolation=self.boundary_indicator, manual_edge=self.boundary_indicator.request_direction, command_curvature=indicator_curvature,
         feedback=read_json(HOLD_PATH, {}) if self.model_indicator.active else None,
-        manual_turn_enabled=self.manual_turn_indicator_enabled, yaw_rate=indicator_yaw_rate)
+        manual_turn_enabled=self.manual_turn_indicator_enabled, yaw_rate=indicator_yaw_rate,
+        manual_minimum=self.manual_indicator_minimum)
 
     elif self.boundary_indicator.blocked or not self.boundary_indicator.initialized:
       # Expire a voice-owned lamp mask without enabling PE-only geometry observation.

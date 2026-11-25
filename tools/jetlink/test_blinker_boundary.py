@@ -3,8 +3,6 @@ from types import SimpleNamespace as N
 
 import pytest
 
-from opendbc.car.hyundai.values import HyundaiSafetyFlags
-
 from openpilot.selfdrive.controls.lib.desire_lib.boundary_indicator import BoundaryIndicator
 from openpilot.selfdrive.controls.lib.desire_lib.boundary_lane import MANUAL_INDICATOR_MIN_SPEED
 from blink_observation import allowed as observation_allowed
@@ -219,14 +217,13 @@ def test_lamp_and_synthesized_stalk_feedback_cannot_request_steering(monkeypatch
   assert t.helper.lane_change_state == log.LaneChangeState.laneChangeStarting
 
 
-@pytest.mark.parametrize('transport', ['usb', 'ble', pytest.param('kick', marks=pytest.mark.skipif(
-  not HyundaiSafetyFlags.CANFD_BLINKER_KICK, reason="This branch uses the Joongyu controller directly for Kick"
-))])
+@pytest.mark.parametrize('transport', ['usb', 'ble', 'kick'])
+@pytest.mark.parametrize('acknowledged', [False, True])
 @pytest.mark.parametrize('atc,state,nav_fresh', [('none', 'off', True), ('atc left', 'preLaneChange', True),
                                                ('fork right', 'preLaneChange', True), ('turn left', 'off', False)])
 @pytest.mark.parametrize('lane_available', [True, False, 'changed_after_observation'])
 @pytest.mark.parametrize('observed', [False, True])
-def test_actual_source_loop_journals_then_taps_legacy_or_holds_observation(monkeypatch, atc, state, nav_fresh, lane_available, observed, transport):
+def test_actual_source_loop_journals_then_taps_legacy_or_holds_observation(monkeypatch, atc, state, nav_fresh, lane_available, observed, transport, acknowledged):
   import sys
   import json
   import types
@@ -281,7 +278,8 @@ def test_actual_source_loop_journals_then_taps_legacy_or_holds_observation(monke
   )
   fake_cereal = types.ModuleType('openpilot.cereal')
   fake_cereal.messaging = N(SubMaster=lambda _: sm)
-  fake_cereal.car = N(CarParams=N(from_bytes=lambda _: nullcontext(N(carFingerprint='HYUNDAI_IONIQ_5_PE', brand='hyundai', passive=False,
+  fake_cereal.car = N(CarParams=N(from_bytes=lambda _: nullcontext(N(carFingerprint='PROTOCOL_MATCHED_CAR',
+      brand='hyundai', passive=False, openpilotLongitudinalControl=True, extFlags=1 << 19,
       safetyConfigs=[N(safetyParam=32768)]))))
   monkeypatch.setitem(sys.modules, 'openpilot.common.params', fake_params)
   monkeypatch.setitem(sys.modules, 'openpilot.cereal', fake_cereal)
@@ -291,7 +289,10 @@ def test_actual_source_loop_journals_then_taps_legacy_or_holds_observation(monke
     if len(sent) >= 8:
       return b''
     fed[0] = len(sent)
-    return json.dumps({'stamp': 10.0 + len(sent) * 0.05, 'state': 'ready'}).encode()
+    peer = {'stamp': 10.0 + len(sent) * 0.05, 'state': 'ready'}
+    if acknowledged and sent and sent[-1]['hold']:
+      peer.update(accepted_id=sent[-1]['hold']['id'], first_sent=10.1)
+    return json.dumps(peer).encode()
 
   def send(raw):
     value = json.loads(raw)

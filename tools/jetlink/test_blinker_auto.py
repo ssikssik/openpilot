@@ -3,8 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from opendbc.car.hyundai.values import HyundaiSafetyFlags
-
 sys.path.insert(0, str(Path(__file__).parent))
 from blink_policy import Policy
 from blink_can import frames, inactive, crc
@@ -142,15 +140,18 @@ def test_only_one_touch_can_is_sent_for_a_continuing_hold(tmp_path):
 def test_native_hold_reader_clears_stale_and_preserves_unrelated_vehicles(tmp_path):
   import json
   from types import SimpleNamespace
-  from openpilot.selfdrive.carrot.bluetooth.physical import HoldReader,FINGERPRINT
+  from openpilot.selfdrive.carrot.bluetooth.physical import HoldReader
   path=tmp_path/'lease.json'
   params=SimpleNamespace(get_int=lambda _:1)
-  reader=HoldReader(FINGERPRINT,params,path)
-  path.write_text(json.dumps(dict(stamp=10.,mode=1,fingerprint=FINGERPRINT,direction='left',override=True)))
+  cp=SimpleNamespace(carFingerprint='PROTOCOL_MATCHED_CAR',
+      brand='hyundai', passive=False, openpilotLongitudinalControl=True, extFlags=1 << 19)
+  reader=HoldReader(cp,params,path)
+  path.write_text(json.dumps(dict(stamp=10.,mode=1,fingerprint=cp.carFingerprint,direction='left',override=True)))
   assert reader.read(True,10.1)==2
   assert reader.read(True,10.36)==1
   assert reader.read(False,10.2)==1
-  assert HoldReader('other',params,path).read(True,10.1)==0
+  cp.extFlags=0
+  assert HoldReader(cp,params,path).read(True,10.1)==0
   params.get_int=lambda _:0
   assert reader.read(True,10.7)==0
 
@@ -158,7 +159,7 @@ def test_native_hold_reader_clears_stale_and_preserves_unrelated_vehicles(tmp_pa
 @pytest.mark.parametrize('value',[{}, {'stamp':float('nan')}, {'stamp':12}, {'stamp':10,'fingerprint':'other','mode':1,'direction':'left'}])
 def test_invalid_native_hold_lease_never_sets_hold(value):
   from openpilot.selfdrive.carrot.bluetooth.physical import lease_value
-  assert lease_value(value,10.1)==0
+  assert lease_value(value,10.1,'PROTOCOL_MATCHED_CAR')==0
 
 
 def test_unaccepted_start_expires_without_becoming_invisible_toggle():
@@ -286,6 +287,7 @@ def test_audio_cue_schema_roundtrip():
 @pytest.mark.parametrize('stopped_speed', [0., -.003020115/3.6])
 def test_actual_source_loop_starts_from_audio_cue_before_model_turn(monkeypatch, stopped_speed):
   import blink_source as source
+  from opendbc.car.hyundai.values import HyundaiSafetyFlags
   import json
   import types
   from contextlib import nullcontext
@@ -315,7 +317,8 @@ def test_actual_source_loop_starts_from_audio_cue_before_model_turn(monkeypatch,
   fake_params.Params=lambda:NS(get=lambda _:b'cp',get_int=lambda _:1,get_bool=lambda _:True)
   fake_cereal=types.ModuleType('openpilot.cereal')
   fake_cereal.messaging=NS(SubMaster=lambda _:sm)
-  fake_cereal.car=NS(CarParams=NS(from_bytes=lambda _:nullcontext(NS(carFingerprint='HYUNDAI_IONIQ_5_PE', brand='hyundai', passive=False,
+  fake_cereal.car=NS(CarParams=NS(from_bytes=lambda _:nullcontext(NS(carFingerprint='PROTOCOL_MATCHED_CAR',
+      brand='hyundai', passive=False, openpilotLongitudinalControl=True, extFlags=1 << 19,
       safetyConfigs=[NS(safetyParam=HyundaiSafetyFlags.CANFD_BLINKER_KICK)]))))
   monkeypatch.setitem(sys.modules,'openpilot.common.params',fake_params)
   monkeypatch.setitem(sys.modules,'openpilot.cereal',fake_cereal)
@@ -486,13 +489,12 @@ def test_missing_heading_cancels_turn_without_blocking_lane_mode():
   assert a.update(14,2,True,11.,'left','fork left','none','left',heading=None)==('lane','left')
 
 
-@pytest.mark.parametrize('kick', [False, pytest.param(True, marks=pytest.mark.skipif(
-  not HyundaiSafetyFlags.CANFD_BLINKER_KICK, reason="This branch uses the Joongyu controller directly for Kick"
-))])
+@pytest.mark.parametrize('kick', [False, True])
 @pytest.mark.parametrize('initial_ack', [False, True])
 @pytest.mark.parametrize('peer_after', ['driver_override', 'stale', 'error', 'guard_expired'])
 def test_tbt_source_preserves_confirmed_hold_through_receiver_override(monkeypatch, initial_ack, peer_after, kick):
   import blink_source as source
+  from opendbc.car.hyundai.values import HyundaiSafetyFlags
   import json
   import types
   from contextlib import nullcontext
@@ -540,7 +542,8 @@ def test_tbt_source_preserves_confirmed_hold_through_receiver_override(monkeypat
     get=lambda _: b'cp', get_int=lambda key: 1 if key in ('AutoBlinkerControl','AutoTurnControl') else 0,
     get_bool=lambda key: key == 'AlwaysLateral')))
   monkeypatch.setitem(sys.modules, 'openpilot.cereal', NS(messaging=NS(SubMaster=lambda _: sm),
-    car=NS(CarParams=NS(from_bytes=lambda _: nullcontext(NS(carFingerprint='HYUNDAI_IONIQ_5_PE', brand='hyundai', passive=False,
+    car=NS(CarParams=NS(from_bytes=lambda _: nullcontext(NS(carFingerprint='PROTOCOL_MATCHED_CAR',
+      brand='hyundai', passive=False, openpilotLongitudinalControl=True, extFlags=1 << 19,
       safetyConfigs=[NS(safetyParam=HyundaiSafetyFlags.CANFD_BLINKER_KICK)]))))))
   sock = NS(setblocking=lambda _: None, recv=receive, send=lambda raw: sent.append(json.loads(raw)))
   monkeypatch.setattr(source.socket, 'socket', lambda **kw: sock)
@@ -601,3 +604,16 @@ def test_b1_voice_uses_receiver_lamps_when_vehicle_port_has_none(direction, bit)
   assert not source.confirmed(hold, None, {'accepted_id':None,'lamps':bit}, cs)
   setattr(cs, ('right' if direction=='left' else 'left')+'Blinker', True)
   assert not source.confirmed(hold, hold['id'], {'accepted_id':hold['id'],'lamps':bit}, cs)
+
+
+@pytest.mark.parametrize('fault', ['passive', 'longitudinal', 'contract', 'protocol', None])
+def test_hold_capability_is_protocol_based(fault):
+  from types import SimpleNamespace as NS
+  from openpilot.selfdrive.carrot.bluetooth.physical import native_hold_supported, lease_value
+  cp = NS(brand='other' if fault == 'protocol' else 'hyundai', passive=fault == 'passive',
+          openpilotLongitudinalControl=fault != 'longitudinal', extFlags=0 if fault == 'contract' else 1 << 19,
+          carFingerprint='ANY_MATCHING_CAR')
+  assert native_hold_supported(cp) == (fault is None)
+  record = dict(stamp=10., mode=1, fingerprint=cp.carFingerprint, direction='right', override=True)
+  assert lease_value(record, 10.1, cp.carFingerprint) == 3
+  assert lease_value(record, 10.1, 'PREVIOUS_CAR') == 0

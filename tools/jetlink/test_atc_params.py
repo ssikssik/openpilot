@@ -74,12 +74,13 @@ def test_catalog_exposes_additional_distance_slider():
   assert params[KEY]['max'] == 2000
 
 
-@pytest.mark.parametrize('stored,expected', [(0,0),(1,250),(250,250),(300,300),(350,350),(400,400),(500,500),(-1,0),(1000,1000),(2000,2000),(2001,0)])
+@pytest.mark.parametrize('stored,expected', [(0,0),(1,250),(250,250),(300,300),(350,350),(400,400),(500,500),
+  (501,500),(2000,500),(-1,0),(2001,0)])
 def test_runtime_distance_and_restored_legacy_value(stored, expected):
   assert right_lane_change_distance(Params(1, stored)) == expected
 
 
-@pytest.mark.parametrize('distance', [0,50,250,300,350,400,500,1000,2000])
+@pytest.mark.parametrize('distance', [0,50,250,300,350,400,500])
 def test_migration_preserves_explicit_metres(distance):
   params = Params(1, distance)
   migrate_atc_params(params)
@@ -90,3 +91,8 @@ def test_parameter_registry_uses_integer_storage():
   root = Path(__file__).resolve().parents[2]
   registry = (root / 'openpilot/common/params_keys.h').read_text(encoding='utf-8')
   assert '{"AutoTurnControlRightLaneChange", {PERSISTENT, INT, "0"}}' in registry
+
+
+@pytest.mark.parametrize('stored,expected', [(0,0),(1,250),(250,250),(500,500),(501,501),(2000,2000),(-1,0),(2001,0)])
+def test_highway_distance_preserves_off_legacy_and_selected_metres(stored, expected):
+  assert right_lane_change_distance(Params(1, stored), highway=True) == expected

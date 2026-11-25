@@ -1,9 +1,11 @@
 """Coordinate native Kick output with external adapters and model lamp isolation."""
 from collections import deque
+from openpilot.common.tbt_signal import lane_request
 
 from opendbc.car.hyundai.values import HyundaiSafetyFlags
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.stalk_trial import crc
+from opendbc.car.hyundai.spas import Session, SPAS
 from openpilot.selfdrive.carrot.bluetooth.model import atomic_json, read_json, RUNTIME
 from tools.jetlink.blink_owner import Owner  # noqa: TID251 -- shared physical output lease
 from tools.jetlink.blink_protocol import Process, fresh  # noqa: TID251 -- common indicator policy worker
@@ -17,6 +19,8 @@ class KickOutput:
     self.event = event
     self.owner = Owner('CANFD Kick')
     self.bus = CanBus(cp).ECAN if self.configured else None
+    self.contract = Session(self.bus)
+    self.contract_admitted = False
     self.next_update = self.last_journal = 0.
     self.direction = 0
     self.driver_stamp = self.driver_pressed_at = -1.
@@ -28,9 +32,11 @@ class KickOutput:
     self.record = {}
     self.seen = deque(maxlen=256)
     self.request_id = None
+    self.tbt_lane_id = None
     self.request_side = 0
     self.accepted_id = None
     self.last_sent = -1.
+    self.first_sent = None
     self.request_started = self.tap_until = 0.
     self.tapping = False
     self.ready = False
@@ -56,6 +62,15 @@ class KickOutput:
     if exclusive:
       for stamp, packets in frames:
         for address, data, bus in packets:
+          if address in SPAS and bus == self.bus:
+            if 0 <= now - stamp / 1e9 < .1:
+              self.contract.observe(address, bus, data, stamp / 1e9)
+              if self.contract.stock[address].consecutive == 0 or (
+                  self.request_id is not None and self.contract.stock[address].consecutive < 2):
+                self.contract_admitted = False
+            else:
+              self.contract.stock[address].consecutive = 0
+              self.contract_admitted = False
           if address != 0x3C1 or bus != self.bus:
             continue
           if len(data) != 8 or data[0] != crc(data[1:]) or not 0 <= now - stamp / 1e9 < .35:
@@ -82,8 +97,18 @@ class KickOutput:
     if not enabled or now >= self.next_update:
       self.owner.acquire(enabled)
       self.next_update = now + .05
+    if not enabled or not self.owner.held:
+      self.contract = Session(self.bus)
+      self.contract_admitted = False
+    # Require ten advancing CRC-valid stock frames before a new request.
+    # During an admitted session the ECU may deliberately go quiet; the
+    # independent driver message must remain fresh throughout that session.
+    stock_ready = self.contract.stock_ready(now)
+    if self.request_id is None:
+      self.contract_admitted = stock_ready
     driver_active = self.driver_direction not in (None, 0) or 0 <= now - self.driver_pressed_at < .2
-    return enabled and self.owner.held and not driver_active
+    driver_valid = self.driver_direction is not None and 0 <= now - self.driver_stamp < .35
+    return enabled and self.owner.held and self.contract_admitted and driver_valid and not driver_active
 
   def request(self, cs, now, initialized, ready, *, clock=None):
     """Translate the existing source's fresh hold/tap into a leased SPAS direction."""
@@ -124,13 +149,25 @@ class KickOutput:
       continuing = (self.tapping and now < self.tap_until or
                     not self.tapping and valid_request and ident == self.request_id and side == self.request_side)
       opposite = cs.rightBlinker if self.request_side == 3 else cs.leftBlinker
-      if not healthy or not continuing or opposite or now - self.request_started >= 300.:
+      ended = not healthy or not continuing or opposite or now - self.request_started >= 300.
+      if self.tbt_lane_id is not None and (ended or record.get('tbt_lane_request') != self.tbt_lane_id):
+        # Keep remaining flashes isolated after cancellation or handover. Only
+        # the short steering permission is removed, never its ownership mask.
+        try:
+          previous = read_json(RUNTIME/'boundary-indicator.json', {})
+          if isinstance(previous, dict) and previous.get('tbt_lane_request') == self.tbt_lane_id:
+            previous.pop('tbt_lane_request')
+            atomic_json(RUNTIME/'boundary-indicator.json', previous)
+        except OSError:
+          pass  # The permission still expires after 200 ms without renewal.
+        self.tbt_lane_id = None
+      if ended:
         if self.event is not None:
           self.event('canfdIndicatorRequestEnd', request=self.request_id, side=self.request_side,
                      now=now, started=self.request_started, first_sent=self.first_sent,
                      healthy=healthy, continuing=bool(continuing), opposite=bool(opposite), ready=self.ready,
                      source_stamp=record.get('stamp'), source_ok=record.get('ok'),
-                     source_origin=record.get('indicator_origin'))
+                     source_origin=record.get('indicator_origin'), tbt_phase=record.get('tbt_phase'))
         self.request_id, self.request_side, self.accepted_id = None, 0, None
     if valid_request and ident not in self.seen:
       # Consume rejected/expired requests too. Recovery requires a new policy edge.
@@ -138,6 +175,9 @@ class KickOutput:
       if healthy and self.request_id is None and fresh(candidate.get('time'), now, .4) and not (cs.leftBlinker or cs.rightBlinker):
         self.request_id, self.request_side = ident, side
         self.request_started, self.tap_until = now, now + 1.6
+        self.tbt_lane_id = (ident if side == 4 and isinstance(hold, dict) and hold.get('source') == 'lane' and
+                            record.get('tbt_lane_request') == ident else None)
+        self.first_sent = None
         self.tapping = not isinstance(hold, dict)
     return self.request_side if healthy else 0
 
@@ -147,6 +187,8 @@ class KickOutput:
       address == 0x16A and len(data) == 32 and (data[16] >> 5) & 7 == self.request_side
       for address, data, _ in frames)
     if sent:
+      if self.first_sent is None:
+        self.first_sent = now
       if self.tapping and self.accepted_id != self.request_id:
         self.tap_until = now + 1.
       self.accepted_id = self.request_id
@@ -157,7 +199,8 @@ class KickOutput:
       driver = cs.blinkerLever or self.driver_direction not in (None, 0) or now - self.driver_pressed_at < .2
       state = 'driver_override' if driver else 'ready' if self.ready else 'waiting'
       self.worker.send({'stamp': now, 'state': state, 'available': self.ready,
-                        'accepted_id': self.accepted_id if self.ready else None})
+                        'accepted_id': self.accepted_id if self.ready else None,
+                        'first_sent': self.first_sent if self.ready and self.accepted_id else None})
       self.feedback_at = now + .05
 
   def isolate(self, frames, model, now):
@@ -175,7 +218,17 @@ class KickOutput:
           mask = previous.get('mask', 0)
           if type(mask) is not int or mask not in (1, 2, 3) or not 0 <= now - previous.get('time', -100.) < 20:
             mask = 0
-          atomic_json(RUNTIME/'boundary-indicator.json', {'time':now, 'direction':direction, 'mask':mask | direction})
+          journal = {'time':now, 'direction':direction, 'mask':mask | direction}
+          hold = self.record.get('hold') or {}
+          tbt = (direction == 2 and self.ready and self.tbt_lane_id is not None and
+                 self.request_id == self.tbt_lane_id == self.record.get('tbt_lane_request') == hold.get('id') and
+                 hold.get('source') == 'lane' and hold.get('direction') == 'right' and self.record.get('ok') is True and
+                 fresh(self.record.get('stamp'), now, .2))
+          # Never repurpose another indication's mask. Our own acknowledgement
+          # may renew the same request; the mask itself is always retained.
+          if tbt and model is not None and (model.meta.indicatorIsolationMask == 0 or lane_request(previous, now) == self.tbt_lane_id):
+            journal['tbt_lane_request'] = self.tbt_lane_id
+          atomic_json(RUNTIME/'boundary-indicator.json', journal)
           self.direction, self.last_journal = direction, now
         if model is not None and model.meta.indicatorIsolationMask & direction:
           return frames
