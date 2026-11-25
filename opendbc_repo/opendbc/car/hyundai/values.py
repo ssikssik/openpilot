@@ -1050,9 +1050,6 @@ CAN_GEARS = {
 }
 
 CANFD_CAR = CAR.with_flags(HyundaiFlags.CANFD)
-# carrot-wip's Kick models (lamp seen lighting from a driving kick). On this branch Kick is not limited to them; kept for
-# the shared code that names it.
-KICK_CARS = {CAR.HYUNDAI_IONIQ_5_PE, CAR.HYUNDAI_IONIQ_9, CAR.HYUNDAI_AZERA_7TH_GEN}
 # Steering-wheel buttons are on 0x1CF; a missing 0x1CF at boot is a fault, not the ALT_BUTTONS variant
 CANFD_1CF_BUTTONS_CAR = {CAR.HYUNDAI_IONIQ_5_PE}
 CANFD_RADAR_SCC_CAR = CAR.with_flags(HyundaiFlags.RADAR_SCC)  # TODO: merge with UNSUPPORTED_LONGITUDINAL_CAR
