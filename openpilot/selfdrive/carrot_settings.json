@@ -848,6 +848,24 @@
           ]
         }
       ]
+    },
+    {
+      "id": "EJ",
+      "ko": "ej",
+      "en": "ej",
+      "zh": "ej",
+      "groups": [
+        {
+          "id": "EJ_UI",
+          "ko": "UI",
+          "en": "UI",
+          "zh": "UI",
+          "params": [
+            "RobotFaceUI",
+            "RobotFaceTest"
+          ]
+        }
+      ]
     }
   ],
   "params": [
@@ -1864,7 +1882,7 @@
       "unit": 1
     },
     {
-      "group": "화면표시",
+      "group": "화면",
       "name": "MochiScreensaver",
       "title": "모찌 화면보호기(0)",
       "descr": "C4 주행 화면 대신 검은 화면에 주행 상태별 모찌 캐릭터(13종) 표시 (경고 시 주행 화면 복귀)",
@@ -5425,6 +5443,126 @@
           "Narrow camera",
           "Wide camera",
           "Speed automatic"
+        ]
+      }
+    },
+    {
+      "group": "ej",
+      "name": "RobotFaceUI",
+      "title": "로봇 얼굴로 전환",
+      "descr": "주행 화면을 로봇 얼굴로 바꿉니다. 켜면 카메라·모델 화면 대신 차량 상태에 따라 표정이 바뀌는 로봇 얼굴이 표시됩니다. 주차 중(책상)에도 홈 화면 대신 얼굴이 나와서 바로 미리볼 수 있고, 화면 꺼짐 설정은 기존대로 적용됩니다. 안전 알림은 얼굴 위에 그대로 표시됩니다. 끄면 일반 화면으로 돌아갑니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Switch to robot face",
+      "edescr": "Replaces the driving view with a robot face. When on, the camera and model view are replaced by a robot face whose expression follows the vehicle state. It also shows on the home screen while parked, so you can preview it on a desk, and existing screen-off settings remain effective. Safety alerts still appear on top of the face. Turn it off to return to the normal view. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "切换到机器人脸",
+      "cdescr": "将驾驶画面切换为机器人脸。开启后，摄像头和模型画面将被随车辆状态变化表情的机器人脸取代；停车时也会在主屏幕上显示，可直接在桌上预览，原有屏幕关闭设置仍然有效。安全提醒仍会显示在脸的上方。关闭后恢复正常画面。保存后立即生效，无需重启。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "toggle"
+    },
+    {
+      "group": "ej",
+      "name": "RobotFaceTest",
+      "title": "표정 테스트",
+      "descr": "선택한 표정을 화면에 표시합니다. 로봇 얼굴로 전환이 꺼져 있어도 한 번 선택하면 10초간 해당 표정을 보여주고 자동으로 실시간으로 돌아갑니다. 로봇 얼굴로 전환이 켜져 있으면 선택한 표정이 계속 표시됩니다. 실시간을 선택하면 차량 상태에 맞는 표정으로 돌아갑니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Test expression",
+      "edescr": "Shows the selected expression on screen. Even with the robot face off, selecting one shows it for 10 seconds, then returns to live mode automatically. With the robot face on, the selected expression stays until you pick Live. Pick Live to return to expressions that follow the vehicle state. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "测试表情",
+      "cdescr": "在屏幕上显示所选表情。即使未切换到机器人脸，选择后也会显示10秒，然后自动回到实时模式。已切换到机器人脸时，所选表情会一直显示，直到选择实时。选择实时可恢复随车辆状态变化的表情。保存后立即生效，无需重启。",
+      "min": 0,
+      "max": 25,
+      "default": 0,
+      "unit": 1,
+      "control": "select",
+      "options": {
+        "ko": [
+          "실시간",
+          "평소",
+          "인게이지",
+          "디스인게이지",
+          "왼쪽 깜빡이",
+          "오른쪽 깜빡이",
+          "차선 변경 ←",
+          "차선 변경 →",
+          "출발",
+          "출발 인사",
+          "급제동",
+          "운전자 주의",
+          "주의 해제",
+          "클램프 보정 작동",
+          "신호 대기",
+          "후진",
+          "급가속",
+          "앞차 근접",
+          "정체",
+          "주차",
+          "사각지대 차량",
+          "앞차 출발",
+          "끼어들기",
+          "가속 페달 개입",
+          "급커브",
+          "비상등"
+        ],
+        "en": [
+          "Live",
+          "Idle",
+          "Engaged",
+          "Disengaged",
+          "Left blinker",
+          "Right blinker",
+          "Lane change ←",
+          "Lane change →",
+          "Departing",
+          "Greeting",
+          "Hard braking",
+          "Driver alert",
+          "Alert cleared",
+          "Clamp active",
+          "Waiting",
+          "Reverse",
+          "Hard accel",
+          "Lead close",
+          "Traffic jam",
+          "Parked",
+          "Blind spot",
+          "Lead departed",
+          "Cut-in",
+          "Gas override",
+          "Sharp curve",
+          "Hazard"
+        ],
+        "zh": [
+          "实时",
+          "平时",
+          "已接入",
+          "已断开",
+          "左转向灯",
+          "右转向灯",
+          "变道 ←",
+          "变道 →",
+          "起步",
+          "出发问候",
+          "急刹车",
+          "驾驶员注意",
+          "注意解除",
+          "夹紧生效",
+          "等待信号",
+          "倒车",
+          "急加速",
+          "前车接近",
+          "拥堵",
+          "停车",
+          "盲区车辆",
+          "前车起步",
+          "加塞",
+          "油门介入",
+          "急转弯",
+          "双闪"
         ]
       }
     }

@@ -216,7 +216,14 @@ class AugmentedRoadView(CameraView):
     else:
       self._offroad_label.set_text("start the car to\nuse openpilot")
 
+  def _handle_mouse_event(self, mouse_event: MouseEvent) -> None:
+    super()._handle_mouse_event(mouse_event)
+    self._mochi_screensaver.handle_mouse_event(mouse_event)
+
   def _handle_mouse_release(self, mouse_pos: MousePos):
+    # Do not let a Mochi gesture fall through to the home-screen callback.
+    if self._mochi_screensaver.gestures_enabled:
+      return
     # Don't trigger click callback if bookmark was triggered
     if not self._bookmark_icon.interacting():
       super()._handle_mouse_release(mouse_pos)
@@ -312,8 +319,13 @@ class AugmentedRoadView(CameraView):
 
     self._bookmark_icon.render(self.rect)
 
-    if self._mochi_screensaver.is_active(alert_to_render is not None):
+    # Keep road alerts visible, including while they animate out.
+    alert_visible = alert_to_render is not None
+    self._mochi_screensaver.update_gesture(alert_visible)
+    if self._mochi_screensaver.is_active(alert_visible):
       self._mochi_screensaver.render(self._content_rect)
+    elif not alert_visible:
+      self._mochi_screensaver.render_press_progress(self._content_rect)
 
     # Draw darkened background and text if not onroad
     if not ui_state.started:

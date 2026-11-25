@@ -1,3 +1,5 @@
+import os
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Generic, TypeVar
@@ -83,6 +85,12 @@ class RealtimeUiParamSnapshot:
   always_on_dm: bool = False
 
 
+@dataclass(frozen=True)
+class RobotFaceParamSnapshot:
+  enabled: bool = False
+  test: int = 0
+
+
 def read_border_params(params, params_memory) -> BorderParamSnapshot:
   car_name = params.get("CarName") or ""
   hyundai_camera_scc = params.get_int("HyundaiCameraSCC") > 0
@@ -116,3 +124,90 @@ def read_realtime_ui_params(params) -> RealtimeUiParamSnapshot:
 
 def read_screen_record(params) -> bool:
   return params.get_bool("ScreenRecord")
+
+
+def _param_file_path(params, key: str) -> str:
+  """미등록 키의 백킹 파일 경로. 서버 services/params.py의
+  _unregistered_param_paths와 동일한 검증 (경로 이탈 방지)."""
+  if not isinstance(key, str) or not key or not key.isascii() or any(not (c.isalnum() or c == "_") for c in key):
+    raise ValueError(f"invalid param name: {key}")
+  param_dir = os.path.abspath(params.get_param_path())
+  param_path = os.path.abspath(params.get_param_path(key))
+  if os.path.normcase(os.path.dirname(param_path)) != os.path.normcase(param_dir):
+    raise ValueError(f"invalid param path: {key}")
+  return param_path
+
+
+def _read_param_file(params, key: str) -> str | None:
+  """백킹 파일을 직접 읽는다. 없거나 읽을 수 없으면 None."""
+  try:
+    with open(_param_file_path(params, key), "rb") as f:
+      return f.read().decode("utf-8", errors="replace")
+  except Exception:
+    return None
+
+
+def read_robot_face_params(params) -> RobotFaceParamSnapshot:
+  # 등록된 키는 typed getter로 읽고, 미등록 키(재빌드 전)는 백킹 파일을
+  # 직접 읽는다. 웹 서버는 미등록 키도 파일에 직접 쓰기 때문에(services/
+  # params.py의 _put_unregistered_setting), 파일 폴백이 없으면 토글을
+  # 켜도 UI가 무반응이다. 서버의 _read_param_value와 동일한 폴백이다.
+  try:
+    enabled = params.get_bool("RobotFaceUI")
+  except Exception:
+    raw = _read_param_file(params, "RobotFaceUI")
+    enabled = raw is not None and raw.strip().lower() in ("1", "true", "on", "yes")
+  try:
+    test = int(params.get_int("RobotFaceTest"))
+  except Exception:
+    raw = _read_param_file(params, "RobotFaceTest")
+    try:
+      test = round(float(raw)) if raw is not None else 0
+    except Exception:
+      test = 0
+  return RobotFaceParamSnapshot(enabled=bool(enabled), test=min(max(test, 0), 25))
+
+
+def write_robot_face_test(params, value: int) -> None:
+  """RobotFaceTest를 쓴다 (표정 테스트 자동 복귀용). 등록된 키는
+  put_int_nonblocking으로, 미등록 키(재빌드 전)는 백킹 파일에 직접 쓴다.
+  서버의 _put_unregistered_setting과 동일한 원자적 쓰기 (임시 파일 +
+  os.replace + fsync). 실패해도 예외를 던지지 않는다."""
+  try:
+    params.put_int_nonblocking("RobotFaceTest", value)
+    return
+  except Exception:
+    pass
+  try:
+    param_path = _param_file_path(params, "RobotFaceTest")
+    param_dir = os.path.dirname(param_path)
+    # 임시 파일은 params 디렉토리 바깥에 둔다 (clear_all이 커밋 중인
+    # 임시 파일을 지우지 못하게 — 서버와 동일한 이유).
+    fd, temp_path = tempfile.mkstemp(prefix=".tmp_value_", dir=os.path.dirname(param_dir))
+    try:
+      with os.fdopen(fd, "wb") as f:
+        fd = -1
+        f.write(str(int(value)).encode("utf-8"))
+        f.flush()
+        os.fsync(f.fileno())
+      os.replace(temp_path, param_path)
+      temp_path = ""
+      try:
+        dir_fd = os.open(param_dir, os.O_RDONLY)
+      except OSError:
+        dir_fd = -1
+      if dir_fd >= 0:
+        try:
+          os.fsync(dir_fd)
+        finally:
+          os.close(dir_fd)
+    finally:
+      if fd >= 0:
+        os.close(fd)
+      if temp_path:
+        try:
+          os.unlink(temp_path)
+        except FileNotFoundError:
+          pass
+  except Exception:
+    pass

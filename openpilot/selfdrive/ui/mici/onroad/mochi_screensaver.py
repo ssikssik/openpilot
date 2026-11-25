@@ -6,7 +6,11 @@ import pyray as rl
 
 from openpilot.cereal import car, log
 from openpilot.selfdrive.ui.ui_state import ui_state
+from openpilot.system.ui.lib.application import MouseEvent, gui_app
 from openpilot.system.ui.widgets import Widget
+
+LONG_PRESS_S = 0.65
+PRESS_SLOP = 28.0
 
 
 BLACK = rl.Color(0, 0, 0, 255)
@@ -35,13 +39,55 @@ class MochiScreensaver(Widget):
     self._engage_until = 0.0
     self._disengage_until = 0.0
     self._launch_until = 0.0
+    self._active = False
+    self._press: MouseEvent | None = None
+    self._press_start = 0.0
     self._start_time = time.monotonic()
 
-  def is_active(self, alert_visible: bool) -> bool:
+  @property
+  def gestures_enabled(self) -> bool:
+    return self._enabled_param and ui_state.started
+
+  def handle_mouse_event(self, event: MouseEvent) -> None:
+    if not self.gestures_enabled:
+      return
+    if event.left_pressed:
+      if self._active:
+        self._active = False
+      else:
+        self._press = event
+        self._press_start = time.monotonic()
+    elif event.left_released or (self._press is not None and
+        math.hypot(event.pos.x - self._press.pos.x, event.pos.y - self._press.pos.y) > PRESS_SLOP):
+      self._press = None
+
+  def update_gesture(self, alert_visible: bool) -> None:
     self._frame += 1
     if self._frame == 1 or self._frame % 30 == 0:
       self._enabled_param = ui_state.params.get_bool("MochiScreensaver")
-    return bool(self._enabled_param and ui_state.started and not alert_visible)
+    if not self.gestures_enabled:
+      self._active = False
+      self._press = None
+    elif self._press is not None:
+      if alert_visible or not gui_app.last_mouse_event.left_down:
+        self._press = None
+      elif time.monotonic() - self._press_start >= LONG_PRESS_S:
+        self._active = True
+        self._press = None
+
+  def is_active(self, alert_visible: bool) -> bool:
+    return self.gestures_enabled and self._active and not alert_visible
+
+  def render_press_progress(self, rect: rl.Rectangle) -> None:
+    if self._press is None:
+      return
+    progress = min(1.0, (time.monotonic() - self._press_start) / LONG_PRESS_S)
+    radius = 70 * min(rect.width / 2160.0, rect.height / 1080.0)
+    inner = radius * 0.87
+    pos = rl.Vector2(self._press.pos.x, self._press.pos.y)
+    rl.draw_ring(pos, inner, radius, 0.0, 360.0, 48, rl.Color(255, 255, 255, 60))
+    if progress > 0.0:
+      rl.draw_ring(pos, inner, radius, -90.0, -90.0 + 360.0 * progress, 48, ENGAGE_GREEN)
 
   def _detect_state(self, now: float) -> str:
     sm = ui_state.sm
@@ -67,47 +113,49 @@ class MochiScreensaver(Widget):
     gear = str(cs.gearShifter)
     if gear == 'reverse':
       return 'reverse'
+    if gear == 'park':
+      return 'disengage'
 
     # Emergency braking / FCW
     fcw = bool(cc.hudControl.visualAlert == car.CarControl.HUDControl.VisualAlert.fcw)
-    if fcw or cs.aEgo < -3.2 or cc.actuators.accel < -3.0:
+    if fcw or (cs.vEgo > 1.0 and (cs.aEgo < -3.2 or (engaged and cc.actuators.accel < -3.0))):
       return 'emergency'
 
     # Hard deceleration
-    if cs.aEgo < -1.5 or cc.actuators.accel < -1.8:
+    if cs.vEgo > 2.0 and (cs.aEgo < -1.5 or (engaged and cc.actuators.accel < -1.8)):
       return 'decel'
 
     # Hard acceleration
-    if cs.aEgo > 1.3 or cc.actuators.accel > 1.3:
+    if cs.vEgo > 2.0 and (cs.aEgo > 1.4 or (engaged and cc.actuators.accel > 1.4)):
       return 'accel'
 
     # Lane change
     lc_state = md.meta.laneChangeState
-    if lc_state in (log.LaneChangeState.laneChangeStarting, log.LaneChangeState.laneChangeFinishing):
+    if engaged and lc_state in (log.LaneChangeState.laneChangeStarting, log.LaneChangeState.laneChangeFinishing):
       if md.meta.laneChangeDirection == log.LaneChangeDirection.left:
         return 'laneLeft'
       if md.meta.laneChangeDirection == log.LaneChangeDirection.right:
         return 'laneRight'
 
-    # Blinkers
+    # Blinkers (single side only; ignore hazard lights)
     if cs.leftBlinker and not cs.rightBlinker:
       return 'blinkLeft'
     if cs.rightBlinker and not cs.leftBlinker:
       return 'blinkRight'
 
     # Launch from stop
-    if now < self._launch_until:
+    if now < self._launch_until and gear == 'drive':
       return 'start'
-
-    # Waiting at red light / standstill
-    if standstill:
-      return 'waiting'
 
     # Engage / Disengage transition
     if now < self._engage_until and engaged:
       return 'engage'
     if now < self._disengage_until and not engaged:
       return 'disengage'
+
+    # Waiting at red light / standstill (only when engaged in Drive)
+    if engaged and gear == 'drive' and standstill:
+      return 'waiting'
 
     return 'driving' if engaged else 'disengage'
 

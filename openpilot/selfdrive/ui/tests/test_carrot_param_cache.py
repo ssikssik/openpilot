@@ -88,6 +88,8 @@ def main_layout_module(monkeypatch):
   cereal.messaging = messaging
 
   stubs = {
+    "openpilot.selfdrive.ui.widgets.carrot_web_dialog": SimpleNamespace(CarrotWebDialog=Placeholder),
+    "openpilot.selfdrive.ui.b1_badge": SimpleNamespace(draw=lambda *a, **k: None),
     "pyray": SimpleNamespace(Rectangle=Placeholder),
     "openpilot.cereal": cereal,
     "openpilot.cereal.messaging": messaging,
@@ -97,6 +99,7 @@ def main_layout_module(monkeypatch):
       SettingsLayout=Placeholder,
       PanelType=SimpleNamespace(TOGGLES=0, DEVICE=1, FIREHOSE=2),
     ),
+    "openpilot.selfdrive.ui.onroad.robot_face": SimpleNamespace(RobotFaceView=Placeholder),
     "openpilot.selfdrive.ui.onroad.augmented_road_view": SimpleNamespace(AugmentedRoadView=Placeholder),
     "openpilot.selfdrive.ui.ui_state": SimpleNamespace(
       device=SimpleNamespace(add_interactive_timeout_callback=lambda callback: None),
