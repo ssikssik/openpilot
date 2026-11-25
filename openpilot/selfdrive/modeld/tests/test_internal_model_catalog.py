@@ -14,34 +14,34 @@ def store(tmp_path, monkeypatch):
 
 def test_choice_is_independent_and_frozen_until_next_real_boot(store, monkeypatch):
   C.freeze_boot()
-  assert I.freeze_boot() == 'cheddar'
-  I.select('cd210')
+  assert I.freeze_boot() == 'cd210'
+  I.select('cheddar')
   C.select('flip-flop')
-  assert I.freeze_boot() == I.effective_id() == 'cheddar'
+  assert I.freeze_boot() == I.effective_id() == 'cd210'
   assert C.effective_id() == 'n16'
   assert model_library.status()['internal_selection']['reboot_required']
   monkeypatch.setattr(C, 'boot_id', lambda: 'boot-two')
-  assert I.freeze_boot() == 'cd210'
+  assert I.freeze_boot() == 'cheddar'
   assert C.freeze_boot() == 'flip-flop'
-  assert I.pkl_path().name == 'driving_cd210_tinygrad.pkl'
-  assert I.onnx_path().name == 'driving_cd210.onnx'
+  assert I.pkl_path().name == 'driving_tinygrad.pkl'
+  assert I.onnx_path().name == 'driving_supercombo.onnx'
   assert not model_library.status()['reboot_required']
-  I.select('cheddar')
-  assert I.effective_id() == 'cd210'  # worker recovery must keep the boot choice
+  I.select('cd210')
+  assert I.effective_id() == 'cheddar'  # worker recovery must keep the boot choice
 
 
 @pytest.mark.parametrize('value', ['unknown', '../cd210', '', None, [], {}])
 def test_invalid_choices_do_not_replace_preference(store, value):
-  I.select('cd210')
+  I.select('cheddar')
   with pytest.raises(ValueError): I.select(value)
-  assert I.selected() == 'cd210'
+  assert I.selected() == 'cheddar'
 
 
 @pytest.mark.parametrize('value', ['{bad', '{"selected": []}', '{"selected": "unknown"}'])
-def test_corrupt_preference_or_boot_falls_back_to_cheddar(store, value):
+def test_corrupt_preference_or_boot_falls_back_to_cd210(store, value):
   (store / 'internal-selection.json').write_text(value)
   (store / 'internal-boot-selection.json').write_text(value)
-  assert I.selected() == I.effective_id() == I.freeze_boot() == 'cheddar'
+  assert I.selected() == I.effective_id() == I.freeze_boot() == 'cd210'
 
 
 def test_cd210_restores_exact_pre_cheddar_bytes():

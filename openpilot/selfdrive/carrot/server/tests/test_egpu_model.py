@@ -318,4 +318,4 @@ def test_internal_choice_api_saves_pending_without_live_switch(feature, monkeypa
   result = asyncio.run(feature.api_library(Request()))
   assert result.status == 200
   assert I.selected() == key
-  assert I.effective_id() == 'cheddar'
+  assert I.effective_id() == 'cd210'
