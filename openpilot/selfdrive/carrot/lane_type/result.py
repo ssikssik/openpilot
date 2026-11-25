@@ -25,5 +25,3 @@ def classify(type_scores, color_scores, threshold=MIN_CONFIDENCE):
     result[name+'Confidence'] = confidence
   result['reason'] = 'classified' if 'unknown' not in (result['type'], result['color']) else 'low_confidence'
   return result
-
-

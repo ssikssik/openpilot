@@ -379,4 +379,3 @@ def test_hazard_is_a_remote_action_on_the_blinker_journal(tmp_path):
   writer = CommandWriter(tmp_path)
   writer.send('AA:BB:CC:DD:EE:FF', 'hazard', 1.0)
   assert [e['action'] for e in writer.events['blinker']] == ['hazard'] and not writer.events['cruise']
-
