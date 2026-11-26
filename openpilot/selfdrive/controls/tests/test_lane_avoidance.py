@@ -342,7 +342,7 @@ def test_lane_center_suppresses_abrupt_geometry_before_slew_and_recovers(side, j
     shift_center(md, side * 0.30, width_delta=-0.60)
 
   first = center_step(corrector, clock, md)
-  assert first == 0.0  # carrot-dev clears invalid geometry immediately; no stale correction tail
+  assert side * (baseline - first) == pytest.approx(0.01 * STEP)
   for _ in range(19):
     previous, first = first, center_step(corrector, clock, md)
     assert -(0.01 * STEP + 1e-12) <= side * (first - previous) <= 0.0
