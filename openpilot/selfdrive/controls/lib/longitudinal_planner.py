@@ -5,6 +5,7 @@ import numpy as np
 from openpilot.cereal import log
 import openpilot.cereal.messaging as messaging
 from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
+from opendbc.car.hyundai.values import SMOOTH_LEAD_STOP_CAR
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
@@ -426,7 +427,7 @@ class LongitudinalPlanner:
     self.output_j_target_now = self.j_desired_trajectory[0]
 
     self.smooth_lead_stop = False
-    if (getattr(self.CP, "carFingerprint", "") == "KIA_K8_HEV_1ST_GEN" and self.CP.openpilotLongitudinalControl
+    if (getattr(self.CP, "carFingerprint", "") in SMOOTH_LEAD_STOP_CAR and self.CP.openpilotLongitudinalControl
         and self.params.get_bool("SmoothLeadStop") and self.mpc.mode == "acc"
         and self.mpc.source == "lead0" and self.mpc.solution_status == 0
         and not reset_state and not force_slow_decel and not self.fcw

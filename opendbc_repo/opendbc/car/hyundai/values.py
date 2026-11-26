@@ -1065,6 +1065,9 @@ CANFD_UNSUPPORTED_LONGITUDINAL_CAR = CAR.with_flags(HyundaiFlags.CANFD_NO_RADAR_
 
 CAMERA_SCC_CAR = CAR.with_flags(HyundaiFlags.CAMERA_SCC)
 
+# SmoothLeadStop: confirmed stationary radar lead -> planned stop at the target gap (ej K8, extended to EV4)
+SMOOTH_LEAD_STOP_CAR = {CAR.KIA_K8_HEV_1ST_GEN, CAR.KIA_EV4}
+
 HYBRID_CAR = CAR.with_flags(HyundaiFlags.HYBRID)
 
 EV_CAR = CAR.with_flags(HyundaiFlags.EV)

@@ -7,7 +7,7 @@ from opendbc.car.hyundai.scalar import clip_float
 from opendbc.car import CanBusBase, DT_CTRL, structs
 from opendbc.car.carlog import carlog
 from opendbc.car.crc import CRC16_XMODEM
-from opendbc.car.hyundai.values import CAR, HyundaiFlags, HyundaiExtFlags
+from opendbc.car.hyundai.values import CAR, SMOOTH_LEAD_STOP_CAR, HyundaiFlags, HyundaiExtFlags
 from opendbc.car.hyundai.stopping import MOVING_SPEED, STOP_LOWER_BAND
 from opendbc.car.hyundai.stop_object import apply_signal_stop_object
 from openpilot.common.params import Params
@@ -54,7 +54,7 @@ def apply_canfd_stopping(values, CS, controller, accel, previous_value, jerk_u, 
     active=values["ACCMode"] == 1 and not blocked, requested=bool(values["StopReq"]), speed=speed,
     held=CS.canfdSccHoldActive, accel=accel, previous_value=previous_value,
     jerk_u=max(0.0, min(jerk_u, 5.0)), jerk_l=max(1.0, min(jerk_l, 5.0)),
-    smooth_lead_stop=smooth_lead_stop and not soft_hold and CS.CP.carFingerprint == CAR.KIA_K8_HEV_1ST_GEN,
+    smooth_lead_stop=smooth_lead_stop and not soft_hold and CS.CP.carFingerprint in SMOOTH_LEAD_STOP_CAR,
   )
   if blocked or values["ACCMode"] != 1:
     values.update(StopReq=0, aReqRaw=0.0, aReqValue=0.0, AccelLimitBandLower=0.0)

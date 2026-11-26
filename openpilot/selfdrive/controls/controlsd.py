@@ -200,7 +200,7 @@ class Controls:
     t_since_plan = (self.sm.frame - self.sm.recv_frame['longitudinalPlan']) * DT_CTRL
     accel, aTarget, jerk = self.LoC.update(
       long_active, CS, long_plan, pid_accel_limits, t_since_plan, self.sm['radarState'],
-      radar_valid=not long_plan.smoothLeadStop or self.sm.all_checks(['radarState']),
+      radar_valid=not getattr(long_plan, 'smoothLeadStop', False) or self.sm.all_checks(['radarState']),
     )
     actuators.longControlState = self.LoC.long_control_state
     actuators.accel = float(accel)
