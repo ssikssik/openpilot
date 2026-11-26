@@ -550,6 +550,10 @@ The ej menu interpolates lateral acceleration limits between low speed (at or be
 
 `ComfortBrake` defaults to 24 (2.4m/s²), with a range of 15–35. Lower values use a gentler braking reference. Safe mode applies a factor of 0.9; the running planner periodically rereads the value.
 
+`SmoothLeadStop` (smooth stop behind a lead, `ej > Braking`, default off) applies to K8 Hybrid and EV4 with openpilot longitudinal control. When radar confirms a stationary lead, it plans a deceleration curve that stops at the lead distance minus the stop distance and 0.35 m. The curve stays within 2.0 m/s² deceleration and 1.5 m/s³ jerk, lasts 0.45–8 s, and is only built at about 0.4–29 km/h (0.12–8 m/s). If the existing planner wants more than 0.25 m/s² stronger braking or a more urgent stop, the existing planner is kept.
+
+The lead must stay on the same radar track for at least 0.5 s with speed at most 0.25 m/s and acceleration at most 0.3 m/s², and no second lead may overlap within 2 m. It is not used during lane changes, signal-stop preparation, start hold, forward-collision warning or cut-in pre-deceleration, on grades above about 1.4°, outside D, at standstill, with brake or gas pressed, or when the stop distance is below 3.2 m. While active, the planned deceleration is sent directly without the PID, and the CAN-FD stop approach follows it instead of the existing -0.5 m/s² floor. The final stop request (StopReq) and hold behavior are unchanged. Without a radar lead it does nothing. This ej K8 feature is extended to EV4; physical EV4 driving has not been validated.
+
 `RobotFaceUI` replaces the normal view with a face reflecting vehicle state. `RobotFaceTest` selects live expressions at 0 and test expressions at 1–25. When face mode is disabled, a test clears after 10 seconds. Existing screen-off, touch-wake and alert-wake behavior remains effective in face mode. Safety alerts appear above the face.
 
 ## Joongyu and Carrot synchronization (2026-11-19)

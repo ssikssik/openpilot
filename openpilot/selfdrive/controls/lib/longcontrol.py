@@ -156,9 +156,10 @@ class LongControl:
     self.pid.pos_limit = accel_limits[1]
 
     smooth_lead_stop = (
-      active and radar_valid and not soft_hold_active and not CS.brakePressed and not CS.gasPressed and not CS.standstill
+      getattr(long_plan, "smoothLeadStop", False)
+      and active and radar_valid and not soft_hold_active and not CS.brakePressed and not CS.gasPressed and not CS.standstill
       and self.long_control_state in (LongCtrlState.pid, LongCtrlState.stopping)
-      and getattr(long_plan, "smoothLeadStop", False) and not long_plan.fcw
+      and not long_plan.fcw
       and 0.0 <= t_since_plan <= 0.15 and -2.0 <= long_plan.smoothLeadAccel <= 0.0
       and (lead := radarState.leadOne).status and lead.radar and abs(lead.vLead) <= 0.25
       and lead.radarTrackId == long_plan.smoothLeadTrackId and lead.dRel >= long_plan.smoothLeadMinRange
