@@ -104,3 +104,25 @@ imports; native bootstrap remains after OS initialization. Clean merge retains
 the dev launcher changes. Bash syntax plus 39 launch/import/offline installer
 tests pass. No setting changes or device operations. Both source tips must be
 ancestors before normal publication.
+
+## November 26 LFA backlog integration
+
+Start from current origin f455b613f, including the user's newer camera-offset
+and lane-centering release behavior; do not restore older versions. Joongyu
+b8d8c0467 is already contained. Merge Carrot 47b1d349c: trim only 0x12A
+after 100 consecutive deep request-ON pops, with skipped step no greater
+than the ordinary step and capped at 10. Preserve request OFF frames, other
+IDs, six slots, prefill/reuse and existing overflow policy. Reject disallowed
+DLC/relay frames before mutating the control FIFO.
+
+Resolve the adjacent SPAS conflict with current Joongyu tx/!spas_direct
+admission and trailing hazard counter unchanged. Exclude lower-priority
+carrot-wip's native Kick flag gate; move the existing accepted calculation
+only once before the FIFO and keep dev forwarding timestamp placement.
+No changes to user EV4 angle/torque/smoothing, navigation, model selection,
+DM, HUD, Orin NX, or the latest camera-offset corrector.
+
+Validation: production native hook FIFO/timer/cluster 374 pass; fresh host
+libsafety CAN-FD/piggyback 692 pass/245 base skips; controller/SPAS/EV4
+steering 149 pass. Docs/diff checks required before push. These checks do
+not establish a physical oscillation cure; no vehicle build/flash/driving.
