@@ -540,6 +540,8 @@ The minimum-distance clamp under `ej > Min-distance clamp` uses `ClampEnable` (d
 
 `ej > Lane Centering` exposes `LaneCenterEnable` (default on), `LaneCenterThreshold` (20 cm) and `LaneCenterGain` (10=1.0x). Applies only in laneless mode and retains existing final steering limits. See [operation and suppression conditions](lane-centering.md).
 
+`LaneCenterMinSpeed` (default 0 = no extra limit, 0–150 km/h) restricts correction to vehicle speeds at or above the setting. Correction enters after the start distance is exceeded for 0.3 seconds and ramps in over 0.4 seconds; when turned off or out of conditions it fades out under the slew limit. `CameraOffset` in `ej > Camera offset` (default 0 = off, -50–50 cm) adds curvature shifting the car sideways in laneless mode when only the left lane line is visible or in the leftmost lane. Using it together with lane centering is not recommended. See [details](lane-centering.md#camera-offset).
+
 Centering now suppresses abrupt midpoint changes until geometry recovers. `ej > Lane Centering > LaneAvoidanceMode` supports K8 Hybrid and KIA EV4 as a trial: 0 off, default 1 log-only, 2 experimental laneless centering attenuation. Physical EV4 validation is incomplete; defaults and saved values are not automatically changed. See [scope and conditions](lane-centering.md).
 
 ## Internal driving model selection

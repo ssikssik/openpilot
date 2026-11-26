@@ -891,6 +891,15 @@
           ]
         },
         {
+          "id": "EJ_OFFSET",
+          "ko": "카메라 오프셋",
+          "en": "Camera offset",
+          "zh": "摄像头偏移",
+          "params": [
+            "CameraOffset"
+          ]
+        },
+        {
           "id": "EJ_ENTRY",
           "ko": "커브 진입",
           "en": "Curve entry",
@@ -5865,6 +5874,23 @@
           "应用（实验）"
         ]
       }
+    },
+    {
+      "group": "ej",
+      "name": "CameraOffset",
+      "title": "카메라 오프셋 (0)cm",
+      "descr": "레인리스에서 차를 옆으로 일정량 밀어줍니다. (+)는 오른쪽, (-)는 왼쪽으로 이동합니다. 차선을 보지 않고 모델 경로 기준으로 밀어주므로 차선이 0개/1개여도 동작합니다. (왼쪽 차선만 보임) 또는 (제일 왼쪽 차선)일 때만 작동합니다. 0이면 끕니다. 중앙 유지와 함께 켜면 서로 부딪히므로 하나만 쓰는 것이 좋습니다. 저장하면 재시작 없이 바로 적용됩니다.",
+      "egroup": "EJ",
+      "etitle": "Camera offset (0)cm",
+      "edescr": "Shifts the car sideways by a fixed amount in laneless mode. (+) moves right, (-) moves left. Works with 0 or 1 lane lines since it shifts relative to the model path. Only active when only the left lane line is visible or in the leftmost lane. 0 disables it. Do not use together with lane centering — they fight each other. Applies immediately without restarting.",
+      "cgroup": "ej",
+      "ctitle": "摄像头偏移 (0)cm",
+      "cdescr": "在无车道线模式下将车辆横向移动固定距离。(+)向右，(-)向左。基于模型路径移动，因此0条或1条车道线时也能工作。仅在只看到左侧车道线或处于最左侧车道时生效。0 关闭。请勿与车道居中同时使用，两者会互相冲突。保存后立即生效，无需重启。",
+      "min": -50,
+      "max": 50,
+      "default": 0,
+      "unit": 1,
+      "display_unit": "distanceCm"
     },
     {
       "group": "ej",

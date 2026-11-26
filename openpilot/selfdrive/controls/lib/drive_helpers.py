@@ -1,4 +1,5 @@
 import math
+import os
 import time
 
 import numpy as np
@@ -590,11 +591,6 @@ class LaneCenterCorrector:
   def update(self, md, v_ego, lane_changing, *, avoidance=None):
     """모델 곡률에 더할 곡률 보정(1/m)을 계산한다. 양수 = 우회전."""
     kappa = self._update_impl(md, v_ego, lane_changing)
-    if not self._correction_active or not (self.left_active and self.right_active):
-      self._prev_kappa = 0.0
-      self._prev_time = None
-      self.last_correction = 0.0
-      return 0.0
     if avoidance is not None and kappa * avoidance.side > 0.0:
       lookahead = float(np.clip(v_ego * LANE_CENTER_LOOKAHEAD_TIME,
                                 LANE_CENTER_LOOKAHEAD_MIN, LANE_CENTER_LOOKAHEAD_MAX))
@@ -717,6 +713,253 @@ class LaneCenterCorrector:
     kappa = 2.0 * y_corr / (lookahead ** 2) * gain
     max_kappa = min(LANE_CENTER_MAX_LAT_ACCEL / max(v_ego, MIN_SPEED) ** 2,
                     LANE_CENTER_MAX_CURVATURE)
+    kappa = float(np.clip(kappa, -max_kappa, max_kappa))
+    self.last_correction = kappa
+    return kappa
+
+
+# 카메라 오프셋 보정 (CameraOffsetCorrector)
+# 클램프가 "선을 넘지 말라"는 안전장치고, 중앙 유지가 "차선 가운데에
+# 있으라"는 지속 보정이라면, 카메라 오프셋은 "모델 경로 기준으로 차를
+# 옆으로 일정량 밀어준다"는 고정 이동이다. 차선 위치를 보지 않고 모델
+# 경로 기준으로 밀어주므로 차선이 0개/1개여도 동작한다 — 1차선 도로와
+# 차선 하나만 보이는 도로에서 차가 중앙선 쪽에 붙는 문제를 잡는 것이
+# 목적이다. 대신 게이트가 있다: (왼쪽 차선만 보임) 또는 (제일 왼쪽
+# 차선)일 때만 작동한다. 게이트가 없으면 평소 주행에서도 차가 한쪽으로
+# 치우쳐 있기 때문이다. 클램프와 같은 계산 방식(pure pursuit)과 같은
+# 가드(확률 히스테리시스, 차선변경 홀드오프, 저속 페이드인, 슬루 제한)를
+# 쓴다. 클램프는 안전망으로 남겨둔다: 오프셋이 차를 오른쪽 선 쪽으로
+# 너무 밀면 클램프가 막아준다. 중앙 유지와는 방향이 부딪히므로(중앙 유지는
+# 가운데로, 오프셋은 옆으로) 함께 켜지 않는 것이 좋다.
+CAMERA_OFFSET_PROB_ON = 0.5
+CAMERA_OFFSET_PROB_OFF = 0.3
+# 먼왼쪽 차선([0])은 검출이 약해서 0.5 기준이면 2차선에서도 확률이
+# 0.46~0.54로 경계에 걸려 오판함 (2026-11-24 rlog__5__3 확인 — 1차선에서는
+# 0.02~0.03으로 명확히 꺼짐). 먼 차선 존재 판단은 0.35 기준으로 본다.
+CAMERA_OFFSET_FAR_PROB_ON = 0.35
+CAMERA_OFFSET_FAR_PROB_OFF = 0.25
+CAMERA_OFFSET_LOOKAHEAD_TIME = 1.0  # s, 룩어헤드 거리 = 속도 x 1초
+CAMERA_OFFSET_LOOKAHEAD_MIN = 5.0  # m
+CAMERA_OFFSET_LOOKAHEAD_MAX = 30.0  # m
+CAMERA_OFFSET_MAX_LAT_ACCEL = 1.5  # m/s^2, 보정이 만드는 횡가속 상한
+CAMERA_OFFSET_MAX_CURVATURE = 0.02  # 1/m, 보정 곡률 절대 상한 (저속 과조향 방지)
+CAMERA_OFFSET_DEFAULT_M = 0.0  # m, 기본값 0 = 꺼짐
+CAMERA_OFFSET_MAX_M = 0.5  # m, 카탈로그 ±50cm
+CAMERA_OFFSET_LANE_CHANGE_HOLDOFF_SEC = 2.0  # s
+CAMERA_OFFSET_SLEW_RATE = 0.01  # 1/m/s, 클램프와 동일
+CAMERA_OFFSET_GATE_ON_SEC = 1.0  # s, 게이트 조건이 이만큼 유지돼야 켜짐
+CAMERA_OFFSET_GATE_OFF_HOLD_SEC = 2.0  # s, 조건 상실 후 이만큼 유지돼야 꺼짐
+CAMERA_OFFSET_FILE_REREAD_SEC = 1.0  # s, 백킹 파일 폴백 재읽기 간격
+
+
+class CameraOffsetCorrector:
+  """레인리스 조향용 카메라 오프셋 보정기.
+
+  update()는 모델 곡률에 더할 곡률 보정(1/m)을 반환한다.
+  부호 규약 (controlsd와 동일): 양의 곡률 = 우회전(+y 방향). y는 +가 우측.
+  오프셋이 양수면 차를 오른쪽으로, 음수면 왼쪽으로 일정량 밀어준다.
+
+  게이트 판정:
+  - 왼쪽만 보임: 왼쪽 차선([1]) 활성 AND 오른쪽 차선([2]) 비활성.
+    오른쪽만 보일 때는 제외한다 — 오른쪽 끝 차선에서 오른쪽으로 밀면
+    연석 쪽으로 가기 때문이다.
+  - 제일 왼쪽: 왼쪽 차선 활성 AND 먼왼쪽 차선([0]) 비활성. 왼쪽에 차선이
+    더 있으면 [0]이 보인다. 먼 차선은 검출이 약해서 0.35/0.25 기준을 쓴다.
+  게이트 조건이 1초 유지돼야 켜지고, 상실 후 2초 유지돼야 꺼진다
+  (차선 확률 출렁임에 보정이 껐다 켜졌다 하지 않게).
+
+  모델 데이터가 불완전하거나 파라미터 읽기에 실패하면 0.0을 반환해
+  controlsd가 죽지 않는다.
+  """
+
+  def __init__(self, params):
+    self.params = params
+    self.left_active = False
+    self.right_active = False
+    self.far_left_active = False
+    self.last_correction = 0.0
+    self._lane_change_holdoff_until = 0.0
+    self._prev_kappa = 0.0
+    self._prev_time = None
+    # 게이트 상태: 조건 유지 시작 시각 / 조건 상실 시작 시각.
+    self._gate_on = False
+    self._gate_cond_since = None
+    self._gate_lost_since = None
+    # 백킹 파일 폴백 상태: 키 미등록(구 빌드) 시 typed getter가 예외를
+    # 던지므로, 한 번 실패하면 등록 안 됨으로 기억하고 파일만 본다
+    # (매 사이클 예외를 던지는 비용 방지). 파일은 1초마다 다시 읽는다.
+    # 리빌드 후에는 controlsd가 재시작되며 상태가 초기화된다.
+    self._key_registered = None
+    self._file_offset_cm = None
+    self._file_reread_until = 0.0
+
+  def _read_offset_file_cm(self):
+    """백킹 파일(/data/params/d/CameraOffset)을 직접 읽어 cm 값을 반환한다.
+
+    웹 서버는 미등록 키도 파일에 직접 쓰므로(services/params.py), 재빌드
+    전에도 이 폴백으로 오프셋 값을 읽을 수 있다. 1초마다 다시 읽는다
+    (매 사이클 파일 읽기는 금지). 없거나 읽을 수 없으면 마지막으로 읽은
+    값을 유지하고, 한 번도 못 읽었으면 None.
+    carrot_param_cache.py의 _read_param_file과 동일한 경로 검증
+    (경로 이탈 방지).
+    """
+    now = time.monotonic()
+    if now < self._file_reread_until:
+      return self._file_offset_cm
+    self._file_reread_until = now + CAMERA_OFFSET_FILE_REREAD_SEC
+    try:
+      key = "CameraOffset"
+      param_dir = os.path.abspath(self.params.get_param_path())
+      param_path = os.path.abspath(self.params.get_param_path(key))
+      if os.path.normcase(os.path.dirname(param_path)) != os.path.normcase(param_dir):
+        return self._file_offset_cm
+      with open(param_path, "rb") as f:
+        raw = f.read().decode("utf-8", errors="replace").strip()
+      self._file_offset_cm = float(raw)
+    except Exception:
+      pass
+    return self._file_offset_cm
+
+  def _read_settings(self):
+    """오프셋(m)을 읽는다. 양수 = 우측 이동.
+
+    get(..., return_default=True)을 쓴다. 키 미등록(구 빌드) 시
+    UnknownKeyName이 던져지므로, 그때는 백킹 파일을 직접 읽는다.
+    파일이 없거나 읽기에 실패하면 0.0 (꺼짐). ±50cm로 자른다.
+    """
+    raw = None
+    if self._key_registered is not False:
+      try:
+        raw = self.params.get("CameraOffset", return_default=True)
+        self._key_registered = True
+      except Exception:
+        self._key_registered = False
+    if self._key_registered is False:
+      raw = self._read_offset_file_cm()
+    if raw is None:
+      return CAMERA_OFFSET_DEFAULT_M
+    try:
+      offset_m = float(raw) * 0.01
+    except (TypeError, ValueError):
+      return CAMERA_OFFSET_DEFAULT_M
+    if not math.isfinite(offset_m):
+      return CAMERA_OFFSET_DEFAULT_M
+    return float(np.clip(offset_m, -CAMERA_OFFSET_MAX_M, CAMERA_OFFSET_MAX_M))
+
+  def update(self, md, v_ego, lane_changing):
+    """모델 곡률에 더할 곡률 보정(1/m)을 계산한다. 양수 = 우회전."""
+    kappa = self._update_impl(md, v_ego, lane_changing)
+    kappa = self._slew_limit(kappa)
+    self.last_correction = kappa
+    return kappa
+
+  def _slew_limit(self, kappa):
+    """보정 곡률의 변화율을 제한한다 (급조향 방지). 클램프와 동일."""
+    now = time.monotonic()
+    if self._prev_time is None or (now - self._prev_time) > 0.5:
+      self._prev_time = now
+      self._prev_kappa = 0.0
+      return 0.0
+    dt = min(max(now - self._prev_time, 0.0), 0.1)
+    self._prev_time = now
+    max_delta = CAMERA_OFFSET_SLEW_RATE * dt
+    self._prev_kappa += float(np.clip(kappa - self._prev_kappa, -max_delta, max_delta))
+    return self._prev_kappa
+
+  def _reset_gate(self):
+    self._gate_on = False
+    self._gate_cond_since = None
+    self._gate_lost_since = None
+
+  def _update_impl(self, md, v_ego, lane_changing):
+    """update()의 본체. 보정 곡률만 계산한다."""
+    self.last_correction = 0.0
+    offset_m = self._read_settings()
+    if offset_m == 0.0:
+      self.left_active = False
+      self.right_active = False
+      self.far_left_active = False
+      self._reset_gate()
+      return 0.0
+    # 차선변경 중에는 선을 넘는 것이 의도된 동작이므로 보정하지 않는다.
+    # 종료 후 홀드오프(2초) 동안도 보정하지 않는다 (클램프와 동일 이유).
+    now = time.monotonic()
+    if lane_changing:
+      self.left_active = False
+      self.right_active = False
+      self.far_left_active = False
+      self._reset_gate()
+      self._lane_change_holdoff_until = now + CAMERA_OFFSET_LANE_CHANGE_HOLDOFF_SEC
+      return 0.0
+    if now < self._lane_change_holdoff_until:
+      self._reset_gate()
+      return 0.0
+    # 저속 페이드인: 5km/h 이하 0, 10km/h 이상 100% (클램프와 동일 구간)
+    strength = float(np.interp(v_ego * 3.6, [5.0, 10.0], [0.0, 1.0]))
+    if strength <= 0.0:
+      self._reset_gate()
+      return 0.0
+    try:
+      return self._compute(md, v_ego, offset_m, strength)
+    except Exception:
+      self._reset_gate()
+      return 0.0
+
+  def _compute(self, md, v_ego, offset_m, strength):
+    # 오프셋 보정은 차선 위치가 아니라 확률만 본다. 확률 4개가 없으면
+    # 게이트를 판단할 수 없으므로 보정하지 않는다.
+    if len(md.laneLineProbs) < 4:
+      return 0.0
+
+    # 확률 히스테리시스: 인접 차선은 0.5 켜짐 / 0.3 꺼짐 (클램프와 동일),
+    # 먼 차선은 검출이 약해서 0.35 켜짐 / 0.25 꺼짐.
+    l_prob = float(md.laneLineProbs[1])
+    r_prob = float(md.laneLineProbs[2])
+    f_prob = float(md.laneLineProbs[0])
+    if l_prob > CAMERA_OFFSET_PROB_ON:
+      self.left_active = True
+    elif l_prob < CAMERA_OFFSET_PROB_OFF:
+      self.left_active = False
+    if r_prob > CAMERA_OFFSET_PROB_ON:
+      self.right_active = True
+    elif r_prob < CAMERA_OFFSET_PROB_OFF:
+      self.right_active = False
+    if f_prob > CAMERA_OFFSET_FAR_PROB_ON:
+      self.far_left_active = True
+    elif f_prob < CAMERA_OFFSET_FAR_PROB_OFF:
+      self.far_left_active = False
+
+    # 게이트 조건: (왼쪽 차선만 보임) 또는 (제일 왼쪽 차선).
+    left_only = self.left_active and not self.right_active
+    leftmost = self.left_active and not self.far_left_active
+    cond = left_only or leftmost
+    # 디바운스: 조건이 1초 유지돼야 켜지고, 상실 후 2초 유지돼야 꺼진다.
+    # 차선 확률이 출렁여도 보정이 껐다 켜졌다 하지 않게 한다.
+    now = time.monotonic()
+    if cond:
+      if self._gate_cond_since is None:
+        self._gate_cond_since = now
+      self._gate_lost_since = None
+      if now - self._gate_cond_since >= CAMERA_OFFSET_GATE_ON_SEC:
+        self._gate_on = True
+    else:
+      if self._gate_lost_since is None:
+        self._gate_lost_since = now
+      self._gate_cond_since = None
+      if now - self._gate_lost_since >= CAMERA_OFFSET_GATE_OFF_HOLD_SEC:
+        self._gate_on = False
+    if not self._gate_on:
+      return 0.0
+
+    # 룩어헤드 거리: 1초 앞 지점 (5~30m). 클램프·중앙 유지와 동일.
+    lookahead = float(np.clip(v_ego * CAMERA_OFFSET_LOOKAHEAD_TIME,
+                              CAMERA_OFFSET_LOOKAHEAD_MIN, CAMERA_OFFSET_LOOKAHEAD_MAX))
+    # 곡률 변환 (pure pursuit): κ = 2·offset / L². 양의 오프셋(우측 이동)은
+    # 양의 곡률(우회전)이다. L = v×1초이므로 보정이 만드는 횡가속은
+    # 2·offset으로 속도와 무관하다 (30cm → 0.6 m/s²). 상한은 클램프와 동일.
+    kappa = 2.0 * offset_m * strength / (lookahead ** 2)
+    max_kappa = min(CAMERA_OFFSET_MAX_LAT_ACCEL / max(v_ego, MIN_SPEED) ** 2,
+                    CAMERA_OFFSET_MAX_CURVATURE)
     kappa = float(np.clip(kappa, -max_kappa, max_kappa))
     self.last_correction = kappa
     return kappa

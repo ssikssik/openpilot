@@ -437,6 +437,8 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"LatEntryLead", {PERSISTENT, INT, "0"}},
     {"LaneAvoidanceMode", {PERSISTENT, INT, "1"}},
 
+    {"CameraOffset", {PERSISTENT, INT, "0"}},
+
     {"LateralTorqueCustom", {PERSISTENT, INT, "0"}},
     {"LateralTorqueAccelFactor", {PERSISTENT, INT, "2500"}},
     {"LateralTorqueFriction", {PERSISTENT, INT, "100"}},

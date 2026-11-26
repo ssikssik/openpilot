@@ -19,7 +19,7 @@ from opendbc.car.hyundai.stop_object import signal_stop_object_requested
 from opendbc.car.volkswagen.values import MEB_CURVATURE_PID_KP, MEB_CURVATURE_PID_KI, MEB_CURVATURE_PID_KF, MEB_CURVATURE_MAX
 
 from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
-from openpilot.selfdrive.controls.lib.drive_helpers import ClampSteerCorrector, EntryLeadCorrector, LaneCenterCorrector, clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb
+from openpilot.selfdrive.controls.lib.drive_helpers import CameraOffsetCorrector, ClampSteerCorrector, EntryLeadCorrector, LaneCenterCorrector, clip_curvature, get_lag_adjusted_curvature, is_volkswagen_meb
 from openpilot.selfdrive.controls.lib.latcontrol import LatControl, MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_pid import LatControlPID
 from openpilot.selfdrive.controls.lib.latcontrol_angle import LatControlAngle, STEER_ANGLE_SATURATION_THRESHOLD
@@ -112,6 +112,10 @@ class Controls:
     self.lane_center_corrector = LaneCenterCorrector(self.params)
     # 커브 진입 동안만 미리 꺾는 선행 보정 (LatEntryLead, 기본 0=꺼짐)
     self.entry_lead_corrector = EntryLeadCorrector(self.params)
+    # 레인리스 조향용 카메라 오프셋 보정기. 모델 경로 기준으로 차를 옆으로
+    # 일정량 밀어준다. 차선을 보지 않으므로 차선이 0개/1개여도 동작하고,
+    # (왼쪽 차선만 보임) 또는 (제일 왼쪽 차선)일 때만 작동한다.
+    self.camera_offset_corrector = CameraOffsetCorrector(self.params)
 
   def update(self):
     self.sm.update(15)
@@ -256,8 +260,9 @@ class Controls:
           and math.isfinite(lane_avoidance.approachStart)):
         avoidance = lane_avoidance
       center_kappa = self.lane_center_corrector.update(model_v2, CS.vEgo, lane_changing, avoidance=avoidance)
+      offset_kappa = self.camera_offset_corrector.update(model_v2, CS.vEgo, lane_changing)
       new_desired_curvature = smooth_value(
-        model_v2.action.desiredCurvature + clamp_kappa + center_kappa, self.desired_curvature, 0.1)
+        model_v2.action.desiredCurvature + clamp_kappa + center_kappa + offset_kappa, self.desired_curvature, 0.1)
 
     self.desired_curvature, curvature_limited = clip_curvature(CS.vEgo, self.desired_curvature, new_desired_curvature, lp.roll)
 
