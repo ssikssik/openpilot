@@ -56,9 +56,9 @@ def test_real_hooks_authorize_exact_compatible_bus_after_ack(flags, bus):
   assert d.tx(0x16A, frame(0x16A, 11, "left", bus).dat)
 
 
-# joongyu01 fork: HDA2 camera SCC on bus 0 (16 | 8 ...) and HDA1 on bus 0 are left out - HDA1 camera-SCC
-# longitudinal sends these ids under the shape checks in safety_hyundai_canfd.h, other HDA1 setups refuse them
-# (test_hda1_kick_path_shape_checks_without_spas / test_hda1_without_camera_scc_long_refuses_kick_path below)
+# joongyu01 fork: HDA2 camera SCC on bus 0 (16 | 8 ...) and HDA1 on bus 0 (0, 4, 8, 2048; since 732117e8) are left
+# out - without CANFD_SPAS_BLINKERS the runtime menu paths (CanfdBlinkerKick/MenuTest) send these ids under the shape
+# checks in safety_hyundai_canfd.h instead (test_hda1_kick_path_shape_checks_without_spas below)
 @pytest.mark.parametrize("flags", [16, 16 | 4])
 def test_disabled_never_admits_uds_or_spas(flags):
   bus = 1 if flags & 16 and not flags & 8 else 0
@@ -71,24 +71,10 @@ def test_disabled_never_admits_uds_or_spas(flags):
 
 
 # 732117e8 (11-17): HDA1 sends the parking ECU pause and SPAS1/SPAS2 like HDA2 (Kick, menu test, remote blinker, hazard).
-# carrot-dev keeps native HDA1 SPAS on the camera-SCC longitudinal harness only (4773a3ad): any other HDA1
-# configuration refuses 0x7B1 and SPAS1/SPAS2 before the Kick path's content checks run.
+# Without the SPAS opt-in these ids take the Kick path's content checks: 0x7B1 only extended/default session,
+# communication disable without reply (PATCH_DISABLE) and tester present; the SPAS module's own forms that ask for a
+# reply (DISABLE) or switch communication back on (ENABLE) stay refused; SPAS frames keep their shape check.
 @pytest.mark.parametrize("flags", [0, 4, 8, 2048])
-def test_hda1_without_camera_scc_long_refuses_kick_path(flags):
-  from opendbc.car.hyundai.spas import PATCH_DISABLE
-  d = Device(flags, 0)
-  d.stock()
-  for data in (EXTENDED, PATCH_DISABLE, PRESENT, DEFAULT, DISABLE, ENABLE):
-    assert not d.tx(APRK, data)
-  for a in SPAS:
-    assert not d.tx(a, frame(a, 0, "left", 0).dat)
-
-
-# On the camera-SCC longitudinal harness these ids take the Kick path's content checks: 0x7B1 only
-# extended/default session, communication disable without reply (PATCH_DISABLE) and tester present; the SPAS
-# module's own forms that ask for a reply (DISABLE) or switch communication back on (ENABLE) stay refused; SPAS
-# frames keep their shape check.
-@pytest.mark.parametrize("flags", [8 | 4, 8 | 4 | 2048])
 def test_hda1_kick_path_shape_checks_without_spas(flags):
   from opendbc.car.hyundai.spas import PATCH_DISABLE
   d = Device(flags, 0)

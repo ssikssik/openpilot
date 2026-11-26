@@ -713,13 +713,6 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *to_send_const) {
     }
   }
 
-  // Keep native HDA1 SPAS on the camera-SCC longitudinal harness.
-  // Reject other HDA1 configurations before queuing piggyback frames.
-  if (!hyundai_canfd_hda2 && !(hyundai_camera_scc && hyundai_longitudinal) &&
-      ((addr == 0x7B1) || (addr == 0x165) || (addr == 0x16A))) {
-    return false;
-  }
-
   if (addr == 0x10B) {
     bool accepted = hyundai_alt2_set_request(to_send, microsecond_timer_get());
     if (accepted) {

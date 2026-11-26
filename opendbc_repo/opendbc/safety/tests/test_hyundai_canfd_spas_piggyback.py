@@ -214,11 +214,3 @@ def test_hda1_allows_the_parking_ecu_and_spas_ids():
   assert d.tx(SPAS2, 10, "hazards") == (True, True)  # piggyback as before, now also allowed by the list
   direct = Device(4 | 8 | 1024)
   assert direct.tx(SPAS2, 10, "left") == (True, False)  # KickMode 2/3: queued directly
-
-
-def test_hda1_without_camera_scc_long_does_not_queue_native_spas():
-  for param in (0, 4, 8, 8 | 1024):
-    d = Device(param)
-    d.stock(SPAS2, 1)
-    assert d.tx(SPAS2, 10, "hazards") == (False, False)
-    assert d.stock(SPAS2, 2) is None
