@@ -307,8 +307,14 @@ class CarController(CarControllerBase):
   def steer_angle_max(self, v_ego_raw):
     return steering_angle_max(self.CP.carFingerprint, v_ego_raw, self.params.ANGLE_LIMITS.STEER_ANGLE_MAX)
 
-  def steer_angle_max_torque(self, v_ego_raw):
-    return steering_angle_max_torque(self.CP.carFingerprint, v_ego_raw, self.angle_max_torque)
+  def steer_angle_max_torque(self, v_ego_raw, angle_error_deg=0.0, steering_pressed=False):
+    return steering_angle_max_torque(
+      self.CP.carFingerprint,
+      v_ego_raw,
+      self.angle_max_torque,
+      angle_error_deg=angle_error_deg,
+      steering_pressed=steering_pressed,
+    )
 
   def steer_angle_smooth_tau(self, v_ego_raw):
     return steering_angle_smooth_tau(self.CP.carFingerprint, v_ego_raw)
@@ -907,7 +913,11 @@ class CarController(CarControllerBase):
     if angle_control:
       apply_steer_req = CC.latActive
 
-    angle_torque_cap = self.steer_angle_max_torque(CS.out.vEgoRaw)
+    angle_torque_cap = self.steer_angle_max_torque(
+      CS.out.vEgoRaw,
+      angle_error_deg=apply_angle - CS.out.steeringAngleDeg,
+      steering_pressed=CS.out.steeringPressed,
+    )
 
     steering_pressed_rising = CS.out.steeringPressed and not self.steering_pressed_prev
     if steering_pressed_rising:

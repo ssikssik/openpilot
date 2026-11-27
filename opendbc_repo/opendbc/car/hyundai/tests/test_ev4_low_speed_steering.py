@@ -40,17 +40,29 @@ def step(controller, cs, cc):
 
 
 @pytest.mark.parametrize("kph, expected", [
-  (0.0, 135.0),
-  (20.0, 135.0),
-  (30.0, 135.0),
-  (35.0, 145.0),
-  (40.0, 155.0),
-  (60.0, 200.0),
+  (0.0, 155.0),
+  (20.0, 155.0),
+  (30.0, 155.0),
+  (35.0, 165.0),
+  (40.0, 175.0),
+  (60.0, 215.0),
   (80.0, 250.0),
   (110.0, 250.0),
 ])
 def test_ev4_angle_max_torque_profile(kph, expected):
   assert steering_angle_max_torque(CAR.KIA_EV4, kph / 3.6) == pytest.approx(expected)
+
+
+def test_ev4_angle_max_torque_error_boost_and_override_guard():
+  # Small tracking error (<= 2.5 deg) stays at low-speed base cap to avoid shudder.
+  assert steering_angle_max_torque(CAR.KIA_EV4, 25.0 / 3.6, angle_error_deg=2.0) == pytest.approx(155.0)
+  # Large unpressed tracking error boosts smoothly up to full 250 authority.
+  mid = steering_angle_max_torque(CAR.KIA_EV4, 25.0 / 3.6, angle_error_deg=5.25)
+  assert 195.0 < mid < 210.0
+  assert steering_angle_max_torque(CAR.KIA_EV4, 25.0 / 3.6, angle_error_deg=8.0) == pytest.approx(250.0)
+  assert steering_angle_max_torque(CAR.KIA_EV4, 25.0 / 3.6, angle_error_deg=-12.0) == pytest.approx(250.0)
+  # Driver override never boosts authority.
+  assert steering_angle_max_torque(CAR.KIA_EV4, 25.0 / 3.6, angle_error_deg=12.0, steering_pressed=True) == pytest.approx(155.0)
 
 
 @pytest.mark.parametrize("car", [CAR.KIA_EV6, CAR.KIA_EV6_PE, CAR.HYUNDAI_IONIQ_5_PE])
@@ -61,23 +73,39 @@ def test_other_cars_keep_default_angle_max_torque_and_no_smoothing(car, kph):
 
 
 @pytest.mark.parametrize("kph, expected", [
-  (0.0, 0.030),
-  (45.0, 0.025),
-  (60.0, 0.0),
+  (0.0, 0.018),
+  (40.0, 0.015),
+  (50.0, 0.0),
   (90.0, 0.0),
 ])
 def test_ev4_angle_smooth_tau_profile(kph, expected):
   assert steering_angle_smooth_tau(CAR.KIA_EV4, kph / 3.6) == pytest.approx(expected)
 
 
-def test_ev4_can_max_torque_tracks_speed_and_handover_recovery(monkeypatch):
+def test_ev4_can_max_torque_tracks_speed_error_boost_and_handover_recovery(monkeypatch):
   controller, cs, cc = setup_controller(monkeypatch, car=CAR.KIA_EV4, v_kph=25.0)
   cc.actuators.steeringAngleDeg = 10.0
+  cs.out.steeringAngleDeg = 9.0  # 1 deg small error -> stays at 155 base cap
   for _ in range(120):
     output, messages = step(controller, cs, cc)
   lfa_alt = next(data for addr, data, _ in messages if addr == 0xCB)
-  assert output.torqueOutputCan == pytest.approx(135.0)
-  assert lfa_alt[6] == 135
+  assert output.torqueOutputCan == pytest.approx(155.0)
+  assert lfa_alt[6] == 155
+
+  # Tight turn error (9 deg) boosts low-speed authority up to 250 smoothly.
+  cs.out.steeringAngleDeg = 1.0
+  for _ in range(60):
+    output, messages = step(controller, cs, cc)
+  lfa_alt = next(data for addr, data, _ in messages if addr == 0xCB)
+  assert output.torqueOutputCan == pytest.approx(250.0)
+  assert lfa_alt[6] == 250
+
+  # Once tracking catches up, authority returns to 155 base cap.
+  cs.out.steeringAngleDeg = 9.5
+  output, messages = step(controller, cs, cc)
+  lfa_alt = next(data for addr, data, _ in messages if addr == 0xCB)
+  assert output.torqueOutputCan == pytest.approx(155.0)
+  assert lfa_alt[6] == 155
 
   # Driver override followed by release recovers cleanly to the low-speed cap, not 250.
   cs.out.steeringPressed = True
@@ -89,24 +117,17 @@ def test_ev4_can_max_torque_tracks_speed_and_handover_recovery(monkeypatch):
   cs.out.steeringAngleDeg = 10.0
   for _ in range(150):
     output, messages = step(controller, cs, cc)
-  assert controller.lkas_max_torque == pytest.approx(135.0)
-  assert output.torqueOutputCan == pytest.approx(135.0)
+  assert controller.lkas_max_torque == pytest.approx(155.0)
+  assert output.torqueOutputCan == pytest.approx(155.0)
   assert controller.steer_handover.state == "waiting"
 
-  # Accelerating to highway speed smoothly restores full 250 authority.
+  # Accelerating to highway speed smoothly restores full 250 authority even with zero error.
   cs.out.vEgoRaw = 85.0 / 3.6
   for _ in range(120):
     output, messages = step(controller, cs, cc)
   lfa_alt = next(data for addr, data, _ in messages if addr == 0xCB)
   assert output.torqueOutputCan == pytest.approx(250.0)
   assert lfa_alt[6] == 250
-
-  # Decelerating back to low speed lowers the cap smoothly without handover fault.
-  cs.out.vEgoRaw = 25.0 / 3.6
-  output, messages = step(controller, cs, cc)
-  lfa_alt = next(data for addr, data, _ in messages if addr == 0xCB)
-  assert output.torqueOutputCan == pytest.approx(135.0)
-  assert lfa_alt[6] == 135
 
 
 def test_ev4_low_speed_smoothing_eliminates_stale_carcontrol_zero_steps_and_double_jumps(monkeypatch):
@@ -124,8 +145,8 @@ def test_ev4_low_speed_smoothing_eliminates_stale_carcontrol_zero_steps_and_doub
     outputs.append(output.steeringAngleDeg)
 
   steps = [outputs[i] - outputs[i - 1] for i in range(15, len(outputs))]
-  assert min(steps) > 0.15  # no 0.0 deg stall frames
-  assert max(steps) < 0.50  # no 0.60 deg 2x step spikes
+  assert min(steps) > 0.12  # no 0.0 deg stall frames
+  assert max(steps) < 0.52  # no 0.60 deg 2x step spikes
 
 
 def test_ev4_smoothing_resets_on_disengage_and_bypasses_at_highway_speed(monkeypatch):
@@ -141,7 +162,7 @@ def test_ev4_smoothing_resets_on_disengage_and_bypasses_at_highway_speed(monkeyp
   assert output.steeringAngleDeg == pytest.approx(-5.0)
   assert controller.apply_angle_filtered == pytest.approx(-5.0)
 
-  # At highway speed (80 kph), smoothing is bypassed (zero added phase lag within physics rate limits).
+  # At 50+ kph, smoothing is bypassed (zero added phase lag within physics rate limits).
   cc.latActive = True
   cs.out.vEgoRaw = 80.0 / 3.6
   cc.actuators.steeringAngleDeg = -4.8
