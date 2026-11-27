@@ -575,3 +575,33 @@ def test_carrot_serv_vehicle_navi_atc_gating_and_priority():
   serv._apply_vehicle_navi_tbt(cs)
   assert serv.szTBTMainText == ""
   assert serv.vehicle_navi_tbt_active is False
+
+
+def test_carrot_planner_atc_active_accepts_stock_navi_tbt():
+  import time
+  class SM(dict):
+    alive = {"carrotMan": True}
+    valid = {"carrotMan": True}
+    seen = {"carrotMan": True}
+    recv_time = {"carrotMan": time.monotonic()}
+  planner = CarrotPlanner.__new__(CarrotPlanner)
+  planner.signal_detection_suspended = False
+  planner.trafficState_carrot = 0
+  planner.carrot_stay_stop = False
+  planner.soft_hold_active = 0
+  planner.xState = 0
+  planner.traffic_starting_count = 0
+  sm = SM(
+    carState=SimpleNamespace(leftBlinker=False),
+    carrotMan=SimpleNamespace(
+      activeCarrot=0,
+      xTurnInfo=1,
+      xDistToTurn=60,
+      atcType="atc left",
+      trafficState=0,
+      desiredSpeed=45,
+    ),
+  )
+  v_cruise, atc_active = planner._update_carrot_man(sm, 40.0, 60.0)
+  assert v_cruise == 45.0
+  assert atc_active is True

@@ -268,12 +268,13 @@ class CarrotServ:
       lang_val = None
     if isinstance(lang_val, bytes):
       try:
-        lang_val = lang_val
+        lang_val = lang_val.decode("utf-8", errors="ignore")
       except Exception:
         lang_val = None
-    if lang_val == "main_ko":
+    lang_str = str(lang_val).strip() if lang_val is not None else ""
+    if lang_str in ("ko", "main_ko"):
       self.lang = "ko"
-    elif lang_val == "main_zh-CHS":
+    elif lang_str in ("zh", "zh-CHS", "main_zh-CHS"):
       self.lang = "zh"
     else:
       self.lang = "en"
