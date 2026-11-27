@@ -1528,7 +1528,7 @@ class CarState(CarStateBase):
       turn_info = 6
     elif display_type == 0x48:  # U-turn (Carrot xTurnInfo=7: straight + stop-speed, no left-turn steering)
       turn_info = 7
-    elif display_type == 0x72:  # destination approach (Carrot xTurnInfo=8: arrive)
+    elif display_type in (0x70, 0x72):  # destination approach (Carrot xTurnInfo=8: arrive)
       turn_info = 8
     else:
       return None

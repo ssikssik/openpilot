@@ -805,6 +805,7 @@ class DesireHelper:
           turn_desire_state=self.turn_desire_state,
           atc_type=self.atc_type,
           old_type=self.maneuver_type,
+          atc_dist=float(getattr(carrotMan, "xDistToTurn", 999.0)),
         )
       else:
         new_type = "none"
@@ -832,8 +833,18 @@ class DesireHelper:
         new_type = "none"
 
       # switching rules
-      if self.maneuver_type == "lane_change" and new_type == "turn" and self.lane_change_state not in (
-        LaneChangeState.preLaneChange, LaneChangeState.laneChangeStarting
+      # After an ATC lane change has already crossed into the turn lane, residual lane_change_prob (> 0.02)
+      # can keep laneChangeStarting latched right through the intersection. Allow handing off to turn once
+      # ATC switches to turn left/right and the lane-line blend has finished.
+      atc_lc_handoff_to_turn = (
+        self.lane_change_state == LaneChangeState.laneChangeStarting
+        and self.atc_type in ("turn left", "turn right")
+        and self.lane_change_ll_prob < 0.01
+        and (self.crossing.since >= 0.0 or self.lane_change_timer >= 2.0)
+      )
+      if self.maneuver_type == "lane_change" and new_type == "turn" and (
+        self.lane_change_state not in (LaneChangeState.preLaneChange, LaneChangeState.laneChangeStarting)
+        or atc_lc_handoff_to_turn
       ):
         self.maneuver_type = "turn"
         self.lane_change_state = LaneChangeState.off
