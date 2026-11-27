@@ -126,3 +126,21 @@ Validation: production native hook FIFO/timer/cluster 374 pass; fresh host
 libsafety CAN-FD/piggyback 692 pass/245 base skips; controller/SPAS/EV4
 steering 149 pass. Docs/diff checks required before push. These checks do
 not establish a physical oscillation cure; no vehicle build/flash/driving.
+
+## November 27 CarrotAssist and Mapbox integration
+
+Start from current origin dd3bb4a66; Joongyu b8d8c0467 is already contained.
+Merge Carrot 5914f0a45 (including 993b7b2c3). Add localized Mapbox usage-charge
+notices to search/key setup. Accept assistant consecutive-request repair and
+one-shot fresh speed reads, retaining device permission, duplicate/rate/expiry
+and blindspot checks. Reads do not occupy the driving-request slot.
+
+Only generated tools bundle/asset manifest conflicted: regenerate from merged
+dev sources instead of choosing a complete side. Retain all existing dev
+model-selection, HUD, settings, vNavi/EV4, Orin NX and Joongyu control code.
+No lower-priority control implementation replaces the current owners.
+
+Validation: assistant relay/MCP 35 pass; device permission/HTTP 31 pass; web
+assistant/navigation 16 pass. Web production assets regenerated successfully;
+docs/diff checks required before push. Tests use local mocks and loopback only,
+with no vehicle connection, settings changes, CAN transmission or deployment.
