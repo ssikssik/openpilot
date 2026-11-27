@@ -348,7 +348,8 @@
                 "LatSmoothSec",
                 "LatSuspendAngleDeg",
                 "CustomSR",
-                "SteerRatioRate"
+                "SteerRatioRate",
+                "SteerRatioHighSpeedRate"
               ]
             },
             {
@@ -1505,6 +1506,23 @@
       "cdescr": "实时转向比应用比例 (需要 CustomSR 设置为 0)",
       "min": 30,
       "max": 200,
+      "default": 100,
+      "unit": 1,
+      "display_unit": "percent"
+    },
+    {
+      "group": "조향튜닝",
+      "name": "SteerRatioHighSpeedRate",
+      "title": "고속 SR 배율(100)",
+      "descr": "50km/h 이상부터 100km/h까지 선형적으로 SR 배율 적용\n(100: 변화 없음, 예: 90 → 100km/h 이상에서 0.9배)",
+      "egroup": "LAT",
+      "etitle": "High-Speed SR Rate(100)",
+      "edescr": "Linearly scales SR from 100% at 50 km/h to this rate at 100+ km/h (100: off)",
+      "cgroup": "转向",
+      "ctitle": "高速转向比倍率(100)",
+      "cdescr": "50km/h起线性缩放转向比至100km/h及以上达到设定倍率 (100: 关闭)",
+      "min": 50,
+      "max": 150,
       "default": 100,
       "unit": 1,
       "display_unit": "percent"
