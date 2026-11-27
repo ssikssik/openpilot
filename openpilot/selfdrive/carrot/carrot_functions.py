@@ -472,7 +472,7 @@ class CarrotPlanner:
 
       self.activeCarrot = carrot_man.activeCarrot
       self.xDistToTurn = carrot_man.xDistToTurn
-      atc_active = self.activeCarrot > 1 and 0 < self.xDistToTurn < 100
+      atc_active = (self.activeCarrot > 1 or int(getattr(carrot_man, "xTurnInfo", -1)) > 0) and 0 < self.xDistToTurn < 100
       self.atcType = carrot_man.atcType
 
       v_cruise_kph = min(v_cruise_kph, carrot_man.desiredSpeed)

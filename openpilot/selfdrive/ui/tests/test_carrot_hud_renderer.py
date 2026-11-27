@@ -708,3 +708,47 @@ def test_conditional_curve_ramp_and_junction_hud_draws(
   else:
     badge_draw = next(args for args in draws if args[0] == expected_badge)
     assert badge_draw[1:5] == (390, 465, 24, module.COLORS.VEHICLE_NAVI_LAVENDER)
+
+
+def test_turn_info_hud_renders_compact_stock_navi_atc_without_goal_eta(hud_module, monkeypatch):
+  module, fake_ui_state = hud_module
+  renderer = object.__new__(module.HudRenderer)
+  renderer._font_display = object()
+  renderer._font_bold = object()
+  renderer._ic_turn_l = object()
+  renderer._draw_texture_rect = lambda *args, **kwargs: None
+  boxes = []
+  renderer._draw_round_box = lambda *args, **kwargs: boxes.append(args[:4])
+  texts = []
+  monkeypatch.setattr(module, "draw_text_ui_style", lambda *args, **kwargs: texts.append(args[0]))
+
+  fake_ui_state.is_metric = True
+  fake_ui_state.sm = {
+    "carrotMan": SimpleNamespace(
+      activeCarrot=0,
+      xTurnInfo=1,
+      xDistToTurn=1232,
+      nGoPosDist=0,
+      nGoPosTime=0,
+      atcType="turn left prepare",
+      szSdiDescr="",
+      szPosRoadName="",
+      szTBTMainText="좌회전",
+    ),
+  }
+
+  renderer._draw_turn_info_hud(module.rl.Rectangle(0, 0, 2160, 1080))
+  assert boxes[0][2] == 360  # compact card width
+  assert len(boxes) == 2     # outer card + green ATC highlight box
+  assert "좌회전" in texts
+  assert "1.2 km" in texts
+  assert "ATC 준비" in texts
+
+  # Inactive TBT without goal distance stays hidden
+  boxes.clear()
+  texts.clear()
+  fake_ui_state.sm["carrotMan"].xTurnInfo = -1
+  fake_ui_state.sm["carrotMan"].atcType = "none"
+  renderer._draw_turn_info_hud(module.rl.Rectangle(0, 0, 2160, 1080))
+  assert boxes == []
+  assert texts == []

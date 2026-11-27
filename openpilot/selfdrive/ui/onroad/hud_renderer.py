@@ -1344,17 +1344,21 @@ class HudRenderer(Widget):
     info = self._get_turn_info_hud_data()
     n_go_pos_dist = info["n_go_pos_dist"]
     n_go_pos_time = info["n_go_pos_time"]
+    x_turn_info = info["x_turn_info"]
+    x_dist_to_turn = info["x_dist_to_turn"]
+    has_goal = n_go_pos_dist > 0 and n_go_pos_time > 0
 
-    if not (n_go_pos_dist > 0 and n_go_pos_time > 0):
+    if not has_goal and x_turn_info <= 0:
       return
 
-    tbt_x = int(rect.x + rect.width - 800)
+    box_w = 790 if has_goal else 360
+    tbt_x = int(rect.x + rect.width - box_w - 10)
     tbt_y = int(rect.y + rect.height - 250)
 
     self._draw_round_box(
       tbt_x,
       tbt_y - 60,
-      790,
+      box_w,
       300,
       rl.Color(0, 0, 0, 120),
       line_color=rl.WHITE,
@@ -1369,15 +1373,14 @@ class HudRenderer(Widget):
         font=self._font_bold, border_width=2.0, shadow_offset=4.0,
       )
 
-    x_turn_info = info["x_turn_info"]
-    x_dist_to_turn = info["x_dist_to_turn"]
-
     if x_turn_info > 0:
       bx = tbt_x + 100
       by = tbt_y + 85
+      atc_type = info["atc_type"]
+      atc_active_type = bool(atc_type and atc_type not in ("none", "none prepare"))
 
-      if info["atc_type"]:
-        fill_color = rl.Color(0, 255, 0, 100) if "prepare" in info["atc_type"] else rl.GREEN
+      if atc_active_type:
+        fill_color = rl.Color(0, 255, 0, 100) if "prepare" in atc_type else rl.GREEN
         self._draw_round_box(
           bx - 80, by - 90, 160, 230,
           fill_color,
@@ -1399,6 +1402,24 @@ class HudRenderer(Widget):
           shadow_offset=4.0,
           align="center_bottom",
         )
+
+      if not has_goal:
+        if atc_active_type:
+          if "canceled" in atc_type:
+            atc_label, atc_color = "ATC 취소", rl.YELLOW
+          elif "prepare" in atc_type:
+            atc_label, atc_color = "ATC 준비", rl.Color(180, 255, 180, 255)
+          else:
+            atc_label, atc_color = "ATC 작동", rl.GREEN
+        else:
+          atc_label, atc_color = "V-NAVI", COLORS.VEHICLE_NAVI_LAVENDER
+        self._draw_text_left_bottom(
+          atc_label, tbt_x + 195, tbt_y + 100, 34, atc_color,
+          font=self._font_bold, border_width=2.0, shadow_offset=4.0,
+        )
+
+    if not has_goal:
+      return
 
     if info["sdi_descr"]:
       label_x = tbt_x + 200
