@@ -101,12 +101,13 @@ VEHICLE_NAVI_GV80_BUMP_PAIR_MAX_KEEP = 180.0        # 연속 쌍 보존 절대 �
 VEHICLE_NAVI_SCHOOL_ZONE_PRE_DISTANCE = 150.0       # 0x4B8 kind=9 스쿨존 시작점 사전 감속 진입 거리(m)
 VEHICLE_NAVI_MAX_CURVES = 64
 VEHICLE_NAVI_CURVE_MAX_DISTANCE = 8190.0  # 13-bit offset; 8191 is the invalid sentinel
-VEHICLE_NAVI_CURVE_RADIUS_SCALE = 4.4  # Empirical Hyundai/Kia CAN-FD scale: R ~= 4.4 * |v0 - 511| m
+VEHICLE_NAVI_CURVE_RADIUS_SCALE = 3.8  # Empirical Hyundai/Kia CAN-FD scale: R ~= 3.8 * |v0 - 511| m (calibrated against EV4 IMU)
 VEHICLE_NAVI_CURVE_DISTANCE_FACTOR = 2.0
 VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_DISTANCE = 10.0
 VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_SPEED = 60.0
 VEHICLE_NAVI_CURVE_TARGET_LAT_ACCEL = 1.9
-VEHICLE_NAVI_CURVE_ALLOWED_LINK_CLASSES = (1, 2)  # Freeway and IC/JC ramp only
+VEHICLE_NAVI_CURVE_ALLOWED_LINK_CLASSES = VEHICLE_NAVI_CONTROLLED_ACCESS_LINK_CLASSES  # Freeway (1), IC (2), JC (3)
+VEHICLE_NAVI_CURVE_SEGMENT_TIMEOUT_NS = 600_000_000_000  # 0x099/0x4B9 ADASIS SEGMENT is event-driven (~300s refresh); 0x364/0x4A3 2s gates liveness
 VEHICLE_NAVI_RAMP_FRWINFO_VALUES = (1, 2, 3, 4)  # Fork warning within ~500 m
 VEHICLE_NAVI_HDA_TIMEOUT_NS = 2_000_000_000
 VEHICLE_NAVI_STUB_EXIT_BRANCH_TYPE = 0x49
@@ -1213,7 +1214,7 @@ class CarState(CarStateBase):
 
   @staticmethod
   def _decode_hyundai_navi_curvature(value):
-    """Decode Hyundai CAN-FD PROSHORT ptype=1 10-bit radius code: R ~= 4.4 * |v0 - 511| m (+left / -right)."""
+    """Decode Hyundai CAN-FD PROSHORT ptype=1 10-bit radius code: R ~= 3.8 * |v0 - 511| m (+left / -right)."""
     value = int(value)
     if not 0 <= value < 1023 or value == 511:
       return None
@@ -1508,8 +1509,12 @@ class CarState(CarStateBase):
       ret.vehicleNaviJunctionLane = 0
 
   def _update_vehicle_navi_curve_output(self, ret, link_class, frw_info, hda_fresh):
-    self.vehicleNaviCurves = [curve for curve in self.vehicleNaviCurves if curve["target"] >= self.totalDistance]
-    self.vehicleNaviRampCurves = [curve for curve in self.vehicleNaviRampCurves if curve["target"] >= self.totalDistance]
+    self.vehicleNaviCurves = [
+      curve for curve in self.vehicleNaviCurves if curve["target"] + curve.get("span", 0.0) >= self.totalDistance
+    ]
+    self.vehicleNaviRampCurves = [
+      curve for curve in self.vehicleNaviRampCurves if curve["target"] + curve.get("span", 0.0) >= self.totalDistance
+    ]
     curve_road_allowed = hda_fresh and link_class in VEHICLE_NAVI_CURVE_ALLOWED_LINK_CLASSES
     ret.vehicleNaviCurveRoadAllowed = curve_road_allowed
     ret.vehicleNaviCurveRouteActive = self.vehicleNaviCurveRouteActive
@@ -1535,7 +1540,7 @@ class CarState(CarStateBase):
     for curve, is_ramp in candidates_raw:
       if curve["speed"] >= 250.0:
         continue
-      distance = curve["target"] - self.totalDistance
+      distance = max(0.0, curve["target"] - self.totalDistance)
       target_speed = max(self.vehicleNaviCurveLowerLimit, curve["speed"] * self.vehicleNaviCurveSpeedFactor)
       safe_speed = target_speed / CV.MS_TO_KPH
       decel_distance = max(0.0, distance - safe_speed * self.vehicleNaviCurveControlEnd)
@@ -2312,7 +2317,7 @@ class CarState(CarStateBase):
       self._clear_vehicle_navi_route_filtered_events()
 
     curve_route_age = getattr(cp, "_last_update_nanos", 0) - self.vehicleNaviCurveSegmentTimestamp
-    curve_route_timeout = VEHICLE_NAVI_SEGMENT_4B5_TIMEOUT_NS if alt_navi_arch else VEHICLE_NAVI_ROUTE_TIMEOUT_NS
+    curve_route_timeout = VEHICLE_NAVI_SEGMENT_4B5_TIMEOUT_NS if alt_navi_arch else VEHICLE_NAVI_CURVE_SEGMENT_TIMEOUT_NS
     if self.vehicleNaviCurveRouteState in (0, 1) and not 0 <= curve_route_age <= curve_route_timeout:
       self.vehicleNaviCurveRouteState = 3
       self.vehicleNaviCurveRouteActive = False

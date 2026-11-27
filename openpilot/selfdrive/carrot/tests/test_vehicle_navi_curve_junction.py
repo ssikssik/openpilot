@@ -133,13 +133,13 @@ def test_compact_state_carrot_man_schema_synced_across_python_cpp_js():
 @pytest.mark.parametrize(
   ("raw_v0", "expected_sign", "expected_radius"),
   (
-    (611, 1.0, 440.0),
-    (411, -1.0, 440.0),
-    (521, 1.0, 44.0),
-    (501, -1.0, 44.0),
+    (611, 1.0, 380.0),
+    (411, -1.0, 380.0),
+    (521, 1.0, 38.0),
+    (501, -1.0, 38.0),
   ),
 )
-def test_decode_hyundai_navi_curvature_scale_4_4_m_per_count(raw_v0, expected_sign, expected_radius):
+def test_decode_hyundai_navi_curvature_scale_3_8_m_per_count(raw_v0, expected_sign, expected_radius):
   curv = CarState._decode_hyundai_navi_curvature(raw_v0)
   assert curv == pytest.approx(expected_sign / expected_radius)
 
@@ -162,14 +162,27 @@ def test_ev4_curve_linkclass_gate_and_recalculation_reset(monkeypatch):
   assert ret.vehicleNaviCurveRoadAllowed is True
   assert ret.vehicleNaviCurveRouteState == 0
   assert ret.vehicleNaviCurveIsRamp is False
-  assert ret.vehicleNaviCurveCurvature == pytest.approx(1.0 / 44.0)
-  assert ret.vehicleNaviCurveSpeed == pytest.approx(CarState._vehicle_navi_curve_reference_speed(1.0 / 44.0))
+  assert ret.vehicleNaviCurveCurvature == pytest.approx(1.0 / 38.0)
+  assert ret.vehicleNaviCurveSpeed == pytest.approx(CarState._vehicle_navi_curve_reference_speed(1.0 / 38.0))
 
   # Switching to local road (LinkClass=0) must block curve control immediately.
   hda_local = (Bus.pt, packer.make_can_msg("CANFD_HDA_INFO_364", bus, {"LinkClass": 0, "Frwinfo": 0}))
   ret_local = _step(CS, parsers, 1.1, [hda_local])
   assert ret_local.vehicleNaviCurveRoadAllowed is False
   assert ret_local.vehicleNaviCurveSpeed == 0.0
+
+  # JC loop connector (LinkClass=3) must stay allowed while cached curve is valid.
+  hda_jc = (Bus.pt, packer.make_can_msg("CANFD_HDA_INFO_364", bus, {"LinkClass": 3, "Frwinfo": 0}))
+  ret_jc = _step(CS, parsers, 1.15, [hda_jc])
+  assert ret_jc.vehicleNaviCurveRoadAllowed is True
+  assert ret_jc.vehicleNaviCurveSpeed > 0.0
+
+  # Inside the curve span (start < totalDistance <= start + span), hold distance=0 and curve speed until exit.
+  CS.totalDistance = CS.vehicleNaviCurves[0]["target"] + 20.0
+  ret_mid = _step(CS, parsers, 1.17, [hda_jc], v_ego=0.0)
+  assert ret_mid.vehicleNaviCurveDistance == 0.0
+  assert ret_mid.vehicleNaviCurveSpeed > 0.0
+  CS.totalDistance = CS.vehicleNaviCurves[0]["target"] - 50.0
 
   # Back on highway -> cached curve still valid until CalculatedRoute == 2 resets it.
   ret_back = _step(CS, parsers, 1.2, [hda_hwy])
@@ -290,9 +303,14 @@ def test_carrot_serv_curve_gates_scaling_and_external_nav_priority():
   CS.vehicleNaviJunctionSide = 2
   CS.vehicleNaviJunctionDistance = 180.0
 
-  # Opt-in off: speed control inactive (250), diagnostic display active
+  # Opt-in off: speed control inactive (250), diagnostic display active when relevant to current speed
   assert serv._vehicle_navi_curve_speed(CS) == 250.0
   assert 55.0 <= serv._vehicle_navi_curve_display_speed(CS) < 250.0
+
+  # Far-away curve preview (> vEgo + 20 kph) is suppressed on HUD to avoid high-speed noise
+  CS.vehicleNaviCurveDistance = 1200.0
+  assert serv._vehicle_navi_curve_display_speed(CS) == 0.0
+  CS.vehicleNaviCurveDistance = 120.0
 
   # Opt-in on + scaling + ramp source label
   serv.vehicleNaviCurveControl = True
@@ -455,8 +473,13 @@ def test_curve_and_junction_do_not_survive_lost_authority(monkeypatch, fault):
     next_frames = [hda, (Bus.pt, packer.make_can_msg('CANFD_NAVI_SEGMENT_099', bus, _segment_values(3)))]
     ret = _step(cs, parsers, 1.1, next_frames)
     assert cs.vehicleNaviCurves == []
+  elif fault == 'expired_route':
+    # Event-driven 0x099 survives normal multi-second gaps while 0x364 stays fresh,
+    # and expires only after the 600s stream backstop.
+    assert _step(cs, parsers, 45.0, [hda]).vehicleNaviCurveSpeed > 0
+    ret = _step(cs, parsers, 602.0, [hda])
   else:
-    ret = _step(cs, parsers, 4.0, [hda] if fault == 'expired_route' else [])
+    ret = _step(cs, parsers, 4.0, [])
   assert ret.vehicleNaviCurveSpeed == 0
   assert ret.vehicleNaviJunctionType == 0
 
