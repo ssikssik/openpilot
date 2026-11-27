@@ -112,7 +112,7 @@ def test_both_profile_addresses_follow_timestamp_order(alternate_newer):
 
 def test_duplicate_addresses_do_not_queue_two_bumps(navi):
   state, parsers = navi()
-  if state.canfd_wrapped_navi or state.canfd_wrapped_navi_full:
+  if state.canfd_wrapped_navi or state.canfd_ev4_navi:
     primary = CANPacker('hyundai_canfd_generated').make_can_msg(state.navi_profile_msg, parsers[Bus.pt].bus,
                                                               {'PROLONG_VALUE': 6, 'PROLONG_OFFSET': 317, 'PROLONG_PROFILE_TYPE': 16})
   else:
