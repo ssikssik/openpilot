@@ -30,15 +30,15 @@ def test_invalid_custom_ratio_uses_live_scaling(invalid_custom):
 
 @pytest.mark.parametrize(("v_kph", "expected_scale"), [
   (0.0, 1.0),
-  (49.9, 1.0),
-  (50.0, 1.0),
-  (75.0, 1.05),
-  (100.0, 1.10),
-  (125.0, 1.15),
+  (39.9, 1.0),
+  (40.0, 1.0),
+  (67.5, 1.05),
+  (95.0, 1.10),
+  (122.5, 1.15),
   (150.0, 1.20),
   (170.0, 1.20),
 ])
-def test_high_speed_steer_ratio_rate_scales_linearly_from_50_to_150_kph(v_kph, expected_scale):
+def test_high_speed_steer_ratio_rate_scales_linearly_from_40_to_150_kph(v_kph, expected_scale):
   v_ego = v_kph / 3.6
   assert resolve_vehicle_model_steer_ratio(15.0, 100.0, 0.0, 120.0, v_ego) == pytest.approx(15.0 * expected_scale)
   assert resolve_vehicle_model_steer_ratio(15.0, 100.0, 160.0, 120.0, v_ego) == pytest.approx(16.0 * expected_scale)
@@ -88,8 +88,8 @@ def test_controlsd_applies_live_setting_changes_to_vehicle_model(is_vw_meb):
     (0, 30, 100, 0.0, 14.97, 4.491),
     (0, 100, 100, 0.0, 15.1, 15.1),
     (0, 0, 100, 0.0, 15.1, 15.1),
-    (0, 100, 120, 50.0, 15.0, 15.0),
-    (0, 100, 120, 100.0, 15.0, 16.5),
+    (0, 100, 120, 40.0, 15.0, 15.0),
+    (0, 100, 120, 95.0, 15.0, 16.5),
     (0, 100, 120, 150.0, 15.0, 18.0),
   ]:
     settings.update(CustomSR=custom, SteerRatioRate=rate, SteerRatioHighSpeedRate=hs_rate)
