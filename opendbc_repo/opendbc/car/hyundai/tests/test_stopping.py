@@ -595,3 +595,40 @@ def test_unheld_roll_brake_ends_with_the_stop_request():
 def test_ej_first_stop_entry_boundary(speed, expected):
   assert ENTRY_SPEED == 0.1
   assert step(CanfdStopping(), speed=speed).stop_req == expected
+
+
+def test_final_taper_off_keeps_approach_floor():
+  controller = CanfdStopping()
+  for speed in (0.7, 0.4, 0.15):
+    assert step(controller, speed=speed, accel=-.5, previous_value=-.5).raw == -.5
+
+
+def test_final_taper_releases_floor_linearly_to_entry_then_zeros():
+  from opendbc.car.hyundai.stopping import APPROACH_ACCEL, FINAL_TAPER_ACCEL, FINAL_TAPER_SPEED
+  controller = CanfdStopping()
+  controller.final_taper = True
+  assert step(controller, speed=FINAL_TAPER_SPEED + .5, accel=-.5, previous_value=-.5).raw == APPROACH_ACCEL
+  assert step(controller, speed=FINAL_TAPER_SPEED, accel=-.5, previous_value=-.5).raw == pytest.approx(APPROACH_ACCEL)
+  mid = (FINAL_TAPER_SPEED + ENTRY_SPEED) / 2
+  assert step(controller, speed=mid, accel=-.5, previous_value=-.5).raw == pytest.approx((APPROACH_ACCEL + FINAL_TAPER_ACCEL) / 2)
+  # aReqValue follows within the jerk-upper ramp, never a step
+  cmd = step(controller, speed=ENTRY_SPEED + .001, accel=-.5, previous_value=-.5, jerk_u=1.0)
+  assert cmd.raw == pytest.approx(FINAL_TAPER_ACCEL, abs=1e-2)
+  assert cmd.value == pytest.approx(-.5 + DT)
+  cmd = step(controller, speed=ENTRY_SPEED, accel=-.5, previous_value=cmd.value)
+  assert (cmd.stop_req, cmd.raw, cmd.value) == (1, 0., 0.)
+
+
+@pytest.mark.parametrize("accel", [-1.2, -2.0])
+def test_final_taper_never_weakens_urgent_braking(accel):
+  controller = CanfdStopping()
+  controller.final_taper = True
+  assert step(controller, speed=.3, accel=accel, previous_value=accel).raw == accel
+
+
+def test_final_taper_defers_to_smooth_lead_stop():
+  controller = CanfdStopping()
+  controller.final_taper = True
+  cmd = controller.update(active=True, requested=True, speed=.3, held=False, accel=-.4, previous_value=-.4,
+                          jerk_u=1., jerk_l=1., smooth_lead_stop=True)
+  assert cmd.raw == -.4
