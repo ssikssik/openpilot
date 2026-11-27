@@ -43,11 +43,27 @@ VEHICLE_NAVI_CAMERA_KINDS = (0, 1, 2)
 VEHICLE_NAVI_CONTROLLED_ACCESS_LINK_CLASSES = (1, 2, 3)  # Freeway, IC, JC
 VEHICLE_NAVI_CONTROLLED_ACCESS_ROAD_CLASSES = (1, 2)  # Freeway, arterial/city freeway
 VEHICLE_NAVI_SCHOOL_ZONE_MAX_DISTANCE = 1000.0
+# EV4 A-CAN 0x380 drops its 30 display for up to ~4 s inside a school zone
+# while no warning is shown (2026-11-21 logs). Release only after a longer gap.
+VEHICLE_NAVI_SCHOOL_ZONE_EV4_RELEASE_NS = 8_000_000_000
+# EV4 A-CAN 0x380 byte 10 shows exactly 0x10 for ~5 s at a section-enforcement
+# entry; the kind-7 profile follows ~0.2-0.5 s later (3/3 confirmed sections,
+# 2026-11-18). Other bit-4 codes (0x1A-0x1D) and kind 7 alone also occur elsewhere.
+EV4_NAVI_SECTION_ALERT = 0x10
+EV4_SECTION_START_SYNC_MARGIN = 150.0
+EV4_SECTION_END_SNAP_MARGIN = 300.0
+EV4_SECTION_END_SYNC_MARGIN = 250.0
+EV4_SECTION_MIN_LENGTH_FOR_END_SNAP = 500.0
+# A section announced on one road must not cap another: past the start point a
+# different nonzero 0x380/0x364 limit suspends it, and held this long drops it.
+EV4_SECTION_LIMIT_MISMATCH_NS = 3_000_000_000
 VEHICLE_NAVI_POSITION_TIMEOUT_NS = 1_000_000_000
+VEHICLE_NAVI_RANGE_AVG_MAX_SPEED = 255  # Rejects 510 (0x1FE, EV4 0x363 boot invalid) and 511 (0x1FF)
 SPEEDCAM_SKIP_MIN_SPEED = 5.0  # m/s; below this + keeps its resume/set-speed role
 SPEEDCAM_GAS_TOK_FRAMES = 40   # matches cruise.py _gas_tok_timer (0.4 s at 100 Hz)
 VEHICLE_NAVI_ROUTE_TIMEOUT_NS = 2_000_000_000
 CANFD_HDA_INFO_MSG = "CANFD_HDA_INFO_364"
+CANFD_NAVI_POSITION_MSG = "CANFD_NAVI_POSITION_363"
 CANFD_NAVI_PROFILE_MSG = "CANFD_NAVI_PROFILE_093"
 CANFD_NAVI_SEGMENT_MSG = "CANFD_NAVI_SEGMENT_099"
 CANFD_NAVI_STATUS_MSG = "CANFD_NAVI_STATUS_380"
@@ -270,6 +286,7 @@ class CarState(CarStateBase):
     self.canfd_ev4_navi = CP.carFingerprint == CAR.KIA_EV4
     self.canfd_wrapped_navi_full = self.canfd_ev4_navi
     self.hda_info_msg = CANFD_HDA_INFO_MSG if (self.canfd_wrapped_navi or self.canfd_ev4_navi) else "HDA_INFO_4A3"
+    self.navi_position_msg = CANFD_NAVI_POSITION_MSG if (self.canfd_wrapped_navi or self.canfd_ev4_navi) else "NEW_MSG_4B4"
     self.navi_segment_msg = CANFD_NAVI_SEGMENT_MSG if self.canfd_ev4_navi else "NEW_MSG_4B9"
     self.navi_profile_msg = CANFD_NAVI_PROFILE_MSG if (self.canfd_wrapped_navi or self.canfd_ev4_navi) else "NEW_MSG_4BE"
     self.navi_proshort_msg = CANFD_NAVI_PROSHORT_MSG if (self.canfd_wrapped_navi or self.canfd_ev4_navi) else LEGACY_NAVI_PROSHORT_MSG
@@ -302,8 +319,13 @@ class CarState(CarStateBase):
     self.vehicleNaviCurveRouteActive = False
     self.vehicleNaviCurveRouteState = 3
     self.vehicleNaviCurvePathIndex = None
-    self.ev4Section = None  # {"start", "end", "speed"} in totalDistance coordinates
+    self.ev4Section = None  # {"start", "end", "speed", "entered", "end_snapped"} in totalDistance coordinates
+    self.ev4NextSection = None
     self.ev4SectionMismatchNanos = None
+    self.ev4NaviStatus = None
+    self.ev4_map_cam_active = False
+    self.ev4_map_cam_speed = 0.0
+    self.vehicleNaviSpeedZoneUsesPosition = False
     self.pv5_section_start_prev = False
     self.pv5_completed_camera_speed = 0
     self.tcs = None
@@ -408,9 +430,13 @@ class CarState(CarStateBase):
     self.vehicleNaviCameraStatusTarget = None
     self.vehicleNaviSpeedZoneActive = False
     self.vehicleNaviSpeedZoneSpeed = 0.0
+    self.vehicleNaviSpeedZoneUsesNaviStatus = False
+    self.vehicleNaviSpeedZoneLostNanos = None
     self.vehicleNaviSchoolZoneActive = False
     self.vehicleNaviSchoolZoneStartDistance = 0.0
     self.vehicleNaviSchoolZoneUsesCameraStatus = False
+    self.vehicleNaviSchoolZoneUsesNaviStatus = False
+    self.vehicleNaviSchoolZoneLostNanos = None
     self.pcmCruiseGap = 0
 
     self.MainMode_ACC = False
@@ -629,6 +655,7 @@ class CarState(CarStateBase):
         elif self.controls_ready_count == 123:
           if self.canfd_wrapped_navi:
             add_and_cache(self.cp, CANFD_HDA_INFO_MSG, "hda_info_4a3")
+            add_and_cache(self.cp, CANFD_NAVI_POSITION_MSG, "navi_position_4b4")
             add_and_cache(self.cp, CANFD_NAVI_PROFILE_MSG, "navi_profile_4be")
             add_and_cache(self.cp, CANFD_NAVI_SEGMENT_MSG, "navi_curve_segment_099")
             add_and_cache(self.cp, CANFD_NAVI_PROSHORT_MSG, "navi_proshort_094")
@@ -638,7 +665,7 @@ class CarState(CarStateBase):
               add_and_cache(self.cp_alt, CANFD_NAVI_STATUS_MSG, "navi_status_380")
           else:
             add_and_cache(self.cp, self.hda_info_msg, "hda_info_4a3")
-            add_and_cache(self.cp, "NEW_MSG_4B4", "navi_position_4b4")
+            add_and_cache(self.cp, self.navi_position_msg, "navi_position_4b4")
             add_and_cache(self.cp, self.navi_segment_msg, "navi_segment_4b9")
             add_and_cache(self.cp, self.navi_profile_msg, "navi_profile_4be")
             if self.canfd_ev4_navi:
@@ -1166,8 +1193,13 @@ class CarState(CarStateBase):
         kept.append(event)
     return kept
 
-  def _clear_vehicle_navi_events(self):
+  def _clear_vehicle_navi_events(self, *, keep_entered_section=False):
     self.vehicleNaviEvents = []
+    ev4_section = getattr(self, "ev4Section", None)
+    if not (keep_entered_section and ev4_section is not None and ev4_section.get("entered")):
+      self.ev4Section = None
+      self.ev4SectionMismatchNanos = None
+    self.ev4NextSection = None
     self.vehicleNaviCameraTarget = None
     self.vehicleNaviCameraStatusEvent = None
     self.speedcam_policy.clear()
@@ -1399,10 +1431,7 @@ class CarState(CarStateBase):
       elif allow_ev4_section and self.canfd_wrapped_navi_full:
         section = self._decode_ev4_navi_section(values)
         if section is not None and self._vehicle_navi_profile_allowed("camera", {"path_index": section[3]}):
-          offset, length, speed, _ = section
-          start = self.totalDistance + offset
-          self.ev4Section = {"start": start, "end": start + length, "speed": speed}
-          self.ev4SectionMismatchNanos = None
+          self._latch_ev4_navi_section(section)
 
   def _consume_vehicle_navi_proshort(self, cp):
     if self.navi_proshort_094 is not None and self.navi_proshort_msg in cp.ts_nanos:
@@ -1537,10 +1566,146 @@ class CarState(CarStateBase):
     self.vehicleNaviSchoolZoneActive = False
     self.vehicleNaviSchoolZoneStartDistance = self.totalDistance
     self.vehicleNaviSchoolZoneUsesCameraStatus = False
+    self.vehicleNaviSchoolZoneUsesNaviStatus = False
+    self.vehicleNaviSchoolZoneLostNanos = None
+
+  def _update_ev4_navi_status(self, cp, cp_alt):
+    # EV4 never reports MapSource=2 for school zones on E-CAN 0x364. Its A-CAN
+    # 0x380/24B shows the cluster limit (byte 12) and warning code (byte 10).
+    self.ev4NaviStatus = None
+    if not self.canfd_ev4_navi or not self.is_metric:
+      return
+    if not self._pv5_navi_message_fresh(cp, cp_alt, CANFD_NAVI_STATUS_MSG, 0x380, 24):
+      return
+    raw = cp_alt.dat.get(0x380, b"")
+    self.ev4NaviStatus = (raw[12], raw[10])
 
   def _clear_vehicle_navi_speed_zone(self):
     self.vehicleNaviSpeedZoneActive = False
     self.vehicleNaviSpeedZoneSpeed = 0.0
+    self.vehicleNaviSpeedZoneUsesPosition = False
+    self.vehicleNaviSpeedZoneUsesNaviStatus = False
+    self.vehicleNaviSpeedZoneLostNanos = None
+
+  def _finish_ev4_navi_section(self):
+    finished_speed = self.ev4Section["speed"] if self.ev4Section is not None else 0.0
+    self.ev4Section = self.ev4NextSection
+    self.ev4NextSection = None
+    self.ev4SectionMismatchNanos = None
+    if (finished_speed > 0 and self.vehicleNaviSpeedZoneActive and
+        getattr(self, "vehicleNaviSpeedZoneUsesNaviStatus", False) and
+        abs(self.vehicleNaviSpeedZoneSpeed - finished_speed) < 1.0):
+      self._clear_vehicle_navi_speed_zone()
+
+  def _latch_ev4_navi_section(self, section):
+    offset, length, speed, _ = section
+    start = self.totalDistance + offset
+    candidate = {
+      "start": start,
+      "end": start + length,
+      "speed": speed,
+      "entered": False,
+      "end_snapped": False,
+    }
+    if (self.ev4Section is not None and
+        (self.ev4Section.get("entered") or self.totalDistance >= self.ev4Section["start"]) and
+        start > self.ev4Section["end"] - 100.0):
+      self.ev4NextSection = candidate
+    else:
+      self.ev4Section = candidate
+      self.ev4NextSection = None
+      self.ev4SectionMismatchNanos = None
+
+  def _update_ev4_navi_section(self, cp, ret=None, speed_limit_cam=False):
+    """Latch a 0x094 section announcement and report whether the car is inside it now."""
+    if not self.canfd_ev4_navi:
+      return False
+    hda_cam_active = bool(speed_limit_cam)
+    hda_cam_speed = float(getattr(ret, "speedLimit", 0.0)) if ret is not None else 0.0
+    hda_road_limit = 0.0
+    if self.hda_info_4a3 is not None and self.hda_info_msg in getattr(cp, "ts_nanos", {}):
+      hda_ts = self._vehicle_navi_message_timestamp(cp, self.hda_info_msg)
+      hda_now = getattr(cp, "_last_update_nanos", hda_ts)
+      if hda_ts > 0 and 0 <= hda_now - hda_ts <= VEHICLE_NAVI_HDA_TIMEOUT_NS:
+        raw_spd = int(self.hda_info_4a3.get("SPEED_LIMIT", 0))
+        if 0 < raw_spd < 255:
+          hda_road_limit = raw_spd * (1.0 if self.is_metric else CV.MPH_TO_KPH)
+        if not hda_cam_active and int(self.hda_info_4a3.get("MapSource", 0)) == 2:
+          hda_cam_active = True
+          if hda_cam_speed <= 0:
+            hda_cam_speed = hda_road_limit
+
+    map_cam_falling = self.ev4_map_cam_active and not hda_cam_active
+    prev_cam_speed = self.ev4_map_cam_speed
+    self.ev4_map_cam_active = hda_cam_active
+    if hda_cam_active and hda_cam_speed > 0:
+      self.ev4_map_cam_speed = hda_cam_speed
+    elif not hda_cam_active:
+      self.ev4_map_cam_speed = 0.0
+
+    timestamp = self._vehicle_navi_message_timestamp(cp, CANFD_NAVI_PROSHORT_MSG)
+    if self.navi_proshort_094 is not None and timestamp > self.vehicleNaviProshortTimestamp:
+      self.vehicleNaviProshortTimestamp = timestamp
+      section = self._decode_ev4_navi_section(self.navi_proshort_094)
+      if (section is not None and timestamp > self.vehicleNaviRouteResetTimestamp and
+          self._vehicle_navi_profile_allowed("camera", {"path_index": section[3]})):
+        self._latch_ev4_navi_section(section)
+
+    if self.ev4Section is None:
+      return False
+    if not self.vehicleNaviCanControl:
+      self.ev4Section = None
+      self.ev4NextSection = None
+      self.ev4SectionMismatchNanos = None
+      return False
+    while self.ev4Section is not None and self.totalDistance >= self.ev4Section["end"]:
+      self._finish_ev4_navi_section()
+    if self.ev4Section is None:
+      return False
+
+    if map_cam_falling and (prev_cam_speed == 0 or abs(prev_cam_speed - self.ev4Section["speed"]) < 1.0):
+      if ((self.ev4Section.get("entered") or self.totalDistance >= self.ev4Section["start"]) and
+          abs(self.totalDistance - self.ev4Section["end"]) <= EV4_SECTION_END_SYNC_MARGIN):
+        self._finish_ev4_navi_section()
+        if self.ev4Section is None:
+          return False
+      elif (not self.ev4Section.get("entered") and
+            abs(self.totalDistance - self.ev4Section["start"]) <= EV4_SECTION_START_SYNC_MARGIN):
+        delta = self.totalDistance - self.ev4Section["start"]
+        self.ev4Section["start"] = self.totalDistance
+        self.ev4Section["entered"] = True
+        if not self.ev4Section.get("end_snapped"):
+          self.ev4Section["end"] += delta
+
+    if self.totalDistance < self.ev4Section["start"]:
+      # The announcement often arrives on the approach road or ramp, whose
+      # limit differs (40/70/90 before 90/80 sections on 2026-11-22).
+      return False
+    self.ev4Section["entered"] = True
+    status_limit = self.ev4NaviStatus[0] if self.ev4NaviStatus is not None else 0
+    limit = status_limit if status_limit > 0 else hda_road_limit
+    if limit and abs(limit - self.ev4Section["speed"]) >= 1.0:
+      now = cp._last_update_nanos
+      if self.ev4SectionMismatchNanos is None:
+        self.ev4SectionMismatchNanos = now
+      elif now - self.ev4SectionMismatchNanos >= EV4_SECTION_LIMIT_MISMATCH_NS:
+        self._finish_ev4_navi_section()
+      return False
+    self.ev4SectionMismatchNanos = None
+    return True
+
+  def _ev4_navi_status_zone_ended(self, speed, lost_attr, now):
+    status = self.ev4NaviStatus
+    if status is None or status[0] not in (0, speed):
+      return True
+    if status[0] == speed or status[1] != 0:
+      setattr(self, lost_attr, None)
+      return False
+    lost = getattr(self, lost_attr)
+    if lost is None:
+      setattr(self, lost_attr, now)
+      return False
+    return now - lost >= VEHICLE_NAVI_SCHOOL_ZONE_EV4_RELEASE_NS
 
   def _is_alt_legacy_navi_arch(self):
     # 표준 세그먼트(0x4B9)를 쓰지 않고 대체 POSITION(0x4DE) 또는 세그먼트(0x4B5)를
@@ -1752,6 +1917,23 @@ class CarState(CarStateBase):
             self.vehicleNaviRoadClass in VEHICLE_NAVI_CONTROLLED_ACCESS_ROAD_CLASSES)
 
   @staticmethod
+  def _decode_canfd_profile_slot1(raw):
+    if not raw or len(raw) < 24:
+      return None
+    slot1 = raw[16:24]
+    if slot1 in (b"\xff" * 8, b"\x00" * 8):
+      return None
+    u = int.from_bytes(slot1, "little")
+    return {
+      "PROLONG_VALUE": u & 0xffffffff,
+      "PROLONG_OFFSET": (u >> 32) & 0x1fff,
+      "PROLONG_CYCLIC_COUNTER": (u >> 45) & 0x3,
+      "PROLONG_UPDATE": (u >> 47) & 0x1,
+      "PROLONG_PATH_INDEX": (u >> 48) & 0x3f,
+      "PROLONG_PROFILE_TYPE": (u >> 54) & 0x1f,
+    }
+
+  @staticmethod
   def _decode_vehicle_navi_profile(values):
     return {
       "value": int(values.get("PROLONG_VALUE", 0xffffffff)),
@@ -1817,16 +1999,29 @@ class CarState(CarStateBase):
           # 래치에 쓰지 않는다. 구간 판정에는 유효한 0x4DE POSITION이 필요하다.
           # 아래 스쿨존(30) 판정은 그대로 둔다.
           if not self._is_alt_legacy_navi_arch() and self._vehicle_navi_profile_allowed("camera", profile) and event[1] > 30:
+            # EV4 has no active 0x363 range average or persistent 0x364 warning;
+            # a 0x380 section alert at this same limit confirms kind-7 instead.
+            status_confirmed = getattr(self, "ev4NaviStatus", None) == (event[1], EV4_NAVI_SECTION_ALERT)
+            if status_confirmed or not (getattr(self, "vehicleNaviSpeedZoneUsesNaviStatus", False) and
+                                        self.vehicleNaviSpeedZoneSpeed == event[1]):
+              self.vehicleNaviSpeedZoneUsesNaviStatus = status_confirmed
+              self.vehicleNaviSpeedZoneLostNanos = None
             self.vehicleNaviSpeedZoneActive = True
             self.vehicleNaviSpeedZoneSpeed = event[1]
           if self.vehicleNaviSchoolZoneControl:
             # 0x77 describes a generic 30 km/h zone and also appears outside
             # school zones. Only use it for the school cap while 0x4A3
-            # independently confirms an active 30 km/h camera/zone.
-            if event[1] == 30 and speed_limit_cam and ret.speedLimit == 30 and not on_controlled_access_road:
+            # independently confirms an active 30 km/h camera/zone, or EV4
+            # A-CAN 0x380 confirms 30 km/h.
+            map_confirmed = speed_limit_cam and ret.speedLimit == 30
+            ev4_status = getattr(self, "ev4NaviStatus", None)
+            status_confirmed = ev4_status is not None and ev4_status[0] == 30
+            if event[1] == 30 and (map_confirmed or status_confirmed) and not on_controlled_access_road:
               self.vehicleNaviSchoolZoneActive = True
               self.vehicleNaviSchoolZoneStartDistance = self.totalDistance
-              self.vehicleNaviSchoolZoneUsesCameraStatus = True
+              self.vehicleNaviSchoolZoneUsesCameraStatus = map_confirmed
+              self.vehicleNaviSchoolZoneUsesNaviStatus = not map_confirmed
+              self.vehicleNaviSchoolZoneLostNanos = None
             else:
               self._clear_vehicle_navi_school_zone()
       elif event[0] == "school_zone":
@@ -1836,6 +2031,13 @@ class CarState(CarStateBase):
       elif self._vehicle_navi_profile_allowed(event[0], profile) and (not on_controlled_access_road or
                                                                       (event[0] != "bump" and not (event[0] == "camera" and event[1] == 30))):
         self._add_vehicle_navi_event(*event, profile["offset"])
+        if (self.canfd_ev4_navi and event[0] == "camera" and event[2] == 0 and
+            getattr(self, "ev4Section", None) is not None and event[1] == self.ev4Section["speed"]):
+          target = self.totalDistance + profile["offset"]
+          if (target > self.ev4Section["start"] + EV4_SECTION_MIN_LENGTH_FOR_END_SNAP and
+              abs(target - self.ev4Section["end"]) <= EV4_SECTION_END_SNAP_MARGIN):
+            self.ev4Section["end"] = target
+            self.ev4Section["end_snapped"] = True
 
   def _add_vehicle_navi_event(self, event_type, speed, kind, offset):
     target = self.totalDistance + offset
@@ -1909,6 +2111,7 @@ class CarState(CarStateBase):
     ret.vehicleNaviFrwInfo = 0
     if self.canfd_wrapped_navi:
       self._update_pv5_navi_section(cp, cp_alt)
+    self._update_ev4_navi_status(cp, cp_alt)
     profile_timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_profile_msg)
     profile_4b8_timestamp = 0
     if len(cp.dat.get(0x4b8, b"")) == 8:
@@ -1916,7 +2119,7 @@ class CarState(CarStateBase):
       # not be decoded as this legacy profile, on any vehicle model.
       profile_4b8_timestamp = self._vehicle_navi_message_timestamp(cp, LEGACY_NAVI_PROFILE_4B8_MSG)
       profile_timestamp = max(profile_timestamp, profile_4b8_timestamp)
-    hda_timestamp = self._vehicle_navi_message_timestamp(cp, self.hda_info_msg) if self.canfd_ev4_navi else 0
+    hda_timestamp = self._vehicle_navi_message_timestamp(cp, self.hda_info_msg) if (self.canfd_wrapped_navi or self.canfd_ev4_navi) else 0
     self.vehicleNaviAvailable = self.vehicleNaviAvailable or profile_timestamp > 0 or hda_timestamp > 0 or self.vehicleNaviSpeedZoneActive
     ret.vehicleNaviAvailable = self.vehicleNaviAvailable
     self.vehicleNaviCameraTarget = None
@@ -1929,17 +2132,18 @@ class CarState(CarStateBase):
                                             if camera_status_speed > 0 else None)
       self.vehicleNaviCameraStatusSpeed = camera_status_speed
 
-    # 0x4B4 is periodic while the stock navigation is running. Its range
+    # 0x4B4 / 0x363 is periodic while the stock navigation is running. Its range
     # average speed is zero outside a section-camera zone and valid inside it.
-    # It is therefore authoritative for the *current* section state; 0x4BE is
-    # sparse future spot data and must not be used alone to hold this state.
-    position_timestamp = self._vehicle_navi_message_timestamp(cp, "NEW_MSG_4B4")
+    # EV4/PV5 firmware currently reports 0 (or 510 at cold boot) on 0x363; when
+    # a valid range average is present it takes precedence, and zero never clears
+    # the 0x094/0x380 fallback unless position itself activated the section.
+    position_timestamp = self._vehicle_navi_message_timestamp(cp, getattr(self, "navi_position_msg", "NEW_MSG_4B4"))
     position_seen = position_timestamp > 0
     position_age = getattr(cp, "_last_update_nanos", position_timestamp) - position_timestamp
     position_recent = position_seen and 0 <= position_age <= VEHICLE_NAVI_POSITION_TIMEOUT_NS
     range_avg_speed = (int(self.navi_position_4b4.get("POS_RANGE_AVG_SPEED", 0))
                        if position_recent and self.navi_position_4b4 is not None else 0)
-    range_section_active = 0 < range_avg_speed < 511
+    range_section_active = 0 < range_avg_speed <= VEHICLE_NAVI_RANGE_AVG_MAX_SPEED
 
     if self.navi_segment_4b9 is not None:
       timestamp = self._vehicle_navi_message_timestamp(cp, self.navi_segment_msg)
@@ -1963,7 +2167,7 @@ class CarState(CarStateBase):
           self.vehicleNaviRoadClass = segment["functional_road_class"]
         if segment["calculated_route"] == 2:
           self.vehicleNaviRouteResetTimestamp = timestamp
-          self._clear_vehicle_navi_events()
+          self._clear_vehicle_navi_events(keep_entered_section=True)
           self._clear_vehicle_navi_speed_zone()
           self._clear_vehicle_navi_school_zone()
         elif (self.vehicleNaviCanControl >= 2 and
@@ -2137,6 +2341,12 @@ class CarState(CarStateBase):
       if values is not None and timestamp > getattr(self, timestamp_attr):
         setattr(self, timestamp_attr, timestamp)
         self._handle_vehicle_navi_profile(values, timestamp, ret, speed_limit_cam, on_controlled_access_road)
+        if timestamp_attr == "vehicleNaviProfileTimestamp" and self.navi_profile_msg == CANFD_NAVI_PROFILE_MSG:
+          slot1 = self._decode_canfd_profile_slot1(getattr(cp, "dat", {}).get(0x93, b""))
+          if slot1 is not None:
+            self._handle_vehicle_navi_profile(slot1, timestamp, ret, speed_limit_cam, on_controlled_access_road)
+
+    ev4_in_section = self._update_ev4_navi_section(cp, ret, speed_limit_cam)
 
     if alt_navi_arch and position_4de_recent_valid:
       # 진짜 0x4DE POSITION 구간 신호가 살아 있는 동안은 이를 최우선으로 따르고,
@@ -2146,16 +2356,34 @@ class CarState(CarStateBase):
       elif 30 < ret.speedLimit < 255:
         self.vehicleNaviSpeedZoneActive = True
         self.vehicleNaviSpeedZoneSpeed = ret.speedLimit
+        self.vehicleNaviSpeedZoneUsesPosition = True
     elif alt_navi_arch:
       # A persistent camera warning alone does not establish a section.
       # Missing, expired or sentinel POSITION must release the section latch.
       self._clear_vehicle_navi_speed_zone()
     elif position_seen:
-      if not range_section_active or not self.vehicleNaviCanControl or 0 < ret.speedLimit <= 30:
-        self._clear_vehicle_navi_speed_zone()
-      elif 30 < ret.speedLimit < 255:
-        self.vehicleNaviSpeedZoneActive = True
-        self.vehicleNaviSpeedZoneSpeed = ret.speedLimit
+      if self.canfd_wrapped_navi or self.canfd_ev4_navi:
+        ev4_status = getattr(self, "ev4NaviStatus", None)
+        section_limit = (ret.speedLimit if 30 < ret.speedLimit < 255 else
+                         (ev4_status[0] if ev4_status is not None and 30 < ev4_status[0] < 255 else 0))
+        if range_section_active and self.vehicleNaviCanControl and section_limit > 30:
+          self.vehicleNaviSpeedZoneActive = True
+          self.vehicleNaviSpeedZoneSpeed = section_limit
+          self.vehicleNaviSpeedZoneUsesPosition = True
+          self.vehicleNaviSpeedZoneUsesNaviStatus = False
+          self.vehicleNaviSpeedZoneLostNanos = None
+        elif getattr(self, "vehicleNaviSpeedZoneUsesPosition", False):
+          self._clear_vehicle_navi_speed_zone()
+          if (getattr(self, "ev4Section", None) is not None and
+              (self.ev4Section.get("entered") or self.totalDistance >= self.ev4Section["start"] - 200.0)):
+            self._finish_ev4_navi_section()
+      else:
+        if not range_section_active or not self.vehicleNaviCanControl or 0 < ret.speedLimit <= 30:
+          self._clear_vehicle_navi_speed_zone()
+        elif 30 < ret.speedLimit < 255:
+          self.vehicleNaviSpeedZoneActive = True
+          self.vehicleNaviSpeedZoneSpeed = ret.speedLimit
+          self.vehicleNaviSpeedZoneUsesPosition = True
 
     self.vehicleNaviEvents = [event for event in self.vehicleNaviEvents
                               if event["target"] >= self.totalDistance - VEHICLE_NAVI_PASSED_EVENT_DISTANCE and
@@ -2213,15 +2441,22 @@ class CarState(CarStateBase):
     if bumps:
       ret.speedBumpDistance = bumps[0]["target"] - self.totalDistance
 
-    if (self.vehicleNaviSpeedZoneActive and not self.canfd_wrapped_navi and
-        not (position_seen or position_4de_recent_valid) and not speed_limit_cam):
+    position_authoritative = (position_seen and not (self.canfd_wrapped_navi or self.canfd_ev4_navi)) or position_4de_recent_valid
+    if self.vehicleNaviSpeedZoneActive and getattr(self, "vehicleNaviSpeedZoneUsesNaviStatus", False):
+      if self._ev4_navi_status_zone_ended(self.vehicleNaviSpeedZoneSpeed, "vehicleNaviSpeedZoneLostNanos", cp._last_update_nanos):
+        self._clear_vehicle_navi_speed_zone()
+    elif (self.vehicleNaviSpeedZoneActive and not self.canfd_wrapped_navi and
+          not getattr(self, "vehicleNaviSpeedZoneUsesPosition", False) and
+          (self.canfd_ev4_navi or (not position_authoritative and not speed_limit_cam))):
       self._clear_vehicle_navi_speed_zone()
 
     if self.vehicleNaviSchoolZoneActive:
       camera_status_ended = (self.vehicleNaviSchoolZoneUsesCameraStatus and
                              (not speed_limit_cam or ret.speedLimit != 30))
       distance_expired = self.totalDistance - self.vehicleNaviSchoolZoneStartDistance >= VEHICLE_NAVI_SCHOOL_ZONE_MAX_DISTANCE
-      if camera_status_ended or distance_expired:
+      navi_status_ended = (getattr(self, "vehicleNaviSchoolZoneUsesNaviStatus", False) and
+                           self._ev4_navi_status_zone_ended(30, "vehicleNaviSchoolZoneLostNanos", cp._last_update_nanos))
+      if camera_status_ended or navi_status_ended or distance_expired:
         self._clear_vehicle_navi_school_zone()
 
     school_zone_pre_active = False
@@ -2238,12 +2473,15 @@ class CarState(CarStateBase):
         ret.vehicleNaviSpeed = 30
       return False
 
-    section_control_enabled = self.vehicleNaviCanControl and self.vehicleNaviSpeedZoneActive and self.speedcamSectionAvgControl
-    section_suppressed = self.vehicleNaviCanControl and self.vehicleNaviSpeedZoneActive and not self.speedcamSectionAvgControl
+    ev4_section_active = (ev4_in_section and not getattr(self, "vehicleNaviSpeedZoneUsesPosition", False) and
+                          getattr(self, "ev4Section", None) is not None)
+    any_section_active = self.vehicleNaviSpeedZoneActive or ev4_section_active
+    section_control_enabled = self.vehicleNaviCanControl and any_section_active and self.speedcamSectionAvgControl
+    section_suppressed = self.vehicleNaviCanControl and any_section_active and not self.speedcamSectionAvgControl
     if section_control_enabled:
       ret.vehicleNaviActive = True
       ret.vehicleNaviSectionActive = True
-      ret.vehicleNaviSpeed = self.vehicleNaviSpeedZoneSpeed
+      ret.vehicleNaviSpeed = self.ev4Section["speed"] if ev4_section_active else self.vehicleNaviSpeedZoneSpeed
 
     cameras = [event for event in upcoming if event["type"] == "camera"]
     # PV5 previews have no current-route proof: never promote one to control
@@ -2684,12 +2922,13 @@ class CarState(CarStateBase):
     wrapped_navi = CP.carFingerprint == CAR.KIA_PV5
     ev4_navi = CP.carFingerprint == CAR.KIA_EV4
     if wrapped_navi:
-      msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan),
+      msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_POSITION_MSG, math.nan),
+              (CANFD_NAVI_PROFILE_MSG, math.nan),
               (CANFD_NAVI_SEGMENT_MSG, math.nan), (CANFD_NAVI_PROSHORT_MSG, math.nan),
               (CANFD_NAVI_RAMP_MSG, math.nan), (CANFD_NAVI_STUB_MSG, math.nan)]
       alt_msgs = [(CANFD_NAVI_STATUS_MSG, math.nan)]
     elif ev4_navi:
-      msgs = [(CANFD_HDA_INFO_MSG, math.nan),
+      msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_POSITION_MSG, math.nan),
               (CANFD_NAVI_SEGMENT_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan),
               (CANFD_NAVI_PROSHORT_MSG, math.nan), (CANFD_NAVI_RAMP_MSG, math.nan),
               (CANFD_NAVI_STUB_MSG, math.nan)]
