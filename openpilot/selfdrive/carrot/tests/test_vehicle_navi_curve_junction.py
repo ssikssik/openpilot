@@ -573,9 +573,50 @@ def test_carrot_serv_vehicle_navi_atc_gating_and_priority():
   serv.xTurnInfo = -1
   cs.vehicleNaviTurnInfo = -1
   cs.vehicleNaviTurnDistance = 0.0
+  cs.vehicleNaviTurnDisplayType = 0x08
   serv._apply_vehicle_navi_tbt(cs)
   assert serv.szTBTMainText == ""
   assert serv.vehicle_navi_tbt_active is False
+
+  # Close city turn holds through intersection when 0x2A3 advances early to next far maneuver,
+  # and drops immediately on reroute/compass (0x09/0x08) or after -35m.
+  cs.vehicleNaviTurnInfo = 2
+  cs.vehicleNaviTurnDistance = 15.0
+  cs.vehicleNaviTurnDisplayType = 0x43
+  serv._apply_vehicle_navi_tbt(cs, delta_dist=1.0)
+  assert (serv.xTurnInfo, serv.xDistToTurn) == (2, pytest.approx(15.0))
+  # 0x2A3 jumps early to next maneuver (U-turn 900m) -> keep holding turn right through intersection
+  serv.xTurnInfo = -1
+  cs.vehicleNaviTurnInfo = 7
+  cs.vehicleNaviTurnDistance = 900.0
+  cs.vehicleNaviTurnDisplayType = 0x48
+  serv._apply_vehicle_navi_tbt(cs, delta_dist=10.0)
+  assert (serv.xTurnInfo, serv.xDistToTurn, serv.szTBTMainText) == (2, pytest.approx(5.0), "우회전")
+  serv.xTurnInfo = -1
+  serv._apply_vehicle_navi_tbt(cs, delta_dist=15.0)
+  assert (serv.xTurnInfo, serv.xDistToTurn) == (2, pytest.approx(-10.0))
+  # Past -35m -> releases to next maneuver
+  serv.xTurnInfo = -1
+  serv._apply_vehicle_navi_tbt(cs, delta_dist=30.0)
+  assert (serv.xTurnInfo, serv.xDistToTurn, serv.szTBTMainText) == (7, pytest.approx(900.0), "유턴")
+  # Explicit reroute (0x09) cancels hold immediately
+  serv.xTurnInfo = -1
+  cs.vehicleNaviTurnInfo = 1
+  cs.vehicleNaviTurnDistance = 10.0
+  cs.vehicleNaviTurnDisplayType = 0x46
+  serv._apply_vehicle_navi_tbt(cs, delta_dist=1.0)
+  serv.xTurnInfo = -1
+  cs.vehicleNaviTurnInfo = -1
+  cs.vehicleNaviTurnDistance = 0.0
+  cs.vehicleNaviTurnDisplayType = 0x09
+  serv._apply_vehicle_navi_tbt(cs, delta_dist=2.0)
+  assert serv.xTurnInfo == -1
+  assert serv.vehicle_navi_tbt_hold is None
+  # Valhalla maneuver mapping for navInstructionCarrot
+  assert serv._vehicle_navi_tbt_maneuver(0x46, 1) == ("turn", "left")
+  assert serv._vehicle_navi_tbt_maneuver(0x43, 2) == ("turn", "right")
+  assert serv._vehicle_navi_tbt_maneuver(0xA4, 4) == ("off ramp", "right")
+  assert serv._vehicle_navi_tbt_maneuver(0x41, 3) == ("fork", "left")
 
 
 def test_carrot_planner_atc_active_accepts_stock_navi_tbt():

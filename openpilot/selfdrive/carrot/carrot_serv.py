@@ -172,6 +172,8 @@ class CarrotServ:
     self.xDistToTurnNext = 0
     self.vehicleNaviAtcControl = False
     self.vehicle_navi_tbt_active = False
+    self.vehicle_navi_tbt_display_type = 0
+    self.vehicle_navi_tbt_hold = None
 
     self.navType, self.navModifier = "invalid", ""
     self.navTypeNext, self.navModifierNext = "invalid", ""
@@ -1364,8 +1366,28 @@ class CarrotServ:
     entry = by_turn.get(int(turn_info))
     return entry.get(lang, entry["en"]) if entry is not None else ""
 
-  def _apply_vehicle_navi_tbt(self, CS):
+  @staticmethod
+  def _vehicle_navi_tbt_maneuver(display_type, turn_info):
+    if display_type == 0x47 and turn_info == 1:
+      return "turn", "slight left"
+    if display_type in (0xA4, 0x11):
+      return "off ramp", "right"
+    if display_type == 0xA1:
+      return "on ramp", "right"
+    return {
+      1: ("turn", "left"),
+      2: ("turn", "right"),
+      3: ("fork", "left"),
+      4: ("fork", "right"),
+      6: ("notification", "straight"),
+      7: ("turn", "uturn"),
+      8: ("arrive", "straight"),
+    }.get(int(turn_info), ("invalid", ""))
+
+  def _apply_vehicle_navi_tbt(self, CS, delta_dist=0.0):
     if not getattr(self, "vehicleNaviAtcControl", False) or self.external_navigation_active or self.xTurnInfo >= 0 or CS is None:
+      self.vehicle_navi_tbt_hold = None
+      self.vehicle_navi_tbt_display_type = 0
       if getattr(self, "vehicle_navi_tbt_active", False):
         if not self.external_navigation_active and self.xTurnInfo < 0:
           self.szTBTMainText = ""
@@ -1374,13 +1396,45 @@ class CarrotServ:
     turn_info = int(getattr(CS, "vehicleNaviTurnInfo", -1))
     turn_dist = float(getattr(CS, "vehicleNaviTurnDistance", 0.0))
     display_type = int(getattr(CS, "vehicleNaviTurnDisplayType", 0))
+    now = time.monotonic()
+
+    # Hyundai/Kia 0x2A3 often switches to the next far maneuver (or straight/waypoint) at 0..20 m before the
+    # intersection apex, whereas external nav holds turn left/right through -50 m past the turn point.
+    # Keep a bounded hold (-35 m / 8 s) for close city turns (1/2) unless route cancels/reroutes/arrives/times out.
+    cancel_display_types = (0x00, 0x02, 0x03, 0x08, 0x09)
+    hold = getattr(self, "vehicle_navi_tbt_hold", None)
+    if hold is not None:
+      advanced_same_route = (
+        display_type not in cancel_display_types and
+        (turn_info != hold["turn_info"] or turn_dist > max(45.0, hold["dist_m"] + 40.0))
+      )
+      if advanced_same_route:
+        hold["dist_m"] -= max(0.0, float(delta_dist))
+        if hold["dist_m"] > -35.0 and now < hold["expires"]:
+          self.xTurnInfo = hold["turn_info"]
+          self.xDistToTurn = hold["dist_m"]
+          self.vehicle_navi_tbt_display_type = hold["display_type"]
+          self.szTBTMainText = self._vehicle_navi_tbt_label(hold["display_type"], hold["turn_info"])
+          self.vehicle_navi_tbt_active = True
+          return
+      self.vehicle_navi_tbt_hold = None
+
     if turn_info > 0 and turn_dist >= 0.0:
       self.xTurnInfo = turn_info
       self.xDistToTurn = turn_dist
+      self.vehicle_navi_tbt_display_type = display_type
       self.szTBTMainText = self._vehicle_navi_tbt_label(display_type, turn_info)
       self.vehicle_navi_tbt_active = True
+      if turn_info in (1, 2) and turn_dist <= 35.0:
+        self.vehicle_navi_tbt_hold = {
+          "turn_info": turn_info,
+          "display_type": display_type,
+          "dist_m": turn_dist,
+          "expires": now + 8.0,
+        }
     elif getattr(self, "vehicle_navi_tbt_active", False):
       self.szTBTMainText = ""
+      self.vehicle_navi_tbt_display_type = 0
       self.vehicle_navi_tbt_active = False
 
   def update_nav_instruction(self, sm):
@@ -1499,7 +1553,7 @@ class CarrotServ:
       self.nGoPosDist = 0
     if self.active_carrot <= 1 or self.active_kisa_count > 0:
       self.update_nav_instruction(sm)
-    self._apply_vehicle_navi_tbt(CS)
+    self._apply_vehicle_navi_tbt(CS, delta_dist)
 
     rear_camera_speed, rear_camera_remaining = self._rear_camera_speed(CS, delta_dist)
     if self.xSpdType < 0 or (self.xSpdType not in [100,101] and self.xSpdDist <= 0) or (self.xSpdType in [100,101] and self.xSpdDist < -250):
@@ -1751,6 +1805,23 @@ class CarrotServ:
     elif not self._external_navigation_connected() and sm.alive['navInstruction'] and sm.valid['navInstruction']:
       inst.valid = True
       inst.navInstructionCarrot = sm['navInstruction']
+    elif getattr(self, "vehicle_navi_tbt_active", False) and self.xTurnInfo > 0:
+      navType, navModifier = self._vehicle_navi_tbt_maneuver(
+        getattr(self, "vehicle_navi_tbt_display_type", 0), self.xTurnInfo,
+      )
+      if navType != "invalid":
+        inst.valid = True
+        instruction = inst.navInstructionCarrot
+        instruction.speedLimit = self.nRoadLimitSpeed / 3.6 if self.nRoadLimitSpeed > 0 else 0
+        instruction.maneuverDistance = float(max(0.0, self.xDistToTurn))
+        instruction.maneuverPrimaryText = self.szTBTMainText
+        instruction.maneuverType = navType
+        instruction.maneuverModifier = navModifier
+        instruction.allManeuvers = [{
+          'distance': float(max(0.0, self.xDistToTurn)),
+          'type': navType,
+          'modifier': navModifier,
+        }]
 
     pm.send('navInstructionCarrot', inst)
 

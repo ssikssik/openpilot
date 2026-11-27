@@ -1558,6 +1558,7 @@ class CarState(CarStateBase):
     decoded = self._decode_vehicle_navi_tbt(navi_tbt, link_class)
     if decoded is None:
       self.vehicleNaviTbtAnchorKey = None
+      ret.vehicleNaviTurnDisplayType = int(navi_tbt.get("TBT_DISPLAY_TYPE", 0))
       return
     raw_dist = decoded["dist_m"]
     key = (decoded["turn_info"], decoded["display_type"], int(round(raw_dist)))
