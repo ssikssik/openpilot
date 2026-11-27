@@ -399,3 +399,10 @@ Automatic CAN diagnostic logs are generated only when currently received vehicle
 - Setting ranges/defaults: `openpilot/selfdrive/carrot_settings.json`, `openpilot/common/params_keys.h`
 
 [Back to Understanding Settings](settings.md)
+
+
+## November 27 synchronization
+
+Shared CAN-FD handling checks message length and freshness for brake lamps, yaw rate, signed steering rate and front BSD. Stale BSD data cannot authorize right-turn lane-change assistance. Repeated build interruptions preserve the first cutoff; failed recovery or clock rollback uses the full recovery path.
+
+This carrot-dev branch retains its existing EV4 0x094/0x380 section fallback and curve/ramp/junction behavior. Conflicting upstream navigation changes are excluded.
