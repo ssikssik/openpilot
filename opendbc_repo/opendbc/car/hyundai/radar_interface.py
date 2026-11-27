@@ -15,7 +15,7 @@ from opendbc.can import CANParser
 from opendbc.car import Bus, structs
 from opendbc.car.interfaces import RadarInterfaceBase
 from opendbc.car.radar_lead_filter import RadarLeadFilter
-from opendbc.car.hyundai.values import DBC, HyundaiFlags, HyundaiExtFlags
+from opendbc.car.hyundai.values import CAR, DBC, HyundaiFlags, HyundaiExtFlags
 from openpilot.common.params import Params
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.radar_group3 import Group3Object, Group3TrackIds
@@ -258,7 +258,7 @@ def get_radar_can_parser_scc(CP):
 
   print("$$$$$$$$ ECAN = ", CAN.ECAN)    
   bus = CAN.CAM if CP.flags & HyundaiFlags.CAMERA_SCC else bus
-  return CANParser(DBC[CP.carFingerprint][Bus.pt], messages, bus)
+  return CANParser(DBC[CP.carFingerprint][Bus.pt], messages, bus, ignore_counter=CP.carFingerprint == CAR.KIA_EV4)
 
 from opendbc.car.hyundai.radar_bosch import (  # noqa: E402
   BOSCH_INACTIVE_WORD,
