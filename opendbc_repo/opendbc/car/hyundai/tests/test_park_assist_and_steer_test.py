@@ -1,5 +1,26 @@
 from types import SimpleNamespace
 
+import pytest
+
+from opendbc.car.hyundai.carcontroller import CarController
+from opendbc.car.hyundai.values import CAR
+
+
+def angle_max(car, kph):
+  cc = SimpleNamespace(CP=SimpleNamespace(carFingerprint=car),
+                       params=SimpleNamespace(ANGLE_LIMITS=SimpleNamespace(STEER_ANGLE_MAX=175)))
+  return CarController.steer_angle_max(cc, kph / 3.6)
+
+
+@pytest.mark.parametrize("kph, expected", [(kph, 175) for kph in (0, 5, 20, 30, 35, 40, 50)])
+def test_low_speed_angle_max(kph, expected):
+  assert angle_max(CAR.KIA_EV4, kph) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("kph", [0, 5, 20, 30, 35, 40, 50])
+@pytest.mark.parametrize("car", [CAR.HYUNDAI_IONIQ_5_PE, CAR.KIA_EV9])
+def test_other_cars_keep_standard_angle_max(car, kph):
+  assert angle_max(car, kph) == 175
 
 
 def test_park_assist_stand_aside_only_at_parking_speeds():

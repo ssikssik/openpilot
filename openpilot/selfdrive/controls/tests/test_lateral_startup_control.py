@@ -15,7 +15,7 @@ from openpilot.selfdrive.car.voice_indicator import set_lane_change_blinkers
 from openpilot.selfdrive.selfdrived.vehicle_faults import inhibit_faulted_controls
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.interfaces import CarInterfaceBase
-from openpilot.selfdrive.controls.lib.drive_helpers import CameraOffsetCorrector, ClampSteerCorrector, EntryLeadCorrector, LaneCenterCorrector, clip_curvature, get_lag_adjusted_curvature
+from openpilot.selfdrive.controls.lib.drive_helpers import CameraOffsetCorrector, ClampSteerCorrector, EntryLeadCorrector, LaneCenterCorrector, clip_curvature, get_lag_adjusted_curvature, read_lat_accel_limits
 from openpilot.selfdrive.controls.lib.latcontrol import MIN_LATERAL_CONTROL_SPEED
 from openpilot.selfdrive.controls.lib.latcontrol_torque import LatControlTorque
 from openpilot.selfdrive.controls.lib.lateral_readiness import LateralStartupGate, lateral_vehicle_parameters
@@ -34,7 +34,7 @@ def control_fixture():
   ns = {'math': math, 'np': np, 'Number': Number, 'car': car, 'log': log, 'DT_CTRL': DT_CTRL, 'CV': CV,
         'MIN_LATERAL_CONTROL_SPEED': MIN_LATERAL_CONTROL_SPEED, 'LaneChangeState': log.LaneChangeState,
         'LaneChangeDirection': log.LaneChangeDirection, 'ACTUATOR_FIELDS': tuple(car.CarControl.Actuators.schema.fields),
-        'clip_curvature': clip_curvature,
+        'clip_curvature': clip_curvature, 'read_lat_accel_limits': read_lat_accel_limits,
         'get_carrot_man': lambda sm: None, 'get_lag_adjusted_curvature': get_lag_adjusted_curvature,
         'resolve_vehicle_model_steer_ratio': resolve_vehicle_model_steer_ratio,
         'lateral_vehicle_parameters': lateral_vehicle_parameters,

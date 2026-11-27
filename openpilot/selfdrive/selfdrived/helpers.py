@@ -37,7 +37,7 @@ class ExcessiveActuationCheck:
     excessive_lat_actuation = False
     self._engaged_counter = self._engaged_counter + 1 if sm['carControl'].latActive and not CS.steeringPressed else 0
     if self._engaged_counter > MIN_LATERAL_ENGAGE_BUFFER:
-      if abs(roll_compensated_lateral_accel) > ISO_LATERAL_ACCEL * 2:
+      if abs(roll_compensated_lateral_accel) > ISO_LATERAL_ACCEL * 2.5:
         excessive_lat_actuation = True
 
     # livePose acceleration can be noisy due to bad mounting or aliased livePose measurements

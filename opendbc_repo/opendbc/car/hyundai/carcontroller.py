@@ -13,7 +13,9 @@ from opendbc.car.hyundai.palisade_cgw_test import PalisadeCgwTest, cgw_frame
 from opendbc.car.hyundai.steering_handover import SteeringHandover
 from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.hyundaicanfd import CanBus
-from opendbc.car.hyundai.values import HyundaiFlags, HyundaiSafetyFlags, Buttons, CarControllerParams, CAR, CAN_GEARS, HyundaiExtFlags
+from opendbc.car.hyundai.values import (HyundaiFlags, HyundaiSafetyFlags, Buttons, CarControllerParams, CAR, CAN_GEARS,
+                                        HyundaiExtFlags, steering_angle_max, steering_angle_max_torque,
+                                        steering_angle_smooth_tau)
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.hyundai.values import get_pedal_interceptor_params
@@ -44,7 +46,7 @@ PRE_OVERRIDE_MAX_TORQUE_DELTA = -10.0
 OVERRIDE_COUNT_MIN_FRAMES = int(0.3 / DT_CTRL)
 LOW_SPEED_ANGLE_RATE_RAMP_SPEED = 15.0 * CV.KPH_TO_MS
 MID_SPEED_ANGLE_RATE_LIMIT_SPEED = 40.0 * CV.KPH_TO_MS
-# SteerAngleTest range. The LKAS angle itself stays at STEER_ANGLE_MAX: 10-29 test (20261029_2056) the EPS stopped at
+# SteerAngleTest range. Non-EV4 LKAS angles stay at STEER_ANGLE_MAX: 10-29 test (20261029_2056) the EPS stopped at
 # ~180 deg and raised steerFaultTemporary whenever asked for more
 STEER_ANGLE_TEST_MAX = 450.  # deg
 # Stock parking assist steering: the camera's LFA turns VALUE63 to 15 when it starts (10-29, two auto parks). openpilot's
@@ -54,7 +56,7 @@ PARK_ASSIST_MAX_KPH = 10.
 # latActive stands aside only where VALUE63 15 was seen to mean the stock auto park (other cars: unverified, 11-12 review)
 PARK_ASSIST_YIELD_CARS = (CAR.HYUNDAI_IONIQ_5_PE,)
 STEER_ANGLE_TEST_RATE = 1.0  # deg/tick toward SteerAngleTest
-LARGE_ANGLE_UNWIND_RATE = 1.5  # deg/tick: allow a quicker return from the EPS fault-angle region
+LARGE_ANGLE_UNWIND_RATE = 2.2  # deg/tick: allow a quicker return from the EPS fault-angle region
 CANFD_JERK_UPPER_MIN = 1.0
 CANFD_JERK_LIMIT_MAX = 5.0
 CANFD_DEPART_JERK_UPPER = 3.0  # StopGoLongAssist departure: no-lead departures already send 2.8-3.3 (02_logs §22)
@@ -236,23 +238,23 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
                                      steer_sw_max_deg: float,
                                      model_v2=None) -> float:
   max_lat_accel = 8.5   # m/s^2
-  max_lat_jerk  = 4.0   # m/s^3
+  max_lat_jerk  = 7.0   # m/s^3
   y_std_1s = 0.1
   if model_v2 is not None and len(model_v2.position.yStd) > 10:
     model_y_std_1s = float(model_v2.position.yStd[10])
     if np.isfinite(model_y_std_1s) and model_y_std_1s >= 0.0:
       y_std_1s = model_y_std_1s
-  max_sw_rate_deg_per_tick = float(np.interp(y_std_1s, [0.1, 0.2, 0.4], [2.0, 1.5, 0.8]))
+  max_sw_rate_deg_per_tick = float(np.interp(y_std_1s, [0.1, 0.2, 0.4], [2.8, 2.0, 1.1]))
   v = max(float(v_ego), 1.0)
 
   target_sw = clip_float(desired_sw_deg, -steer_sw_max_deg, steer_sw_max_deg)
   if v_ego < MID_SPEED_ANGLE_RATE_LIMIT_SPEED:
     # Keep low/mid-speed angle commands quieter without reducing LKAS_ANGLE_MAX_TORQUE.
-    # Allow the angle, but slow the arrival: 0~15 kph ramps 0.8->1.1 deg/tick,
-    # then 15~40 kph tapers 1.1->0.8 deg/tick. Above 40 kph, physics limits take over.
+    # The extra cap ramps from 1.8 to 2.2 deg/tick at 0~15 kph, then tapers to
+    # 1.8 deg/tick at 40 kph. At 40 kph and above, this extra cap does not apply.
     low_mid_speed_cap = float(np.interp(v_ego,
                                         [0.0, LOW_SPEED_ANGLE_RATE_RAMP_SPEED, MID_SPEED_ANGLE_RATE_LIMIT_SPEED],
-                                        [0.8, 1.1, 0.8]))
+                                        [1.8, 2.2, 1.8]))
     max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, low_mid_speed_cap)
 
   target_rw = target_sw / steer_ratio
@@ -263,14 +265,14 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
   rw_max = float(np.degrees(rw_max_rad))
 
   # --- jerk -> rate limit ---
-  sec2 = 1.2
+  sec2 = 1.0
   max_drw_dt = (max_lat_jerk * wheelbase_m) / (v * v * sec2)     # rad/s
   max_drw_per_tick = max_drw_dt * DT_CTRL                        # rad/tick
   max_drw_per_tick_deg = float(np.degrees(max_drw_per_tick))
 
   err = abs(target_sw - last_sw_deg)
   if err > 20.0:
-    max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, 1.0)
+    max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, 2.2)
 
   # Once steering is in the large-angle region, do not make the return toward center wait on
   # the normal low-speed/large-error cap. This only relaxes unwinding; winding farther into the
@@ -302,6 +304,15 @@ def park_assist_active(CS):
 
 
 class CarController(CarControllerBase):
+  def steer_angle_max(self, v_ego_raw):
+    return steering_angle_max(self.CP.carFingerprint, v_ego_raw, self.params.ANGLE_LIMITS.STEER_ANGLE_MAX)
+
+  def steer_angle_max_torque(self, v_ego_raw):
+    return steering_angle_max_torque(self.CP.carFingerprint, v_ego_raw, self.angle_max_torque)
+
+  def steer_angle_smooth_tau(self, v_ego_raw):
+    return steering_angle_smooth_tau(self.CP.carFingerprint, v_ego_raw)
+
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
     self.CAN = CanBus(CP)
@@ -389,6 +400,7 @@ class CarController(CarControllerBase):
     self.button_spam3 = 1
 
     self.apply_angle_last = 0
+    self.apply_angle_filtered = None
     self.steering_template_ready = False
     self.lkas_max_torque = 0
     self.angle_max_torque = 250
@@ -864,15 +876,29 @@ class CarController(CarControllerBase):
     #apply_angle = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_angle_last, CS.out.vEgoRaw,
     #                                           CS.out.steeringAngleDeg, CC.latActive, self.params.ANGLE_LIMITS)
 
+    desired_angle = float(actuators.steeringAngleDeg)
+    if not CC.latActive:
+      self.apply_angle_filtered = float(CS.out.steeringAngleDeg)
+    else:
+      smooth_tau = self.steer_angle_smooth_tau(CS.out.vEgoRaw)
+      if smooth_tau > 0.0:
+        if self.apply_angle_filtered is None or not np.isfinite(self.apply_angle_filtered):
+          self.apply_angle_filtered = float(self.apply_angle_last)
+        smooth_alpha = DT_CTRL / (smooth_tau + DT_CTRL)
+        self.apply_angle_filtered += smooth_alpha * (desired_angle - self.apply_angle_filtered)
+        desired_angle = self.apply_angle_filtered
+      else:
+        self.apply_angle_filtered = desired_angle
+
     apply_angle = apply_steer_angle_limits_physics(
-      actuators.steeringAngleDeg,
+      desired_angle,
       self.apply_angle_last,
       CS.out.vEgoRaw,
       CS.out.steeringAngleDeg,
       CC.latActive,
       self.CP.wheelbase,
       self.CP.steerRatio,
-      self.params.ANGLE_LIMITS.STEER_ANGLE_MAX,
+      self.steer_angle_max(CS.out.vEgoRaw),
       CS.modelV2,
     )
 
@@ -880,7 +906,7 @@ class CarController(CarControllerBase):
     if angle_control:
       apply_steer_req = CC.latActive
 
-    angle_torque_cap = self.angle_max_torque
+    angle_torque_cap = self.steer_angle_max_torque(CS.out.vEgoRaw)
 
     steering_pressed_rising = CS.out.steeringPressed and not self.steering_pressed_prev
     if steering_pressed_rising:
@@ -939,7 +965,7 @@ class CarController(CarControllerBase):
     elif pre_override_yield > 0.0:
       # Start handing off gently before steeringPressed flips to avoid a sharp torque drop.
       torque_delta = PRE_OVERRIDE_MAX_TORQUE_DELTA * pre_override_yield
-    elif self.lkas_max_torque >= self.angle_max_torque:
+    elif self.lkas_max_torque >= angle_torque_cap:
       # Once fully recovered, hold full authority until the next driver override.
       torque_delta = 0.0
     elif self.override_latched:
@@ -969,13 +995,13 @@ class CarController(CarControllerBase):
         [0, 1, 2, 3],
         [0.1, 1.0, 2.0, 3.0],
       )))
-      base_rate_up = (self.angle_max_torque - self.params.ANGLE_MIN_TORQUE) * DT_CTRL / recovery_time
+      base_rate_up = (angle_torque_cap - self.params.ANGLE_MIN_TORQUE) * DT_CTRL / recovery_time
 
       # During recovery, taper the rate to zero. Only steeringPressed can reduce authority.
       torque_delta = base_rate_up * float(np.interp(torque_ratio, [0.6, 0.8], [1.0, 0.0]))
     self.lkas_max_torque = clip_float(self.lkas_max_torque + torque_delta, self.params.ANGLE_MIN_TORQUE, angle_torque_cap)
 
-    if not CS.out.steeringPressed and self.recovering_from_override and self.lkas_max_torque >= self.angle_max_torque:
+    if not CS.out.steeringPressed and self.recovering_from_override and self.lkas_max_torque >= angle_torque_cap:
       self.recovering_from_override = False
       self.full_recovery_frames = 1
     elif not CS.out.steeringPressed and self.full_recovery_frames > 0:
@@ -1013,7 +1039,7 @@ class CarController(CarControllerBase):
       steering_authority = self.steer_handover.update(
         # Combined convergence/release recovery is standard for angle control.
         mode=3, now=now_nanos * 1e-9, baseline=self.lkas_max_torque,
-        minimum=self.params.ANGLE_MIN_TORQUE, maximum=self.angle_max_torque,
+        minimum=self.params.ANGLE_MIN_TORQUE, maximum=angle_torque_cap,
         driver=driver_torque, threshold=torque_threshold, pressed=CS.out.steeringPressed,
         target_error=actuators.steeringAngleDeg - CS.out.steeringAngleDeg,
         command_error=apply_angle - CS.out.steeringAngleDeg, speed=CS.out.vEgoRaw,
@@ -1529,4 +1555,3 @@ class HyundaiJerk:
         self.jerk_l = min(max(1.0, -self.jerk * 4.0), jerk_max_l)
         self.cb_upper = np.clip(0.9 + accel * 0.2, 0, 1.2)
         self.cb_lower = np.clip(0.8 + accel * 0.2, 0, 1.2)
-

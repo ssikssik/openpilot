@@ -34,7 +34,7 @@ def setup_controller(monkeypatch, *, mode=None, angle=True, camera=True):
   controller.lkas_max_torque = 25
   cs = NS(out=structs.CarState(canValid=True, steeringPressed=True, steeringTorque=300, vEgoRaw=15),
           modelV2=NS(frameId=1, position=NS(yStd=[0.1] * 33)), is_metric=True,
-          adrv_0x161=None, mdps=None, steer_touch_2af=None, lfa_alt={}, lfa={})
+          blinker_stalks=None, adrv_0x161=None, mdps=None, steer_touch_2af=None, lfa_alt={}, lfa={})
   cc = structs.CarControl(enabled=True, latActive=True)
   cc.actuators.steeringAngleDeg = 0.5
   return controller, cs, cc, settings

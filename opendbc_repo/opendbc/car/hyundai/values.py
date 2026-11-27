@@ -2,6 +2,8 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum, IntFlag
 
+import numpy as np
+
 from opendbc.car import Bus, CarSpecs, DbcDict, PlatformConfig, Platforms, uds, AngleSteeringLimits
 from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.structs import CarParams
@@ -169,8 +171,8 @@ class HyundaiExtFlags(IntFlag):
   RADAR_GROUP4 = 2 ** 15  # 0x500-0x507 Denso DNMWR006 stable radar tracks
   EV_MODE_STATUS_230 = 2 ** 16  # ECAN 0x230/DLC32 exposes the hybrid power-flow mode used for the EV indicator
   BOSCH_RADAR = 2 ** 17  # passive Bosch MRRevo14F 0x601-0x612 receive provider (see BOSCH_MRREVO14F_CAR)
+  CANFD_INDICATOR_HOLD = 2 ** 19  # Camera ADRV_0x1EA/DLC32 indicator hold
   BOSCH_RADAR_BUS1 = 2 ** 18  # Observed receive src=1; otherwise use LKAS camera CAN (src=2)
-  CANFD_INDICATOR_HOLD = 2 ** 19  # Observed camera ADRV_0x1EA/DLC32 for an external indicator hold
 
 class Footnote(Enum):
   CANFD = CarFootnote(
@@ -1135,3 +1137,24 @@ if __name__ == "__main__":
   cars.sort()
   for c in cars:
     print(c)
+
+
+def steering_angle_max(fingerprint, v_ego_raw, standard_max=CarControllerParams.ANGLE_LIMITS.STEER_ANGLE_MAX):
+  return standard_max
+
+
+def steering_angle_max_torque(fingerprint, v_ego_raw, standard_max=250.0):
+  if fingerprint != CAR.KIA_EV4:
+    return float(standard_max)
+  # EV4 stock LFA_ALT (0xCB) sends ~109-124 max torque at 20-40 kph and up to ~192 at 40-60 kph.
+  # Holding 250 at low speed over-stiffens the MDPS angle loop and excites 9-10 Hz column shudder.
+  v_kph = max(0.0, float(v_ego_raw) * CV.MS_TO_KPH)
+  return float(np.interp(v_kph, (0.0, 30.0, 40.0, 60.0, 80.0), (135.0, 135.0, 155.0, 200.0, float(standard_max))))
+
+
+def steering_angle_smooth_tau(fingerprint, v_ego_raw):
+  if fingerprint != CAR.KIA_EV4:
+    return 0.0
+  # Smooth stale-carControl 0-step / 2x-jump impulses on 0xCB at low/mid speed without adding highway lag.
+  v_kph = max(0.0, float(v_ego_raw) * CV.MS_TO_KPH)
+  return float(np.interp(v_kph, (0.0, 45.0, 60.0), (0.030, 0.025, 0.0)))
