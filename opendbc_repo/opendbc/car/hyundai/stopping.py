@@ -16,11 +16,22 @@ MOVING_SPEED = 0.10
 STOP_CONFIRM_TIME = 0.2
 APPROACH_ACCEL = -0.5
 STOP_LOWER_BAND = 0.20  # fixed during active ACC, including before StopReq; never copied from stock
-# SmoothFinalStop: below FINAL_TAPER_SPEED the approach request is released linearly to FINAL_TAPER_ACCEL at
-# ENTRY_SPEED, like a driver easing off the brake, so the wheels do not stop while ~0.35 m/s^2 is still applied
-# (EV4 route 0000034a--4: aEgo -0.35 -> 0 in 0.3 s at 0.4 km/h). Adds ~0.3 m of stopping distance from 0.8 m/s.
+# SmoothFinalStop: below FINAL_TAPER_SPEED the approach request is released toward FINAL_TAPER_ACCEL at a constant
+# rate (linear in time), like a driver easing off the brake, so the wheels do not stop while ~0.35 m/s^2 is still
+# applied (EV4 route 0000034a--4: aEgo -0.35 -> 0 in 0.3 s at 0.4 km/h). The ramp starts from the value last sent,
+# so the hand-off from the LoC stop entry never steps, and each frame picks the rate that would reach
+# FINAL_TAPER_ACCEL exactly at ENTRY_SPEED if the request were followed: when the car under-delivers and slows
+# later, the release slows with it instead of finishing early (a speed-indexed taper did both: EV4 0000034b--12
+# released -0.53 -> -0.38 in one step, then crawled at ~0.1 m/s^3, then stepped -0.15 -> 0 at StopReq).
 FINAL_TAPER_SPEED = 0.8  # m/s (~2.9 km/h)
-FINAL_TAPER_ACCEL = -0.15
+FINAL_TAPER_ACCEL = -0.15  # request left when StopReq zeros it (EV4 still settles at ~-0.1 with it)
+FINAL_TAPER_MAX_RATE = 1.0  # m/s^3: release-rate cap; a -0.96 hold entering at 0.75 m/s needs ~0.8
+FINAL_TAPER_MAX_TIME = 3.0  # s: the release never takes longer; afterwards FINAL_TAPER_ACCEL holds until StopReq
+# The car may deliver only part of a small request (EV4 at crawl speed: ~40-60%), which would make the ramp front-load
+# its release and then crawl. Scale the expected deceleration by the measured share, filtered over ~0.5 s.
+FINAL_TAPER_TRACKING_TAU = 0.5  # s
+FINAL_TAPER_TRACKING_MIN = 0.3
+FINAL_TAPER_TRACKING_MAX = 1.2
 FINAL_TAPER_URGENT_ACCEL = -1.0  # a stronger request (urgent stop) is never tapered
 
 
@@ -50,6 +61,9 @@ class CanfdStopping:
     self.unheld_brake = False
     # SmoothFinalStop (carcontroller sets it from the setting). Off = approach floor unchanged.
     self.final_taper = False
+    self.taper_value = None
+    self.taper_tracking = 1.0
+    self.taper_min_rate = 0.0
     self.reset()
 
   def limit_scc_jerk_upper(self, stop_req: int, jerk_upper: float) -> float:
@@ -67,6 +81,7 @@ class CanfdStopping:
     self.stopped_time = 0.0
     self.unheld_motion = False
     self.scc_held_seen = False
+    self.taper_value = None
 
   def enter(self, phase: StopPhase, reason: str):
     self.phase = phase
@@ -74,7 +89,7 @@ class CanfdStopping:
 
   def update(self, *, active: bool, requested: bool, speed: float, held: bool,
              accel: float, previous_value: float, jerk_u: float, jerk_l: float,
-             smooth_lead_stop: bool = False) -> StopCommand | None:
+             smooth_lead_stop: bool = False, a_ego: float | None = None) -> StopCommand | None:
     # Caller validates sensor values and applies pedal/CAN/hold interlocks.
     if not active or not requested:
       self.reset()
@@ -113,9 +128,22 @@ class CanfdStopping:
     # Preserve the existing approach deceleration until initial low-speed entry.
     raw = min(accel, 0.0 if smooth_lead_stop else APPROACH_ACCEL)
     if self.final_taper and not smooth_lead_stop and accel >= FINAL_TAPER_URGENT_ACCEL and speed < FINAL_TAPER_SPEED:
-      ratio = max(0.0, (speed - ENTRY_SPEED) / (FINAL_TAPER_SPEED - ENTRY_SPEED))
-      # Scale from the request in force at FINAL_TAPER_SPEED (often stronger than the floor, e.g. a held LoC
-      # stopping output of -0.96) so entering the taper never steps the request (EV4 0000034b--14: -0.96 -> -0.46).
-      raw = FINAL_TAPER_ACCEL + ratio * (raw - FINAL_TAPER_ACCEL)
+      if self.taper_value is None:
+        self.taper_value = min(0.0, previous_value)
+        self.taper_tracking = 1.0
+        self.taper_min_rate = max(0.0, (FINAL_TAPER_ACCEL - self.taper_value) / FINAL_TAPER_MAX_TIME)
+      if a_ego is not None and self.taper_value < -0.05:
+        share = min(max(a_ego / self.taper_value, FINAL_TAPER_TRACKING_MIN), FINAL_TAPER_TRACKING_MAX)
+        self.taper_tracking += (share - self.taper_tracking) * min(1.0, DT / FINAL_TAPER_TRACKING_TAU)
+      if self.taper_value < FINAL_TAPER_ACCEL:
+        remaining_dv = max(speed - ENTRY_SPEED, 0.0)
+        # A constant-rate release from a to FINAL covers dv = T * k * |a + FINAL| / 2, k = delivered share.
+        mean_decel = max(-(self.taper_value + FINAL_TAPER_ACCEL) / 2.0 * self.taper_tracking, 0.03)
+        time_left = remaining_dv / mean_decel
+        rate = (FINAL_TAPER_ACCEL - self.taper_value) / time_left if time_left > DT else FINAL_TAPER_MAX_RATE
+        rate = min(max(rate, self.taper_min_rate), FINAL_TAPER_MAX_RATE)
+        self.taper_value = min(FINAL_TAPER_ACCEL, self.taper_value + rate * DT)
+      return StopCommand(0, self.taper_value, self.taper_value, STOP_LOWER_BAND)
+    self.taper_value = None
     value = min(0.0, max(previous_value - jerk_l * DT, min(raw, previous_value + jerk_u * DT)))
     return StopCommand(0, raw, value, STOP_LOWER_BAND)

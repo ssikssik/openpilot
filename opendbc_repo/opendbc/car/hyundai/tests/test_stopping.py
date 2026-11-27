@@ -603,31 +603,58 @@ def test_final_taper_off_keeps_approach_floor():
     assert step(controller, speed=speed, accel=-.5, previous_value=-.5).raw == -.5
 
 
-def test_final_taper_releases_floor_linearly_to_entry_then_zeros():
-  from opendbc.car.hyundai.stopping import APPROACH_ACCEL, FINAL_TAPER_ACCEL, FINAL_TAPER_SPEED
+def _simulate_taper_stop(start_value, start_speed=0.75, tracking=0.5):
+  """Car delivers only `tracking` of the request (EV4 at crawl speed delivers ~40-60%)."""
   controller = CanfdStopping()
   controller.final_taper = True
-  assert step(controller, speed=FINAL_TAPER_SPEED + .5, accel=-.5, previous_value=-.5).raw == APPROACH_ACCEL
-  assert step(controller, speed=FINAL_TAPER_SPEED, accel=-.5, previous_value=-.5).raw == pytest.approx(APPROACH_ACCEL)
-  mid = (FINAL_TAPER_SPEED + ENTRY_SPEED) / 2
-  assert step(controller, speed=mid, accel=-.5, previous_value=-.5).raw == pytest.approx((APPROACH_ACCEL + FINAL_TAPER_ACCEL) / 2)
-  # aReqValue follows within the jerk-upper ramp, never a step
-  cmd = step(controller, speed=ENTRY_SPEED + .001, accel=-.5, previous_value=-.5, jerk_u=1.0)
-  assert cmd.raw == pytest.approx(FINAL_TAPER_ACCEL, abs=1e-2)
-  assert cmd.value == pytest.approx(-.5 + DT)
-  cmd = step(controller, speed=ENTRY_SPEED, accel=-.5, previous_value=cmd.value)
-  assert (cmd.stop_req, cmd.raw, cmd.value) == (1, 0., 0.)
+  speed, value, values = start_speed, start_value, []
+  for _ in range(3000):
+    cmd = step(controller, speed=speed, accel=start_value, previous_value=value, a_ego=value * tracking)
+    values.append(cmd.value)
+    if cmd.stop_req:
+      return values
+    value = cmd.value
+    speed = max(0.0, speed + value * tracking * DT)
+  raise AssertionError("never reached StopReq")
 
 
-@pytest.mark.parametrize("accel", [-0.6, -0.96])
-def test_final_taper_is_continuous_from_a_stronger_request(accel):
-  from opendbc.car.hyundai.stopping import FINAL_TAPER_ACCEL, FINAL_TAPER_SPEED
+@pytest.mark.parametrize("start_value, tracking", [
+  (-0.38, 0.4), (-0.38, 0.6), (-0.38, 1.0), (-0.53, 0.4), (-0.53, 0.6), (-0.53, 1.0), (-0.96, 0.4), (-0.96, 0.6)])
+def test_final_taper_is_a_continuous_constant_rate_release(start_value, tracking):
+  from opendbc.car.hyundai.stopping import FINAL_TAPER_ACCEL, FINAL_TAPER_MAX_RATE
+  values = _simulate_taper_stop(start_value, tracking=tracking)
+  ramp, last = values[:-1], values[-1]
+  assert last == 0.0  # StopReq frame
+  # starts where the previous packet left off and never strengthens or snaps
+  assert abs(ramp[0] - start_value) <= FINAL_TAPER_MAX_RATE * DT + 1e-9
+  deltas = [b - a for a, b in zip(ramp, ramp[1:])]
+  assert all(-1e-9 <= d <= FINAL_TAPER_MAX_RATE * DT + 1e-9 for d in deltas)
+  # ends at the final request, so the StopReq zeroing is a small step
+  assert ramp[-1] == pytest.approx(FINAL_TAPER_ACCEL, abs=0.02)
+  # linear in time: over the middle 80% of the ramp the per-frame rate varies little
+  moving = [d for d in deltas if d > 1e-9]
+  core = moving[len(moving) // 10: len(moving) * 9 // 10]
+  assert max(core) - min(core) <= 0.5 * max(core)
+
+
+def test_final_taper_too_late_to_finish_still_releases_most_of_a_strong_hold():
+  # -0.96 held into the taper at 0.75 m/s with full tracking leaves ~0.8 s: release at the rate cap
+  values = _simulate_taper_stop(-0.96, tracking=1.0)
+  assert values[-1] == 0.0 and values[-2] >= -0.35
+
+
+def test_final_taper_release_never_takes_longer_than_max_time():
+  from opendbc.car.hyundai.stopping import FINAL_TAPER_ACCEL, FINAL_TAPER_MAX_TIME
+  values = _simulate_taper_stop(-0.53, tracking=0.25)
+  reached = next(i for i, v in enumerate(values) if v >= FINAL_TAPER_ACCEL - 1e-9)
+  assert reached * DT <= FINAL_TAPER_MAX_TIME + DT
+
+
+def test_final_taper_does_not_strengthen_a_weaker_request():
   controller = CanfdStopping()
   controller.final_taper = True
-  assert step(controller, speed=FINAL_TAPER_SPEED + .01, accel=accel, previous_value=accel).raw == accel
-  assert step(controller, speed=FINAL_TAPER_SPEED - .001, accel=accel, previous_value=accel).raw == pytest.approx(accel, abs=2e-3)
-  mid = (FINAL_TAPER_SPEED + ENTRY_SPEED) / 2
-  assert step(controller, speed=mid, accel=accel, previous_value=accel).raw == pytest.approx((accel + FINAL_TAPER_ACCEL) / 2)
+  cmd = step(controller, speed=.5, accel=-.5, previous_value=-.05)
+  assert cmd.value == -.05
 
 
 @pytest.mark.parametrize("accel", [-1.2, -2.0])
