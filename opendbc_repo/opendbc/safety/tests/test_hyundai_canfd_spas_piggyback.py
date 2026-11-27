@@ -194,6 +194,15 @@ def test_gv80_parking_ecu_lamp_fields_are_allowed():
   assert not d.s.safety_tx_hook(raw(3, 0x01, 0x41)) and not d.s.safety_tx_hook(raw(4, 0x27, 0x40))
 
 
+def test_retired_gv80_parking_active_body_is_rejected():
+  d = Device()
+  data = bytearray(frame(SPAS2, 1, "left", 0).dat)
+  for i, value in {3: 0x26, 4: 0x41, 5: 0x19, 6: 0x04, 7: 0x01, 15: 0x13, 18: 0x40}.items():
+    data[i] = value
+  data[:2] = checksum(SPAS2, data).to_bytes(2, 'little')
+  assert not d.s.safety_tx_hook(libsafety_py.make_CANPacket(SPAS2, 0, bytes(data)))
+
+
 def test_hda1_allows_the_parking_ecu_and_spas_ids():
   # 11-17: HDA1 (camera SCC + long, no HDA2) takes 0x7B1 and SPAS1/SPAS2 like HDA2; before only the piggyback copy left
   d = Device(4 | 8)
@@ -205,4 +214,3 @@ def test_hda1_allows_the_parking_ecu_and_spas_ids():
   assert d.tx(SPAS2, 10, "hazards") == (True, True)  # piggyback as before, now also allowed by the list
   direct = Device(4 | 8 | 1024)
   assert direct.tx(SPAS2, 10, "left") == (True, False)  # KickMode 2/3: queued directly
-
