@@ -718,9 +718,9 @@ def test_turn_info_hud_renders_compact_stock_navi_atc_without_goal_eta(hud_modul
   renderer._ic_turn_l = object()
   renderer._draw_texture_rect = lambda *args, **kwargs: None
   boxes = []
-  renderer._draw_round_box = lambda *args, **kwargs: boxes.append(args[:4])
+  renderer._draw_round_box = lambda *args, **kwargs: boxes.append((args[:5], kwargs.get("line_color")))
   texts = []
-  monkeypatch.setattr(module, "draw_text_ui_style", lambda *args, **kwargs: texts.append(args[0]))
+  monkeypatch.setattr(module, "draw_text_ui_style", lambda *args, **kwargs: texts.append((args[0], args[4])))
 
   fake_ui_state.is_metric = True
   fake_ui_state.sm = {
@@ -738,11 +738,12 @@ def test_turn_info_hud_renders_compact_stock_navi_atc_without_goal_eta(hud_modul
   }
 
   renderer._draw_turn_info_hud(module.rl.Rectangle(0, 0, 2160, 1080))
-  assert boxes[0][2] == 360  # compact card width
-  assert len(boxes) == 2     # outer card + green ATC highlight box
-  assert "좌회전" in texts
-  assert "1.2 km" in texts
-  assert "ATC 준비" in texts
+  assert boxes[0][0][2] == 360  # compact card width
+  assert boxes[0][1] == module.COLORS.VEHICLE_NAVI_LAVENDER  # vnavi purple border
+  assert boxes[1][0][4] == module.rl.Color(199, 125, 255, 100)  # vnavi purple prepare fill
+  assert ("좌회전", module.COLORS.VEHICLE_NAVI_LAVENDER) in texts
+  assert ("1.2 km", module.rl.WHITE) in texts
+  assert ("ATC 준비", module.COLORS.VEHICLE_NAVI_LAVENDER) in texts
 
   # Inactive TBT without goal distance stays hidden
   boxes.clear()
