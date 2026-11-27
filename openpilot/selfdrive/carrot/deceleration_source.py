@@ -1,7 +1,7 @@
 EXTERNAL_NAVI_SOURCES = frozenset((
   "cam", "section", "bump", "police", "waze", "road", "atc", "atc2", "route",
 ))
-VEHICLE_NAVI_SOURCES = frozenset(("hda", "hda_section", "hda_bump", "hda_curve", "hda_ramp", "school"))
+VEHICLE_NAVI_SOURCES = frozenset(("hda", "hda_section", "hda_bump", "hda_curve", "hda_ramp", "hda_atc", "school"))
 
 DECELERATION_SOURCE_LABELS = {
   "cam": "cam",
@@ -18,6 +18,7 @@ DECELERATION_SOURCE_LABELS = {
   "hda_bump": "bump",
   "hda_curve": "curve",
   "hda_ramp": "ramp",
+  "hda_atc": "turn",
   "school": "school",
   "gas": "gas",
   "vturn": "vturn",

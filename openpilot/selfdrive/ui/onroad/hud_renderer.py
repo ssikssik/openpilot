@@ -1361,7 +1361,7 @@ class HudRenderer(Widget):
       box_w,
       300,
       rl.Color(0, 0, 0, 120),
-      line_color=rl.WHITE,
+      line_color=rl.WHITE if has_goal else COLORS.VEHICLE_NAVI_LAVENDER,
       roundness=30.0 / 300.0,
       segments=12,
       line_thickness=2,
@@ -1369,7 +1369,7 @@ class HudRenderer(Widget):
 
     if info["tbt_main_text"]:
       self._draw_text_left_bottom(
-        info["tbt_main_text"], tbt_x + 20, tbt_y - 15, 40, rl.WHITE,
+        info["tbt_main_text"], tbt_x + 20, tbt_y - 15, 40, rl.WHITE if has_goal else COLORS.VEHICLE_NAVI_LAVENDER,
         font=self._font_bold, border_width=2.0, shadow_offset=4.0,
       )
 
@@ -1380,7 +1380,10 @@ class HudRenderer(Widget):
       atc_active_type = bool(atc_type and atc_type not in ("none", "none prepare"))
 
       if atc_active_type:
-        fill_color = rl.Color(0, 255, 0, 100) if "prepare" in atc_type else rl.GREEN
+        if has_goal:
+          fill_color = rl.Color(0, 255, 0, 100) if "prepare" in atc_type else rl.GREEN
+        else:
+          fill_color = rl.Color(199, 125, 255, 100) if "prepare" in atc_type else COLORS.VEHICLE_NAVI_LAVENDER
         self._draw_round_box(
           bx - 80, by - 90, 160, 230,
           fill_color,
@@ -1408,9 +1411,9 @@ class HudRenderer(Widget):
           if "canceled" in atc_type:
             atc_label, atc_color = "ATC 취소", rl.YELLOW
           elif "prepare" in atc_type:
-            atc_label, atc_color = "ATC 준비", rl.Color(180, 255, 180, 255)
+            atc_label, atc_color = "ATC 준비", COLORS.VEHICLE_NAVI_LAVENDER
           else:
-            atc_label, atc_color = "ATC 작동", rl.GREEN
+            atc_label, atc_color = "ATC 작동", COLORS.VEHICLE_NAVI_LAVENDER
         else:
           atc_label, atc_color = "V-NAVI", COLORS.VEHICLE_NAVI_LAVENDER
         self._draw_text_left_bottom(

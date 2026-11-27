@@ -1595,8 +1595,9 @@ class CarrotServ:
     sdi_source = ("cam" if rear_camera_holding else "bump" if self.xSpdType == 22 else "section" if self.xSpdType == 4 else
                   "police" if self.xSpdType == 100 else
                   "waze" if self.xSpdType == 101 else "cam")
+    atc_source = "hda_atc" if self.vehicle_navi_tbt_active else "atc"
     speed_n_sources = [
-      (atc_desired, "atc"),
+      (atc_desired, atc_source),
       (atc_desired_next, "atc2"),
       (sdi_speed, sdi_source),
       (vehicle_section_zone_speed, "hda_section"),
