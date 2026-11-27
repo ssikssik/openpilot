@@ -55,6 +55,7 @@ def apply_canfd_stopping(values, CS, controller, accel, previous_value, jerk_u, 
     held=CS.canfdSccHoldActive, accel=accel, previous_value=previous_value,
     jerk_u=max(0.0, min(jerk_u, 5.0)), jerk_l=max(1.0, min(jerk_l, 5.0)),
     smooth_lead_stop=smooth_lead_stop and not soft_hold and CS.CP.carFingerprint in SMOOTH_LEAD_STOP_CAR,
+    a_ego=CS.out.aEgo,
   )
   if blocked or values["ACCMode"] != 1:
     values.update(StopReq=0, aReqRaw=0.0, aReqValue=0.0, AccelLimitBandLower=0.0)
