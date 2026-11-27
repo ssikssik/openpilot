@@ -1,6 +1,7 @@
 from pathlib import Path
 import re
 import sys
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +17,6 @@ from opendbc.car.hyundai import carstate as hyundai_carstate
 from opendbc.car.hyundai.carstate import CarState
 from opendbc.car.hyundai.values import CAR, HyundaiFlags
 from openpilot.selfdrive.carrot.carrot_functions import CarrotPlanner
-from openpilot.selfdrive.carrot.carrot_serv import CarrotServ
 from openpilot.selfdrive.carrot.deceleration_source import (
   deceleration_source_presentation,
   format_vehicle_navi_junction,
@@ -74,6 +74,7 @@ def _make_hyundai_state(monkeypatch, fingerprint, *, ramp_control=True, can_cont
   CP = structs.CarParams()
   CP.carFingerprint = fingerprint
   CP.flags = int(HyundaiFlags.CANFD)
+  CP.safetyConfigs = [structs.CarParams.SafetyConfig()]
   CS = CarState(CP)
   CS.controls_ready_count = 122
   parsers = CS.get_can_parsers_canfd(CP)
@@ -248,7 +249,8 @@ def test_pv5_curve_keeps_camera_route_exclusion_and_legacy_4ba_4bf_works(monkeyp
   # Legacy CAN-FD (Ioniq 5): 0x4BA + 0x4B9 + 0x4BF + 0x4A3
   leg_cs, leg_parsers, _ = _make_hyundai_state(monkeypatch, CAR.HYUNDAI_IONIQ_5)
   leg_bus = leg_parsers[Bus.pt].bus
-  leg_parsers[Bus.pt]._add_message("HDA_INFO_4A3", float("nan"))
+  if "HDA_INFO_4A3" not in leg_parsers[Bus.pt].vl:
+    leg_parsers[Bus.pt]._add_message("HDA_INFO_4A3", float("nan"))
   leg_cs.hda_info_4a3 = leg_parsers[Bus.pt].vl["HDA_INFO_4A3"]
   ret_leg = _step(leg_cs, leg_parsers, 1.0, [
     (Bus.pt, packer.make_can_msg("NEW_MSG_4B9", leg_bus, _segment_values(calc_route=1, path_idx=8))),
@@ -359,3 +361,143 @@ def test_hud_and_cluster_render_ramp_and_junction_badges(monkeypatch):
   assert "ramp" in texts
   assert "72" in texts
   assert "FORK -> 220m" in texts
+
+
+def test_gv80_4b7_curve_4b5_stub_and_4b4_reset(monkeypatch):
+  CS, parsers, packer = _make_hyundai_state(monkeypatch, CAR.GENESIS_GV80)
+  bus = parsers[Bus.pt].bus
+  # Real GV80 0x4B5 exit stub (b3=0x49, right turn, guidance active bit 0x08 in byte 4, frc=1)
+  stub_4b5_dat = bytes.fromhex("29073949c9fc1500")
+  frames = [
+    (Bus.pt, packer.make_can_msg("HDA_INFO_4A3", bus, {"LinkClass": 1, "Frwinfo": 2, "SPEED_LIMIT": 100})),
+    (Bus.pt, (0x4B5, stub_4b5_dat, bus)),
+    (Bus.pt, packer.make_can_msg("NEW_MSG_4B7", bus, {
+      "PROSHORT_OFFSET": 220, "PROSHORT_PATH_INDEX": 8, "PROSHORT_DISTANCE": 15,
+      "PROSHORT_VALUE_0": 511 + 60, "PROSHORT_VALUE_1": 1023, "PROSHORT_PROFILE_TYPE": 1,
+    })),
+  ]
+  ret = _step(CS, parsers, 1.0, frames, v_ego=28.0)
+  assert ret.vehicleNaviCurveRoadAllowed is True
+  assert ret.vehicleNaviCurveRouteState in (0, 1)
+  assert ret.vehicleNaviCurveDistance == pytest.approx(220.0)
+  assert 60.0 < ret.vehicleNaviCurveTargetSpeed < 110.0
+  assert ret.vehicleNaviCurveIsRamp is False
+  assert ret.vehicleNaviJunctionType == 1
+
+  # Real GV80 0x4B4 path_index=0 reset clears active curves
+  ret_reset = _step(CS, parsers, 1.5, [
+    (Bus.pt, packer.make_can_msg("HDA_INFO_4A3", bus, {"LinkClass": 1, "Frwinfo": 0, "SPEED_LIMIT": 100})),
+    (Bus.pt, (0x4B4, bytes.fromhex("0000000100000000"), bus)),
+  ], v_ego=28.0)
+  assert ret_reset.vehicleNaviCurveTargetSpeed == 0.0
+
+
+def test_gv80_4b0_conditional_ramp_with_frwinfo_and_blinker(monkeypatch):
+  CS, parsers, packer = _make_hyundai_state(monkeypatch, CAR.GENESIS_GV80, ramp_control=True)
+  bus = parsers[Bus.pt].bus
+  # Activate path=8 via 0x4B5, send 0x4B0 sharp right ramp curve (path=9, v0=511-20=491 -> R~=88m)
+  frames = [
+    (Bus.pt, packer.make_can_msg("HDA_INFO_4A3", bus, {"LinkClass": 1, "Frwinfo": 2, "SPEED_LIMIT": 100})),
+    # Explicit nearby right exit; the original 0x0729 offset is 1833m away,
+    # so it cannot establish the direction of this immediate exit.
+    (Bus.pt, (0x4B5, bytes.fromhex("f0003949c9101500"), bus)),
+    (Bus.pt, packer.make_can_msg("NEW_MSG_4B0", bus, {
+      "PROSHORT_OFFSET": 200, "PROSHORT_PATH_INDEX": 9, "PROSHORT_DISTANCE": 5,
+      "PROSHORT_VALUE_0": 511 - 20, "PROSHORT_VALUE_1": 1023, "PROSHORT_PROFILE_TYPE": 1,
+    })),
+  ]
+  # Without blinker -> ramp curve must stay suppressed on mainline
+  ret_straight = _step(CS, parsers, 1.0, frames, v_ego=28.0, right_blinker=False)
+  assert ret_straight.vehicleNaviCurveIsRamp is False
+  assert ret_straight.vehicleNaviCurveTargetSpeed == 0.0
+
+  # With matching right blinker + Frwinfo=2 -> ramp curve activates
+  ret_exit = _step(CS, parsers, 1.2, [
+    (Bus.pt, packer.make_can_msg("HDA_INFO_4A3", bus, {"LinkClass": 1, "Frwinfo": 2, "SPEED_LIMIT": 100})),
+  ], v_ego=28.0, right_blinker=True)
+  assert ret_exit.vehicleNaviCurveIsRamp is True
+  assert 35.0 < ret_exit.vehicleNaviCurveTargetSpeed < 70.0
+
+
+@pytest.mark.parametrize('fault', ['no_side', 'zero_angle', 'far_exit', 'wrong_path'])
+def test_ramp_requires_known_nearby_exit_and_observed_branch_path(monkeypatch, fault):
+  cs, parsers, packer = _make_hyundai_state(monkeypatch, CAR.KIA_EV4)
+  bus = parsers[Bus.pt].bus
+  frames = [
+    (Bus.pt, packer.make_can_msg('CANFD_NAVI_SEGMENT_099', bus, _segment_values(0))),
+    (Bus.pt, packer.make_can_msg('CANFD_HDA_INFO_364', bus, {'LinkClass': 1, 'Frwinfo': 2})),
+    (Bus.pt, packer.make_can_msg('CANFD_NAVI_RAMP_098', bus, {
+      'PROSHORT_OFFSET': 200, 'PROSHORT_PATH_INDEX': 10 if fault == 'wrong_path' else 9,
+      'PROSHORT_DISTANCE': 5, 'PROSHORT_VALUE_0': 521, 'PROSHORT_PROFILE_TYPE': 1})),
+  ]
+  if fault != 'no_side':
+    frames.append((Bus.pt, packer.make_can_msg('CANFD_NAVI_STUB_09A', bus, {
+      'STUB_OFFSET': 1800 if fault == 'far_exit' else 220, 'STUB_PATH_INDEX': 8,
+      'STUB_BRANCH_TYPE': 0x49, 'STUB_TURN_ANGLE': 0 if fault == 'zero_angle' else 16.875})))
+  ret = _step(cs, parsers, 1.0, frames, right_blinker=True)
+  assert ret.vehicleNaviCurveIsRamp is False
+  assert ret.vehicleNaviCurveTargetSpeed == 0
+
+
+@pytest.mark.parametrize('fault', ['expired_route', 'invalid_route', 'expired_hda'])
+def test_curve_and_junction_do_not_survive_lost_authority(monkeypatch, fault):
+  cs, parsers, packer = _make_hyundai_state(monkeypatch, CAR.KIA_EV4)
+  bus = parsers[Bus.pt].bus
+  hda = (Bus.pt, packer.make_can_msg('CANFD_HDA_INFO_364', bus, {'LinkClass': 1}))
+  frames = [hda,
+    (Bus.pt, packer.make_can_msg('CANFD_NAVI_SEGMENT_099', bus, _segment_values(1))),
+    (Bus.pt, packer.make_can_msg('CANFD_NAVI_PROSHORT_094', bus, {
+      'PROSHORT_OFFSET': 250, 'PROSHORT_PATH_INDEX': 8, 'PROSHORT_DISTANCE': 20,
+      'PROSHORT_VALUE_0': 521, 'PROSHORT_PROFILE_TYPE': 1})),
+  ]
+  assert _step(cs, parsers, 1.0, frames).vehicleNaviCurveSpeed > 0
+  if fault == 'invalid_route':
+    next_frames = [hda, (Bus.pt, packer.make_can_msg('CANFD_NAVI_SEGMENT_099', bus, _segment_values(3)))]
+    ret = _step(cs, parsers, 1.1, next_frames)
+    assert cs.vehicleNaviCurves == []
+  else:
+    ret = _step(cs, parsers, 4.0, [hda] if fault == 'expired_route' else [])
+  assert ret.vehicleNaviCurveSpeed == 0
+  assert ret.vehicleNaviJunctionType == 0
+
+
+def test_junction_lane_sentinel_fits_published_uint8():
+  j = CarState._decode_vehicle_navi_junction_zone({'PROSHORT_PROFILE_TYPE': 16, 'PROSHORT_VALUE_0': 1,
+        'PROSHORT_OFFSET': 100, 'PROSHORT_DISTANCE': 30, 'PROSHORT_VALUE_1': 1023})
+  assert j['lane'] == 0
+
+
+@pytest.mark.parametrize('bad_name,size', [('CANFD_NAVI_PROSHORT_094', 24), ('CANFD_HDA_INFO_364', 32),
+                                         ('CANFD_NAVI_SEGMENT_099', 16)])
+def test_same_address_wrong_length_cannot_authorize_curve(monkeypatch, bad_name, size):
+  cs, parsers, packer = _make_hyundai_state(monkeypatch, CAR.KIA_EV4)
+  bus = parsers[Bus.pt].bus
+  values = {
+    'CANFD_NAVI_SEGMENT_099': _segment_values(1),
+    'CANFD_HDA_INFO_364': {'LinkClass': 1},
+    'CANFD_NAVI_PROSHORT_094': {'PROSHORT_OFFSET': 200, 'PROSHORT_PATH_INDEX': 8,
+      'PROSHORT_DISTANCE': 20, 'PROSHORT_VALUE_0': 521, 'PROSHORT_PROFILE_TYPE': 1},
+  }
+  frames = []
+  for name, fields in values.items():
+    addr, data, src = packer.make_can_msg(name, bus, fields)
+    if name == bad_name:
+      data = (data + bytes(size))[:size]
+    frames.append((Bus.pt, (addr, data, src)))
+  assert _step(cs, parsers, 1.0, frames).vehicleNaviCurveSpeed == 0
+
+
+@pytest.mark.parametrize('fault', ['external', 'dead', 'invalid', 'gas', 'disabled', 'old', 'unseen', 'none'])
+def test_junction_accel_uses_navigation_priority_and_live_service(fault):
+  class SM(dict):
+    valid = {'carrotMan': fault != 'invalid'}
+    alive = {'carrotMan': fault != 'dead'}
+    seen = {'carrotMan': fault != 'unseen'}
+    recv_time = {'carrotMan': time.monotonic() - (2 if fault == 'old' else 0)}
+  planner = CarrotPlanner.__new__(CarrotPlanner)
+  planner.vehicle_navi_junction_assist = fault != 'disabled'
+  cs = SimpleNamespace(vEgo=25, gasPressed=fault == 'gas', vehicleNaviJunctionType=1, vehicleNaviJunctionDistance=100)
+  sm = SM(carrotMan=SimpleNamespace(desiredSpeed=100, vehicleNaviJunctionType=0 if fault == 'external' else 1,
+                                    vehicleNaviJunctionDistance=100))
+  planner._update_vehicle_navi_junction_assist(sm, cs)
+  assert planner.vehicle_navi_junction_accel_limited == (fault == 'none')

@@ -105,6 +105,9 @@ class WikiSettingsGeneratorTest(unittest.TestCase):
     self.assertNotIn("DriverMonitoringSessionDisabled", result.index["settings"])
     self.assertIn("DriverMonitoringMode", result.index["settings"])
     self.assertIn("CarrotVisionEnabled", result.index["settings"])
+    for added in ("VehicleNaviCurveControl", "VehicleNaviCurveMppControl", "VehicleNaviRampCurveControl",
+                  "VehicleNaviCurveSpeedFactor", "VehicleNaviCurveCtrlEnd", "VehicleNaviJunctionAssist"):
+      self.assertIn(added, result.index["settings"])
     for retired in ("ClusterHudPriority", "ClusterHudCoreMode", "ClusterHudLiveFps", "CanfdStopRetry", "DisableDM",
                     "CarrotYouTubeLive", "CarrotYouTubeQuality", "CarrotYouTubeTimestamp"):
       self.assertNotIn(retired, result.index["settings"])

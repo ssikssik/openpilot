@@ -573,7 +573,9 @@ def test_vehicle_navi_curve_control_settings_present(settings):
     assert name in curve["params"]
   params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
   for name in expected:
-    assert name in params_keys
+    # A clean textual merge can duplicate persistent keys when local and
+    # upstream implementations add the same feature in different positions.
+    assert params_keys.count('{"' + name + '",') == 1
 
 
 def test_tpms_position_setting_matches_device_support(params):

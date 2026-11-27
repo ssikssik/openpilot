@@ -302,10 +302,10 @@ struct CarState {
   naviMotorway @119 :Bool; # joongyu01: fresh stock HDA 0x4A3 LinkClass 1 (motorway); road-class fallback when carrotNavi cannot say
   paddlePause @120 :Bool; # joongyu01: Hyundai CAN-FD camera SCC is sent ACCMode 0 under a held paddle (+0.3 s bridge), while moving; controlsd runs LoC off (planner resets)
 
-  vehicleNaviCurveDistance @121 :Float32; # distance to controlling stock-navi 0x094/0x4BA/0x098 curvature spot, m
+  vehicleNaviCurveDistance @121 :Float32; # distance to controlling stock-navi 0x094/0x4BA/0x4B7/0x098/0x4B0 curvature spot, m
   vehicleNaviCurveSpeed @122 :Float32; # 100% reference speed from radius-decoded curvature, kph
   vehicleNaviCurveCurvature @123 :Float32; # decoded signed curvature (+left / -right), 1/m
-  vehicleNaviCurveRouteActive @124 :Bool; # 0x099/0x4B9 CalculatedRoute == 1
+  vehicleNaviCurveRouteActive @124 :Bool; # 0x099/0x4B9/0x4B5 CalculatedRoute == 1
   vehicleNaviCurveRouteState @125 :UInt8; # 0 MPP, 1 calculated route, 2 recalculating, 3 invalid
   vehicleNaviCurveTargetSpeed @126 :Float32; # factor-adjusted apex target speed, kph
   vehicleNaviCurveIsRamp @127 :Bool; # true when controlling spot comes from 0x098 branch ramp profile

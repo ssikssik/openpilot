@@ -286,6 +286,17 @@ class CarrotPlanner:
       accel = min(accel, 0.8)
     return accel
 
+  def _update_vehicle_navi_junction_assist(self, sm, carstate):
+    # CarrotServ owns external-navigation priority. Raw carState intentionally
+    # retains stock observations even while external navigation is connected.
+    junction = get_carrot_man(sm)
+    jtype = int(getattr(junction, "vehicleNaviJunctionType", 0))
+    jdist = float(getattr(junction, "vehicleNaviJunctionDistance", -1.0))
+    self.vehicle_navi_junction_accel_limited = bool(
+      self.vehicle_navi_junction_assist and jtype in (1, 2) and 0.0 <= jdist <= 300.0 and
+      carstate.vEgo > 10.0 and not carstate.gasPressed
+    )
+
   def _get_base_t_follow(self, personality, v_ego):
     if personality == log.LongitudinalPersonality.moreRelaxed:
       self.jerk_factor = 1.0
@@ -559,16 +570,7 @@ class CarrotPlanner:
     v_ego = carstate.vEgo
     a_ego = carstate.aEgo
     v_ego_kph = v_ego * CV.MS_TO_KPH
-    jtype = int(getattr(carstate, "vehicleNaviJunctionType", 0))
-    jdist = float(getattr(carstate, "vehicleNaviJunctionDistance", 0.0))
-    if jtype not in (1, 2) and hasattr(sm, "valid") and sm.valid.get("carrotMan", False):
-      carrot_man = sm["carrotMan"]
-      jtype = int(getattr(carrot_man, "vehicleNaviJunctionType", 0))
-      jdist = float(getattr(carrot_man, "vehicleNaviJunctionDistance", 0.0))
-    self.vehicle_navi_junction_accel_limited = bool(
-      self.vehicle_navi_junction_assist and jtype in (1, 2) and 0.0 <= jdist <= 300.0 and
-      v_ego > 10.0 and not carstate.gasPressed
-    )
+    self._update_vehicle_navi_junction_assist(sm, carstate)
     v_ego_cluster = carstate.vEgoCluster
     v_ego_cluster_kph = v_ego_cluster * CV.MS_TO_KPH
 
