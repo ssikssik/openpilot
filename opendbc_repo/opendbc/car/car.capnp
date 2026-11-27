@@ -315,6 +315,10 @@ struct CarState {
   vehicleNaviJunctionDistance @131 :Float32; # meters to upcoming junction/taper (0 while inside active taper)
   vehicleNaviJunctionLane @132 :UInt8; # 1-indexed lane number from 0x094 ptype=16 v1>>1 (0 unknown)
   vehicleNaviFrwInfo @133 :UInt8; # fresh 0x364/0x4A3 Frwinfo (0 none, 1..4 fork within ~500 m)
+  vehicleNaviTurnInfo @134 :Int8; # stock-navi 0x2A3 TBT turn info mapped to Carrot xTurnInfo (-1 inactive, 1..8)
+  vehicleNaviTurnDistance @135 :Float32; # dead-reckoned distance to upcoming stock-navi 0x2A3 turn point, m
+  vehicleNaviTurnNextDistance @136 :Float32; # distance to 2nd upcoming stock-navi 0x2A3 turn point, m
+  vehicleNaviTurnDisplayType @137 :UInt8; # raw 0x2A3 TBT_DISPLAY_TYPE byte 8 (0 when inactive)
 
   struct TeslaTrafficControl {
     available @0 :Bool;

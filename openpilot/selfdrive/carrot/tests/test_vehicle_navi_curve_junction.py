@@ -524,3 +524,182 @@ def test_junction_accel_uses_navigation_priority_and_live_service(fault):
                                     vehicleNaviJunctionDistance=100))
   planner._update_vehicle_navi_junction_assist(sm, cs)
   assert planner.vehicle_navi_junction_accel_limited == (fault == 'none')
+
+
+@pytest.mark.parametrize(("display_type", "direction", "bar_level", "link_class", "expected"), (
+  (0x46, 0, 0, 5, 1),   # city turn left
+  (0x47, 0, 0, 5, 1),   # city slight left
+  (0x47, 0, 0, 1, 3),   # highway slight left -> fork left
+  (0x43, 0, 0, 5, 2),   # city turn right
+  (0x41, 0, 0, 1, 3),   # highway fork left
+  (0x42, 0, 0, 1, 4),   # JC fork right
+  (0xA1, 0, 0, 2, 4),   # highway entry right
+  (0xA4, 0, 0, 1, 4),   # IC exit right
+  (0x11, 0, 0, 1, 4),   # IC exit right close
+  (0x0D, 0x00, 0, 1, 3),  # close branch left
+  (0x0D, 0x03, 1, 1, 4),  # close branch right
+  (0x0D, 0x03, 3, 1, 4),  # close branch right (JC)
+  (0x0D, 0x01, 0, 1, None),  # ambiguous/straight close graphic -> inactive
+  (0xB2, 0, 0, 1, 6),   # tollgate
+  (0x30, 0, 0, 1, 6),   # tollgate close
+  (0x48, 0, 0, 5, 7),   # U-turn -> Carrot xTurnInfo=7 (straight + stop speed)
+  (0x72, 0, 0, 5, 8),   # destination approach -> Carrot xTurnInfo=8 (arrive)
+  (0x54, 0, 0, 5, None),  # underpass straight -> inactive
+  (0x73, 0, 0, 5, None),  # waypoint -> inactive
+  (0x08, 0, 0, 5, None),  # compass / no route
+  (0x09, 0, 0, 5, None),  # recalculating
+  (0x03, 0, 0, 5, None),  # arrived
+  (0x02, 0, 0, 5, None),  # off-route / unmapped
+  (0x99, 0, 0, 5, None),  # unknown code -> fail-closed
+))
+def test_ev4_2a3_tbt_decode_mapping(display_type, direction, bar_level, link_class, expected):
+  decoded = CarState._decode_vehicle_navi_tbt({
+    "TBT_DISPLAY_TYPE": display_type,
+    "TBT_DIRECTION": direction,
+    "TBT_BAR_GRAPH_LEVEL": bar_level,
+    "TBT_DISTANCE_TURN_POINT": 180,
+    "TBT_SCALE": 0,
+    "TBT_DIST_DECIMAL": 0,
+    "TBT_NEXT_DISTANCE": 2,
+    "TBT_NEXT_SCALE": 1,
+    "TBT_NEXT_DIST_DECIMAL": 4,
+  }, link_class=link_class)
+  if expected is None:
+    assert decoded is None
+  else:
+    assert decoded["turn_info"] == expected
+    assert decoded["dist_m"] == pytest.approx(180.0)
+    assert decoded["next_dist_m"] == pytest.approx(2400.0)
+
+
+def test_ev4_2a3_dead_reckoning_counter_burst_guards_and_timeout(monkeypatch):
+  cs, parsers, packer = _make_hyundai_state(monkeypatch, CAR.KIA_EV4)
+  bus = parsers[Bus.pt].bus
+  hda = (Bus.pt, packer.make_can_msg("CANFD_HDA_INFO_364", bus, {"LinkClass": 1}))
+
+  # Repeated & jumping ALIVE_COUNTER values (matching real EV4 bursts) must pass CRC-16 and update smoothly.
+  msg1 = packer.make_can_msg("CANFD_NAVI_TBT_2A3", bus, {
+    "ALIVE_COUNTER": 129, "TBT_DISPLAY_TYPE": 0x42, "TBT_DISTANCE_TURN_POINT": 200, "TBT_SCALE": 0,
+    "TBT_NEXT_DISTANCE": 350, "TBT_NEXT_SCALE": 0,
+  })
+  ret1 = _step(cs, parsers, 1.0, [hda, (Bus.pt, msg1)], v_ego=20.0)
+  assert ret1.vehicleNaviTurnInfo == 4
+  assert ret1.vehicleNaviTurnDistance == pytest.approx(200.0)
+  assert ret1.vehicleNaviTurnNextDistance == pytest.approx(350.0)
+  assert ret1.vehicleNaviTurnDisplayType == 0x42
+
+  # Same 200m anchor + repeated ALIVE_COUNTER=129: dead-reckons smoothly down to raw - step (190m floor).
+  for i in range(1, 20):
+    ret_mid = _step(cs, parsers, 1.0 + 0.05 * i, [hda, (Bus.pt, msg1)], v_ego=20.0)
+  assert 190.0 <= ret_mid.vehicleNaviTurnDistance < 200.0
+  # Floor clamp prevents drifting below raw_dist - step_m (200 - 10 = 190m)
+  for i in range(20, 80):
+    ret_floor = _step(cs, parsers, 1.0 + 0.05 * i, [hda, (Bus.pt, msg1)], v_ego=20.0)
+  assert ret_floor.vehicleNaviTurnDistance == pytest.approx(190.0)
+
+  # Counter jump (129 -> 143) + new distance step (190m) re-anchors cleanly.
+  msg2 = packer.make_can_msg("CANFD_NAVI_TBT_2A3", bus, {
+    "ALIVE_COUNTER": 143, "TBT_DISPLAY_TYPE": 0x42, "TBT_DISTANCE_TURN_POINT": 190, "TBT_SCALE": 0,
+  })
+  ret2 = _step(cs, parsers, 5.1, [hda, (Bus.pt, msg2)], v_ego=20.0)
+  assert ret2.vehicleNaviTurnInfo == 4
+  assert ret2.vehicleNaviTurnDistance == pytest.approx(190.0)
+
+  # Recalculating (0x09 / 0xFFFF) clears immediately.
+  msg_reroute = packer.make_can_msg("CANFD_NAVI_TBT_2A3", bus, {
+    "ALIVE_COUNTER": 144, "TBT_DISPLAY_TYPE": 0x09, "TBT_DISTANCE_TURN_POINT": 0xFFFF, "TBT_SCALE": 0,
+  })
+  ret_reroute = _step(cs, parsers, 5.3, [hda, (Bus.pt, msg_reroute)], v_ego=20.0)
+  assert ret_reroute.vehicleNaviTurnInfo == -1
+  assert ret_reroute.vehicleNaviTurnDistance == 0.0
+
+  # Freshness timeout (> 2.0 s) clears TBT.
+  ret_fresh = _step(cs, parsers, 6.0, [hda, (Bus.pt, msg2)], v_ego=20.0)
+  assert ret_fresh.vehicleNaviTurnInfo == 4
+  ret_stale = _step(cs, parsers, 8.5, [hda], v_ego=20.0)
+  assert ret_stale.vehicleNaviTurnInfo == -1
+
+  # Non-zero reserved bytes (byte 3..7 or 22..23) or wrong length (32B CAM_0x2a3) fail closed.
+  addr, dat, src = msg2
+  bad_pad = bytearray(dat)
+  bad_pad[4] = 0x01
+  assert _step(cs, parsers, 9.0, [hda, (Bus.pt, (addr, bytes(bad_pad), src))], v_ego=20.0).vehicleNaviTurnInfo == -1
+  assert _step(cs, parsers, 9.2, [hda, (Bus.pt, (addr, dat + bytes(8), src))], v_ego=20.0).vehicleNaviTurnInfo == -1
+
+
+def test_carrot_serv_vehicle_navi_atc_gating_and_priority():
+  serv = _make_serv(1)
+  serv.lang = "ko"
+  serv.nRoadLimitSpeed = 100
+  serv.nTBTNextRoadWidth = 5
+  serv.autoTurnControl = 2
+  serv.autoTurnControlSpeedTurn = 25
+  serv.autoTurnControlTurnEnd = 6
+  serv.autoTurnMapChange = 0
+  serv.atc_paused = False
+  serv.atc_activate_count = 0
+  serv.xTurnInfo = -1
+  serv.xDistToTurn = 0.0
+  serv.szTBTMainText = ""
+  serv.vehicleNaviAtcControl = False
+  serv.vehicle_navi_tbt_active = False
+
+  cs = _serv_cs(speed_limit=100, v_ego=25.0)
+  cs.vehicleNaviTurnInfo = 4
+  cs.vehicleNaviTurnDistance = 220.0
+  cs.vehicleNaviTurnDisplayType = 0xA4
+  sm = {"carState": SimpleNamespace(steeringPressed=False, steeringTorque=0.0)}
+
+  # Default opt-in off -> stays inactive
+  serv._apply_vehicle_navi_tbt(cs)
+  assert serv.xTurnInfo == -1
+  assert serv.szTBTMainText == ""
+
+  # Opt-in on -> populates xTurnInfo/xDistToTurn/szTBTMainText and drives ATC fork right
+  serv.vehicleNaviAtcControl = True
+  serv._apply_vehicle_navi_tbt(cs)
+  assert (serv.xTurnInfo, serv.xDistToTurn, serv.szTBTMainText) == (4, pytest.approx(220.0), "우측 출구")
+  atc_desired, atc_type, _, _ = serv.update_auto_turn(90.0, sm, serv.xTurnInfo, serv.xDistToTurn, True)
+  assert atc_type == "fork right"
+  assert atc_desired >= 100.0
+
+  # U-turn (xTurnInfo=7) produces straight + stop-speed (no dangerous left-turn steering)
+  serv.xTurnInfo = -1
+  cs.vehicleNaviTurnInfo = 7
+  cs.vehicleNaviTurnDistance = 35.0
+  cs.vehicleNaviTurnDisplayType = 0x48
+  serv._apply_vehicle_navi_tbt(cs)
+  assert (serv.xTurnInfo, serv.szTBTMainText) == (7, "유턴")
+  atc_desired_u, atc_type_u, _, _ = serv.update_auto_turn(50.0, sm, serv.xTurnInfo, serv.xDistToTurn, True)
+  assert atc_type_u == "straight"
+  assert atc_desired_u < 45.0
+
+  # Openpilot navInstruction already set (xTurnInfo >= 0) -> stock navi must not overwrite
+  serv.xTurnInfo = 1
+  serv.xDistToTurn = 90.0
+  serv.szTBTMainText = "NavInstruction Left"
+  serv._apply_vehicle_navi_tbt(cs)
+  assert (serv.xTurnInfo, serv.xDistToTurn, serv.szTBTMainText) == (1, 90.0, "NavInstruction Left")
+
+  # External navigation active -> stock navi must not override
+  serv.external_navigation_active = True
+  serv.xTurnInfo = -1
+  serv.szTBTMainText = "External Tmap"
+  serv._apply_vehicle_navi_tbt(cs)
+  assert serv.xTurnInfo == -1
+  assert serv.szTBTMainText == "External Tmap"
+
+  # Clearing TBT clears stock-navi szTBTMainText cleanly
+  serv.external_navigation_active = False
+  serv.szTBTMainText = ""
+  cs.vehicleNaviTurnInfo = 2
+  cs.vehicleNaviTurnDistance = 120.0
+  cs.vehicleNaviTurnDisplayType = 0x43
+  serv._apply_vehicle_navi_tbt(cs)
+  assert serv.szTBTMainText == "우회전"
+  serv.xTurnInfo = -1
+  cs.vehicleNaviTurnInfo = -1
+  cs.vehicleNaviTurnDistance = 0.0
+  serv._apply_vehicle_navi_tbt(cs)
+  assert serv.szTBTMainText == ""
+  assert serv.vehicle_navi_tbt_active is False

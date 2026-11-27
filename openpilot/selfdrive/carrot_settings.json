@@ -363,6 +363,7 @@
                 "LaneChangeBsd",
                 "LaneLineCheck",
                 "AutoTurnControl",
+                "VehicleNaviAtcControl",
                 "AutoTurnControlSpeedTurn",
                 "AutoTurnControlTurnEnd",
                 "AutoTurnMapChange",
@@ -2216,6 +2217,23 @@
       "max": 30,
       "default": 6,
       "unit": 1
+    },
+    {
+      "group": "조향일반",
+      "name": "VehicleNaviAtcControl",
+      "title": "차량 내비 ATC 연동(0)",
+      "descr": "외부 내비(당근링크/내비앱)가 연결되지 않았을 때 순정 내비 CAN TBT(좌/우회전, 고속도로 좌/우 분기, 톨게이트, 유턴, 목적지)를 ATC(AutoTurnControl)에 연동합니다. 외부 내비가 연결되면 외부 내비가 항상 우선합니다. ATC 동작 모드(조향/속도)는 AutoTurnControl 설정을 따릅니다.",
+      "egroup": "LATSET",
+      "etitle": "Stock Navi ATC Control (0)",
+      "edescr": "When external navigation is disconnected, feeds stock-navigation CAN TBT (left/right turn, highway left/right fork, tollgate, U-turn, destination) into CarrotPilot ATC (AutoTurnControl). External navigation always takes priority when connected. Steering and speed behavior follows AutoTurnControl.",
+      "cgroup": "转向设置",
+      "ctitle": "原车导航 ATC 联动(0)",
+      "cdescr": "外部导航未连接时，将原车导航 CAN TBT（左/右转、高速左/右分岔、收费站、掉头、目的地）接入 ATC（AutoTurnControl）。连接外部导航时始终以外部导航优先，转向与速度控制模式遵循 AutoTurnControl 设置。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "toggle"
     },
     {
       "group": "조향일반",
