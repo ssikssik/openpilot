@@ -254,7 +254,7 @@ If only video is missing, check whether another browser owns the stream, whether
 ### Driving model selection (`carrot-dev`)
 
 In Tools, choose N16 Nav, Flip Flop, Light speed or Light speed 2 under **Change model → Next boot**. The choice saves automatically.
-The external choice applies to both eGPU and Jetson. **Internal model after restart** independently selects CD210 or Cheddar; Cheddar is the default when no valid preference exists. The internal model is used without an external device and as the fallback after an external-model failure.
+The external choice applies to both eGPU and Jetson. **Internal model after restart** independently selects CD210 or Cheddar; CD210 is the default when no valid preference exists. The internal model is used without an external device and as the fallback after an external-model failure.
 
 Saving an internal choice does not change it during the current boot. Park, turn ignition off and reboot comma to apply it; first use may take time to compile. Each internal model has separate model and compiled files. The dialog distinguishes the current and next-boot choices and blurs the page behind it.
 Saving does not switch a running model. With ignition off and internet available, reboot

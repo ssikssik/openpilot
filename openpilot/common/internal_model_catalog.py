@@ -2,7 +2,7 @@
 from pathlib import Path
 from openpilot.common import big_model_catalog as C
 
-DEFAULT = 'cheddar'
+DEFAULT = 'cd210'  # the previous fixed internal model; Cheddar stays selectable
 MODELS = {'cd210': 'CD210', 'cheddar': 'Cheddar'}
 ROOT = Path(__file__).resolve().parents[1] / 'selfdrive/modeld/models'
 
