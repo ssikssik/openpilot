@@ -271,6 +271,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"VehicleNaviCurveSpeedFactor", {PERSISTENT, INT, "100"}},
     {"VehicleNaviCurveCtrlEnd", {PERSISTENT, INT, "3"}},
     {"VehicleNaviJunctionAssist", {PERSISTENT, BOOL, "0"}},
+    {"VehicleNaviAtcControl", {PERSISTENT, BOOL, "0"}},
     {"VehicleNaviDecelCancel", {PERSISTENT, BOOL, "0"}},
     {"VehicleNaviDecelCancelBox", {PERSISTENT, BOOL, "1"}},
     {"VehicleNaviDecelCancelMobileZone", {PERSISTENT, BOOL, "1"}},

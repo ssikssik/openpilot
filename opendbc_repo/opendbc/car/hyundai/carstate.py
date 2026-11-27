@@ -75,6 +75,8 @@ CANFD_NAVI_STATUS_MSG = "CANFD_NAVI_STATUS_380"
 CANFD_NAVI_PROSHORT_MSG = "CANFD_NAVI_PROSHORT_094"
 CANFD_NAVI_RAMP_MSG = "CANFD_NAVI_RAMP_098"
 CANFD_NAVI_STUB_MSG = "CANFD_NAVI_STUB_09A"
+CANFD_NAVI_TBT_MSG = "CANFD_NAVI_TBT_2A3"
+VEHICLE_NAVI_TBT_TIMEOUT_NS = 2_000_000_000  # 0x2A3 runs at ~5.1 Hz on EV4/ccNC Bus 0
 LEGACY_NAVI_PROSHORT_MSG = "NEW_MSG_4BA"
 LEGACY_NAVI_STUB_MSG = "NEW_MSG_4BF"
 LEGACY_NAVI_PROFILE_4B8_MSG = "NEW_MSG_4B8"  # Alternate 8-byte PROLONG address, selected by receipt rather than vehicle model.
@@ -281,6 +283,10 @@ class CarState(CarStateBase):
     self.navi_proshort_094 = None
     self.navi_ramp_098 = None
     self.navi_stub_09a = None
+    self.navi_tbt_2a3 = None
+    self.vehicleNaviTbtAnchorKey = None
+    self.vehicleNaviTbtAnchorDist = 0.0
+    self.vehicleNaviTbtAnchorOdom = 0.0
     self.vehicleNaviProshortTimestamp = 0
     self.vehicleNaviCurveSegmentTimestamp = 0
     self.vehicleNaviRampTimestamp = 0
@@ -624,6 +630,7 @@ class CarState(CarStateBase):
             add_and_cache(self.cp, CANFD_NAVI_PROSHORT_MSG, "navi_proshort_094")
             add_and_cache(self.cp, CANFD_NAVI_RAMP_MSG, "navi_ramp_098")
             add_and_cache(self.cp, CANFD_NAVI_STUB_MSG, "navi_stub_09a")
+            add_and_cache(self.cp, CANFD_NAVI_TBT_MSG, "navi_tbt_2a3")
             if self.cp_alt is not None:
               add_and_cache(self.cp_alt, CANFD_NAVI_STATUS_MSG, "navi_status_380")
           else:
@@ -637,6 +644,7 @@ class CarState(CarStateBase):
               add_and_cache(self.cp, CANFD_NAVI_PROSHORT_MSG, "navi_proshort_094")
               add_and_cache(self.cp, CANFD_NAVI_RAMP_MSG, "navi_ramp_098")
               add_and_cache(self.cp, CANFD_NAVI_STUB_MSG, "navi_stub_09a")
+              add_and_cache(self.cp, CANFD_NAVI_TBT_MSG, "navi_tbt_2a3")
             else:
               add_and_cache(self.cp, LEGACY_NAVI_PROSHORT_MSG, "navi_proshort_094")
               add_and_cache(self.cp, LEGACY_NAVI_STUB_MSG, "navi_stub_09a")
@@ -1463,6 +1471,108 @@ class CarState(CarStateBase):
       ret.vehicleNaviCurveCurvature = curve["curvature"]
       ret.vehicleNaviCurveIsRamp = is_ramp
 
+  @staticmethod
+  def _decode_vehicle_navi_tbt(values, link_class=0):
+    """Decode Hyundai/Kia CAN-FD 0x2A3 (HU_CLU_PE_02) TBT into Carrot xTurnInfo (1..8) and meters."""
+    display_type = int(values.get("TBT_DISPLAY_TYPE", 0))
+    direction = int(values.get("TBT_DIRECTION", 0))
+    bar_level = int(values.get("TBT_BAR_GRAPH_LEVEL", 0))
+    raw_dist = int(values.get("TBT_DISTANCE_TURN_POINT", 0xFFFF))
+    scale = int(values.get("TBT_SCALE", 0))
+    dec = int(values.get("TBT_DIST_DECIMAL", 0))
+    next_raw = int(values.get("TBT_NEXT_DISTANCE", 0xFFFF))
+    next_scale = int(values.get("TBT_NEXT_SCALE", 0xF))
+    next_dec = int(values.get("TBT_NEXT_DIST_DECIMAL", 0))
+
+    # 0x08=compass(no route), 0x09=recalculating, 0x03=arrived, 0x02=off-route/unmapped
+    if display_type in (0x00, 0x02, 0x03, 0x08, 0x09) or raw_dist == 0xFFFF or scale not in (0, 1):
+      return None
+
+    if scale == 1:
+      if dec > 9:
+        return None
+      dist_m = raw_dist * 1000.0 + dec * 100.0
+      step_m = 100.0
+    else:
+      dist_m = float(raw_dist)
+      step_m = 100.0 if raw_dist >= 300 else (10.0 if raw_dist >= 10 else 5.0)
+
+    if next_raw == 0xFFFF or next_scale not in (0, 1) or (next_scale == 1 and next_dec > 9):
+      next_dist_m = 0.0
+    elif next_scale == 1:
+      next_dist_m = next_raw * 1000.0 + next_dec * 100.0
+    else:
+      next_dist_m = float(next_raw)
+
+    # Verified EV4/ccNC 0x2A3 TBT_DISPLAY_TYPE -> Carrot xTurnInfo mapping (fail-closed on unknown codes).
+    # Straight/underpass/overpass/waypoint codes (0x54/0x58/0x5B/0x2C/0x2E/0x73/0x77) stay inactive so they
+    # do not trigger ATC steering, speed cuts, or a misleading TG icon.
+    if display_type == 0x46:  # city turn left
+      turn_info = 1
+    elif display_type == 0x47:  # slight left / left branch
+      turn_info = 3 if link_class in VEHICLE_NAVI_CONTROLLED_ACCESS_LINK_CLASSES else 1
+    elif display_type == 0x43:  # city turn right
+      turn_info = 2
+    elif display_type == 0x41:  # highway fork left
+      turn_info = 3
+    elif display_type in (0x42, 0xA1, 0xA4, 0x11):  # highway JC/IC fork right, entry right, IC exit right
+      turn_info = 4
+    elif display_type == 0x0D:  # close-range highway/ramp branch graphic
+      if direction == 0x00 and bar_level == 0:
+        turn_info = 3
+      elif direction == 0x03 or bar_level in (1, 3):
+        turn_info = 4
+      else:
+        return None
+    elif display_type in (0xB2, 0x30):  # tollgate (TG)
+      turn_info = 6
+    elif display_type == 0x48:  # U-turn (Carrot xTurnInfo=7: straight + stop-speed, no left-turn steering)
+      turn_info = 7
+    elif display_type == 0x72:  # destination approach (Carrot xTurnInfo=8: arrive)
+      turn_info = 8
+    else:
+      return None
+
+    return {
+      "turn_info": turn_info,
+      "dist_m": dist_m,
+      "step_m": step_m,
+      "next_dist_m": next_dist_m,
+      "display_type": display_type,
+    }
+
+  def _update_vehicle_navi_tbt(self, cp, ret, link_class):
+    navi_tbt = getattr(self, "navi_tbt_2a3", None)
+    if navi_tbt is None or CANFD_NAVI_TBT_MSG not in cp.ts_nanos:
+      self.vehicleNaviTbtAnchorKey = None
+      return
+    dat = cp.dat.get(0x2A3, b"")
+    if len(dat) != 24 or dat[3:8] != b"\x00\x00\x00\x00\x00" or dat[22:24] != b"\x00\x00":
+      self.vehicleNaviTbtAnchorKey = None
+      return
+    ts = self._vehicle_navi_message_timestamp(cp, CANFD_NAVI_TBT_MSG)
+    now = getattr(cp, "_last_update_nanos", ts)
+    if ts <= 0 or not (0 <= now - ts <= VEHICLE_NAVI_TBT_TIMEOUT_NS):
+      self.vehicleNaviTbtAnchorKey = None
+      return
+    decoded = self._decode_vehicle_navi_tbt(navi_tbt, link_class)
+    if decoded is None:
+      self.vehicleNaviTbtAnchorKey = None
+      return
+    raw_dist = decoded["dist_m"]
+    key = (decoded["turn_info"], decoded["display_type"], int(round(raw_dist)))
+    if key != self.vehicleNaviTbtAnchorKey:
+      self.vehicleNaviTbtAnchorKey = key
+      self.vehicleNaviTbtAnchorDist = raw_dist
+      self.vehicleNaviTbtAnchorOdom = self.totalDistance
+    traveled = max(0.0, self.totalDistance - self.vehicleNaviTbtAnchorOdom)
+    floor_dist = max(0.0, raw_dist - decoded["step_m"])
+    interp_dist = max(floor_dist, self.vehicleNaviTbtAnchorDist - traveled)
+    ret.vehicleNaviTurnInfo = decoded["turn_info"]
+    ret.vehicleNaviTurnDistance = float(interp_dist)
+    ret.vehicleNaviTurnNextDistance = float(decoded["next_dist_m"])
+    ret.vehicleNaviTurnDisplayType = decoded["display_type"]
+
   def _clear_vehicle_navi_route_filtered_events(self):
     if self.vehicleNaviCanControl < 2:
       return
@@ -1909,6 +2019,10 @@ class CarState(CarStateBase):
     ret.vehicleNaviJunctionDistance = 0.0
     ret.vehicleNaviJunctionLane = 0
     ret.vehicleNaviFrwInfo = 0
+    ret.vehicleNaviTurnInfo = -1
+    ret.vehicleNaviTurnDistance = 0.0
+    ret.vehicleNaviTurnNextDistance = 0.0
+    ret.vehicleNaviTurnDisplayType = 0
     if self.canfd_wrapped_navi:
       self._update_pv5_navi_section(cp, cp_alt)
     self._update_ev4_navi_status(cp, cp_alt)
@@ -1996,6 +2110,7 @@ class CarState(CarStateBase):
     link_class, frw_info, hda_fresh = self._vehicle_navi_hda_state(cp)
     self._update_vehicle_navi_curve_output(ret, link_class, frw_info, hda_fresh)
     self._update_vehicle_navi_junction_output(ret, link_class, frw_info, hda_fresh)
+    self._update_vehicle_navi_tbt(cp, ret, link_class)
 
     on_controlled_access_road = self._vehicle_navi_is_controlled_access_road()
     if on_controlled_access_road:
@@ -2550,13 +2665,14 @@ class CarState(CarStateBase):
       msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_POSITION_MSG, math.nan),
               (CANFD_NAVI_PROFILE_MSG, math.nan),
               (CANFD_NAVI_SEGMENT_MSG, math.nan), (CANFD_NAVI_PROSHORT_MSG, math.nan),
-              (CANFD_NAVI_RAMP_MSG, math.nan), (CANFD_NAVI_STUB_MSG, math.nan)]
+              (CANFD_NAVI_RAMP_MSG, math.nan), (CANFD_NAVI_STUB_MSG, math.nan),
+              (CANFD_NAVI_TBT_MSG, math.nan)]
       alt_msgs = [(CANFD_NAVI_STATUS_MSG, math.nan)]
     elif wrapped_navi_full:
       msgs = [(CANFD_HDA_INFO_MSG, math.nan), (CANFD_NAVI_POSITION_MSG, math.nan),
               (CANFD_NAVI_SEGMENT_MSG, math.nan), (CANFD_NAVI_PROFILE_MSG, math.nan),
               (CANFD_NAVI_PROSHORT_MSG, math.nan), (CANFD_NAVI_RAMP_MSG, math.nan),
-              (CANFD_NAVI_STUB_MSG, math.nan)]
+              (CANFD_NAVI_STUB_MSG, math.nan), (CANFD_NAVI_TBT_MSG, math.nan)]
       alt_msgs = [(CANFD_NAVI_STATUS_MSG, math.nan)]
     else:
       msgs = [("NEW_MSG_4B4", math.nan), ("NEW_MSG_4B9", math.nan), ("NEW_MSG_4BE", math.nan),

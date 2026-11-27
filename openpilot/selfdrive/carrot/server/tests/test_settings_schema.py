@@ -576,6 +576,20 @@ def test_vehicle_navi_curve_control_settings_present(settings):
     assert name in params_keys
 
 
+def test_vehicle_navi_atc_control_setting_present(settings, params):
+  by_name = {p["name"]: p for p in params}
+  atc = by_name["VehicleNaviAtcControl"]
+  assert (atc["control"], atc["min"], atc["max"], atc["default"]) == ("toggle", 0, 1, 0)
+  driving = next(category for category in settings["menu"] if category["id"] == "DRIVING")
+  steering = next(group for group in driving["groups"] if group["id"] == "STEER")
+  lane_change = next(group for group in steering["groups"] if group["id"] == "STEER_LANECHANGE")
+  assert "VehicleNaviAtcControl" in lane_change["params"]
+  assert lane_change["params"].index("VehicleNaviAtcControl") == lane_change["params"].index("AutoTurnControl") + 1
+  params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
+  assert '{"VehicleNaviAtcControl", {PERSISTENT, BOOL, "0"}}' in params_keys
+  assert params_keys.count('{"VehicleNaviAtcControl",') == 1
+
+
 def test_tpms_position_setting_matches_device_support(params):
   by_name = {p["name"]: p for p in params}
   show_tpms = by_name["ShowTpms"]

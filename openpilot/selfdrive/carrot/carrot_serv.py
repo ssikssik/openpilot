@@ -170,6 +170,8 @@ class CarrotServ:
     self.xDistToTurn = 0
     self.xTurnInfoNext = -1
     self.xDistToTurnNext = 0
+    self.vehicleNaviAtcControl = False
+    self.vehicle_navi_tbt_active = False
 
     self.navType, self.navModifier = "invalid", ""
     self.navTypeNext, self.navModifierNext = "invalid", ""
@@ -242,6 +244,7 @@ class CarrotServ:
     self.vehicleNaviCurveSpeedFactor = min(2.0, max(0.5, raw_curve_factor * 0.01))
     self.vehicleNaviCurveControlEnd = max(0.0, float(self._get_int_param("VehicleNaviCurveCtrlEnd", 3)))
     self.vehicleNaviJunctionAssist = self._get_bool_param("VehicleNaviJunctionAssist", False)
+    self.vehicleNaviAtcControl = self._get_bool_param("VehicleNaviAtcControl", False)
     self.vehicleSpeedCameraControlMode = min(3, max(0, self.params.get_int("VehicleSpeedCameraControlMode")))
     self.autoNaviSpeedSafetyFactor = float(self.params.get_int("AutoNaviSpeedSafetyFactor")) * 0.01
     self.autoNaviSpeedDecelRate = float(self.params.get_int("AutoNaviSpeedDecelRate")) * 0.01
@@ -1337,6 +1340,48 @@ class CarrotServ:
 
     return atc_desired, atc_type, atc_speed, atc_dist
 
+  def _vehicle_navi_tbt_label(self, display_type, turn_info):
+    lang = getattr(self, "lang", "en")
+    if display_type == 0x47 and turn_info == 1:
+      labels = {"ko": "좌측 방향", "en": "Slight left", "zh": "向左前方"}
+      return labels.get(lang, labels["en"])
+    if display_type in (0xA4, 0x11):
+      labels = {"ko": "우측 출구", "en": "Right exit", "zh": "右侧出口"}
+      return labels.get(lang, labels["en"])
+    if display_type == 0xA1:
+      labels = {"ko": "고속도로 진입", "en": "Highway entry", "zh": "进入高速"}
+      return labels.get(lang, labels["en"])
+    by_turn = {
+      1: {"ko": "좌회전", "en": "Left turn", "zh": "左转"},
+      2: {"ko": "우회전", "en": "Right turn", "zh": "右转"},
+      3: {"ko": "좌측 분기", "en": "Left fork", "zh": "左侧分岔"},
+      4: {"ko": "우측 분기", "en": "Right fork", "zh": "右侧分岔"},
+      6: {"ko": "톨게이트", "en": "Tollgate", "zh": "收费站"},
+      7: {"ko": "유턴", "en": "U-turn", "zh": "掉头"},
+      8: {"ko": "목적지", "en": "Destination", "zh": "目的地"},
+    }
+    entry = by_turn.get(int(turn_info))
+    return entry.get(lang, entry["en"]) if entry is not None else ""
+
+  def _apply_vehicle_navi_tbt(self, CS):
+    if not getattr(self, "vehicleNaviAtcControl", False) or self.external_navigation_active or self.xTurnInfo >= 0 or CS is None:
+      if getattr(self, "vehicle_navi_tbt_active", False):
+        if not self.external_navigation_active and self.xTurnInfo < 0:
+          self.szTBTMainText = ""
+        self.vehicle_navi_tbt_active = False
+      return
+    turn_info = int(getattr(CS, "vehicleNaviTurnInfo", -1))
+    turn_dist = float(getattr(CS, "vehicleNaviTurnDistance", 0.0))
+    display_type = int(getattr(CS, "vehicleNaviTurnDisplayType", 0))
+    if turn_info > 0 and turn_dist >= 0.0:
+      self.xTurnInfo = turn_info
+      self.xDistToTurn = turn_dist
+      self.szTBTMainText = self._vehicle_navi_tbt_label(display_type, turn_info)
+      self.vehicle_navi_tbt_active = True
+    elif getattr(self, "vehicle_navi_tbt_active", False):
+      self.szTBTMainText = ""
+      self.vehicle_navi_tbt_active = False
+
   def update_nav_instruction(self, sm):
     if self._external_navigation_connected():
       return
@@ -1453,6 +1498,7 @@ class CarrotServ:
       self.nGoPosDist = 0
     if self.active_carrot <= 1 or self.active_kisa_count > 0:
       self.update_nav_instruction(sm)
+    self._apply_vehicle_navi_tbt(CS)
 
     rear_camera_speed, rear_camera_remaining = self._rear_camera_speed(CS, delta_dist)
     if self.xSpdType < 0 or (self.xSpdType not in [100,101] and self.xSpdDist <= 0) or (self.xSpdType in [100,101] and self.xSpdDist < -250):

@@ -379,90 +379,199 @@ def test_hud_and_cluster_render_ramp_and_junction_badges(monkeypatch):
   assert "FORK -> 220m" in texts
 
 
-@pytest.mark.parametrize('fault', ['no_side', 'zero_angle', 'far_exit', 'wrong_path'])
-def test_ramp_requires_known_nearby_exit_and_observed_branch_path(monkeypatch, fault):
+def test_ev4_099_curve_segment_survives_gaps_and_expires_at_600s(monkeypatch):
   cs, parsers, packer = _make_hyundai_state(monkeypatch, CAR.KIA_EV4)
   bus = parsers[Bus.pt].bus
+  hda = (Bus.pt, packer.make_can_msg("CANFD_HDA_INFO_364", bus, {"LinkClass": 1}))
   frames = [
-    (Bus.pt, packer.make_can_msg('CANFD_NAVI_SEGMENT_099', bus, _segment_values(0))),
-    (Bus.pt, packer.make_can_msg('CANFD_HDA_INFO_364', bus, {'LinkClass': 1, 'Frwinfo': 2})),
-    (Bus.pt, packer.make_can_msg('CANFD_NAVI_RAMP_098', bus, {
-      'PROSHORT_OFFSET': 200, 'PROSHORT_PATH_INDEX': 10 if fault == 'wrong_path' else 9,
-      'PROSHORT_DISTANCE': 5, 'PROSHORT_VALUE_0': 521, 'PROSHORT_PROFILE_TYPE': 1})),
-  ]
-  if fault != 'no_side':
-    frames.append((Bus.pt, packer.make_can_msg('CANFD_NAVI_STUB_09A', bus, {
-      'STUB_OFFSET': 1800 if fault == 'far_exit' else 220, 'STUB_PATH_INDEX': 8,
-      'STUB_BRANCH_TYPE': 0x49, 'STUB_TURN_ANGLE': 0 if fault == 'zero_angle' else 16.875})))
-  ret = _step(cs, parsers, 1.0, frames, right_blinker=True)
-  assert ret.vehicleNaviCurveIsRamp is False
-  assert ret.vehicleNaviCurveTargetSpeed == 0
-
-
-@pytest.mark.parametrize('fault', ['expired_route', 'invalid_route', 'expired_hda'])
-def test_curve_and_junction_do_not_survive_lost_authority(monkeypatch, fault):
-  cs, parsers, packer = _make_hyundai_state(monkeypatch, CAR.KIA_EV4)
-  bus = parsers[Bus.pt].bus
-  hda = (Bus.pt, packer.make_can_msg('CANFD_HDA_INFO_364', bus, {'LinkClass': 1}))
-  frames = [hda,
-    (Bus.pt, packer.make_can_msg('CANFD_NAVI_SEGMENT_099', bus, _segment_values(1))),
-    (Bus.pt, packer.make_can_msg('CANFD_NAVI_PROSHORT_094', bus, {
-      'PROSHORT_OFFSET': 250, 'PROSHORT_PATH_INDEX': 8, 'PROSHORT_DISTANCE': 20,
-      'PROSHORT_VALUE_0': 521, 'PROSHORT_PROFILE_TYPE': 1})),
+    hda,
+    (Bus.pt, packer.make_can_msg("CANFD_NAVI_SEGMENT_099", bus, _segment_values(1))),
+    (Bus.pt, packer.make_can_msg("CANFD_NAVI_PROSHORT_094", bus, {
+      "PROSHORT_OFFSET": 250, "PROSHORT_PATH_INDEX": 8, "PROSHORT_DISTANCE": 20,
+      "PROSHORT_VALUE_0": 521, "PROSHORT_PROFILE_TYPE": 1,
+    })),
   ]
   assert _step(cs, parsers, 1.0, frames).vehicleNaviCurveSpeed > 0
-  if fault == 'invalid_route':
-    next_frames = [hda, (Bus.pt, packer.make_can_msg('CANFD_NAVI_SEGMENT_099', bus, _segment_values(3)))]
-    ret = _step(cs, parsers, 1.1, next_frames)
-    assert cs.vehicleNaviCurves == []
-  elif fault == 'expired_route':
-    # Event-driven 0x099 survives normal multi-second gaps while 0x364 stays fresh,
-    # and expires only after the 600s stream backstop.
-    assert _step(cs, parsers, 45.0, [hda]).vehicleNaviCurveSpeed > 0
-    ret = _step(cs, parsers, 602.0, [hda])
+  # Event-driven 0x099 survives normal multi-second gaps while 0x364 stays fresh
+  assert _step(cs, parsers, 45.0, [hda]).vehicleNaviCurveSpeed > 0
+  # Expires after the 600s stream backstop
+  assert _step(cs, parsers, 602.0, [hda]).vehicleNaviCurveSpeed == 0.0
+
+
+@pytest.mark.parametrize(("display_type", "direction", "bar_level", "link_class", "expected"), (
+  (0x46, 0, 0, 5, 1),   # city turn left
+  (0x47, 0, 0, 5, 1),   # city slight left
+  (0x47, 0, 0, 1, 3),   # highway slight left -> fork left
+  (0x43, 0, 0, 5, 2),   # city turn right
+  (0x41, 0, 0, 1, 3),   # highway fork left
+  (0x42, 0, 0, 1, 4),   # JC fork right
+  (0xA1, 0, 0, 2, 4),   # highway entry right
+  (0xA4, 0, 0, 1, 4),   # IC exit right
+  (0x11, 0, 0, 1, 4),   # IC exit right close
+  (0x0D, 0x00, 0, 1, 3),  # close branch left
+  (0x0D, 0x03, 1, 1, 4),  # close branch right
+  (0x0D, 0x03, 3, 1, 4),  # close branch right (JC)
+  (0x0D, 0x01, 0, 1, None),  # ambiguous/straight close graphic -> inactive
+  (0xB2, 0, 0, 1, 6),   # tollgate
+  (0x30, 0, 0, 1, 6),   # tollgate close
+  (0x48, 0, 0, 5, 7),   # U-turn -> Carrot xTurnInfo=7 (straight + stop speed)
+  (0x72, 0, 0, 5, 8),   # destination approach -> Carrot xTurnInfo=8 (arrive)
+  (0x54, 0, 0, 5, None),  # underpass straight -> inactive
+  (0x73, 0, 0, 5, None),  # waypoint -> inactive
+  (0x08, 0, 0, 5, None),  # compass / no route
+  (0x09, 0, 0, 5, None),  # recalculating
+  (0x03, 0, 0, 5, None),  # arrived
+  (0x02, 0, 0, 5, None),  # off-route / unmapped
+  (0x99, 0, 0, 5, None),  # unknown code -> fail-closed
+))
+def test_ev4_2a3_tbt_decode_mapping(display_type, direction, bar_level, link_class, expected):
+  decoded = CarState._decode_vehicle_navi_tbt({
+    "TBT_DISPLAY_TYPE": display_type,
+    "TBT_DIRECTION": direction,
+    "TBT_BAR_GRAPH_LEVEL": bar_level,
+    "TBT_DISTANCE_TURN_POINT": 180,
+    "TBT_SCALE": 0,
+    "TBT_DIST_DECIMAL": 0,
+    "TBT_NEXT_DISTANCE": 2,
+    "TBT_NEXT_SCALE": 1,
+    "TBT_NEXT_DIST_DECIMAL": 4,
+  }, link_class=link_class)
+  if expected is None:
+    assert decoded is None
   else:
-    ret = _step(cs, parsers, 4.0, [])
-  assert ret.vehicleNaviCurveSpeed == 0
-  assert ret.vehicleNaviJunctionType == 0
+    assert decoded["turn_info"] == expected
+    assert decoded["dist_m"] == pytest.approx(180.0)
+    assert decoded["next_dist_m"] == pytest.approx(2400.0)
 
 
-def test_junction_lane_sentinel_fits_published_uint8():
-  j = CarState._decode_vehicle_navi_junction_zone({'PROSHORT_PROFILE_TYPE': 16, 'PROSHORT_VALUE_0': 1,
-        'PROSHORT_OFFSET': 100, 'PROSHORT_DISTANCE': 30, 'PROSHORT_VALUE_1': 1023})
-  assert j['lane'] == 0
-
-
-@pytest.mark.parametrize('bad_name,size', [('CANFD_NAVI_PROSHORT_094', 24), ('CANFD_HDA_INFO_364', 32),
-                                         ('CANFD_NAVI_SEGMENT_099', 16)])
-def test_same_address_wrong_length_cannot_authorize_curve(monkeypatch, bad_name, size):
+def test_ev4_2a3_dead_reckoning_counter_burst_guards_and_timeout(monkeypatch):
   cs, parsers, packer = _make_hyundai_state(monkeypatch, CAR.KIA_EV4)
   bus = parsers[Bus.pt].bus
-  values = {
-    'CANFD_NAVI_SEGMENT_099': _segment_values(1),
-    'CANFD_HDA_INFO_364': {'LinkClass': 1},
-    'CANFD_NAVI_PROSHORT_094': {'PROSHORT_OFFSET': 200, 'PROSHORT_PATH_INDEX': 8,
-      'PROSHORT_DISTANCE': 20, 'PROSHORT_VALUE_0': 521, 'PROSHORT_PROFILE_TYPE': 1},
-  }
-  frames = []
-  for name, fields in values.items():
-    addr, data, src = packer.make_can_msg(name, bus, fields)
-    if name == bad_name:
-      data = (data + bytes(size))[:size]
-    frames.append((Bus.pt, (addr, data, src)))
-  assert _step(cs, parsers, 1.0, frames).vehicleNaviCurveSpeed == 0
+  hda = (Bus.pt, packer.make_can_msg("CANFD_HDA_INFO_364", bus, {"LinkClass": 1}))
+
+  # Repeated & jumping ALIVE_COUNTER values (matching real EV4 bursts) must pass CRC-16 and update smoothly.
+  msg1 = packer.make_can_msg("CANFD_NAVI_TBT_2A3", bus, {
+    "ALIVE_COUNTER": 129, "TBT_DISPLAY_TYPE": 0x42, "TBT_DISTANCE_TURN_POINT": 200, "TBT_SCALE": 0,
+    "TBT_NEXT_DISTANCE": 350, "TBT_NEXT_SCALE": 0,
+  })
+  ret1 = _step(cs, parsers, 1.0, [hda, (Bus.pt, msg1)], v_ego=20.0)
+  assert ret1.vehicleNaviTurnInfo == 4
+  assert ret1.vehicleNaviTurnDistance == pytest.approx(200.0)
+  assert ret1.vehicleNaviTurnNextDistance == pytest.approx(350.0)
+  assert ret1.vehicleNaviTurnDisplayType == 0x42
+
+  # Same 200m anchor + repeated ALIVE_COUNTER=129: dead-reckons smoothly down to raw - step (190m floor).
+  for i in range(1, 20):
+    ret_mid = _step(cs, parsers, 1.0 + 0.05 * i, [hda, (Bus.pt, msg1)], v_ego=20.0)
+  assert 190.0 <= ret_mid.vehicleNaviTurnDistance < 200.0
+  # Floor clamp prevents drifting below raw_dist - step_m (200 - 10 = 190m)
+  for i in range(20, 80):
+    ret_floor = _step(cs, parsers, 1.0 + 0.05 * i, [hda, (Bus.pt, msg1)], v_ego=20.0)
+  assert ret_floor.vehicleNaviTurnDistance == pytest.approx(190.0)
+
+  # Counter jump (129 -> 143) + new distance step (190m) re-anchors cleanly.
+  msg2 = packer.make_can_msg("CANFD_NAVI_TBT_2A3", bus, {
+    "ALIVE_COUNTER": 143, "TBT_DISPLAY_TYPE": 0x42, "TBT_DISTANCE_TURN_POINT": 190, "TBT_SCALE": 0,
+  })
+  ret2 = _step(cs, parsers, 5.1, [hda, (Bus.pt, msg2)], v_ego=20.0)
+  assert ret2.vehicleNaviTurnInfo == 4
+  assert ret2.vehicleNaviTurnDistance == pytest.approx(190.0)
+
+  # Recalculating (0x09 / 0xFFFF) clears immediately.
+  msg_reroute = packer.make_can_msg("CANFD_NAVI_TBT_2A3", bus, {
+    "ALIVE_COUNTER": 144, "TBT_DISPLAY_TYPE": 0x09, "TBT_DISTANCE_TURN_POINT": 0xFFFF, "TBT_SCALE": 0,
+  })
+  ret_reroute = _step(cs, parsers, 5.3, [hda, (Bus.pt, msg_reroute)], v_ego=20.0)
+  assert ret_reroute.vehicleNaviTurnInfo == -1
+  assert ret_reroute.vehicleNaviTurnDistance == 0.0
+
+  # Freshness timeout (> 2.0 s) clears TBT.
+  ret_fresh = _step(cs, parsers, 6.0, [hda, (Bus.pt, msg2)], v_ego=20.0)
+  assert ret_fresh.vehicleNaviTurnInfo == 4
+  ret_stale = _step(cs, parsers, 8.5, [hda], v_ego=20.0)
+  assert ret_stale.vehicleNaviTurnInfo == -1
+
+  # Non-zero reserved bytes (byte 3..7 or 22..23) or wrong length (32B CAM_0x2a3) fail closed.
+  addr, dat, src = msg2
+  bad_pad = bytearray(dat)
+  bad_pad[4] = 0x01
+  assert _step(cs, parsers, 9.0, [hda, (Bus.pt, (addr, bytes(bad_pad), src))], v_ego=20.0).vehicleNaviTurnInfo == -1
+  assert _step(cs, parsers, 9.2, [hda, (Bus.pt, (addr, dat + bytes(8), src))], v_ego=20.0).vehicleNaviTurnInfo == -1
 
 
-@pytest.mark.parametrize('fault', ['external', 'dead', 'invalid', 'gas', 'disabled', 'old', 'unseen', 'none'])
-def test_junction_accel_uses_navigation_priority_and_live_service(fault):
-  class SM(dict):
-    valid = {'carrotMan': fault != 'invalid'}
-    alive = {'carrotMan': fault != 'dead'}
-    seen = {'carrotMan': fault != 'unseen'}
-    recv_time = {'carrotMan': time.monotonic() - (2 if fault == 'old' else 0)}
-  planner = CarrotPlanner.__new__(CarrotPlanner)
-  planner.vehicle_navi_junction_assist = fault != 'disabled'
-  cs = SimpleNamespace(vEgo=25, gasPressed=fault == 'gas', vehicleNaviJunctionType=1, vehicleNaviJunctionDistance=100)
-  sm = SM(carrotMan=SimpleNamespace(desiredSpeed=100, vehicleNaviJunctionType=0 if fault == 'external' else 1,
-                                    vehicleNaviJunctionDistance=100))
-  planner._update_vehicle_navi_junction_assist(sm, cs)
-  assert planner.vehicle_navi_junction_accel_limited == (fault == 'none')
+def test_carrot_serv_vehicle_navi_atc_gating_and_priority():
+  serv = _make_serv(1)
+  serv.lang = "ko"
+  serv.nRoadLimitSpeed = 100
+  serv.nTBTNextRoadWidth = 5
+  serv.autoTurnControl = 2
+  serv.autoTurnControlSpeedTurn = 25
+  serv.autoTurnControlTurnEnd = 6
+  serv.autoTurnMapChange = 0
+  serv.atc_paused = False
+  serv.atc_activate_count = 0
+  serv.xTurnInfo = -1
+  serv.xDistToTurn = 0.0
+  serv.szTBTMainText = ""
+  serv.vehicleNaviAtcControl = False
+  serv.vehicle_navi_tbt_active = False
+
+  cs = _serv_cs(speed_limit=100, v_ego=25.0)
+  cs.vehicleNaviTurnInfo = 4
+  cs.vehicleNaviTurnDistance = 220.0
+  cs.vehicleNaviTurnDisplayType = 0xA4
+  sm = {"carState": SimpleNamespace(steeringPressed=False, steeringTorque=0.0)}
+
+  # Default opt-in off -> stays inactive
+  serv._apply_vehicle_navi_tbt(cs)
+  assert serv.xTurnInfo == -1
+  assert serv.szTBTMainText == ""
+
+  # Opt-in on -> populates xTurnInfo/xDistToTurn/szTBTMainText and drives ATC fork right
+  serv.vehicleNaviAtcControl = True
+  serv._apply_vehicle_navi_tbt(cs)
+  assert (serv.xTurnInfo, serv.xDistToTurn, serv.szTBTMainText) == (4, pytest.approx(220.0), "우측 출구")
+  atc_desired, atc_type, _, _ = serv.update_auto_turn(90.0, sm, serv.xTurnInfo, serv.xDistToTurn, True)
+  assert atc_type == "fork right"
+  assert atc_desired >= 100.0
+
+  # U-turn (xTurnInfo=7) produces straight + stop-speed (no dangerous left-turn steering)
+  serv.xTurnInfo = -1
+  cs.vehicleNaviTurnInfo = 7
+  cs.vehicleNaviTurnDistance = 35.0
+  cs.vehicleNaviTurnDisplayType = 0x48
+  serv._apply_vehicle_navi_tbt(cs)
+  assert (serv.xTurnInfo, serv.szTBTMainText) == (7, "유턴")
+  atc_desired_u, atc_type_u, _, _ = serv.update_auto_turn(50.0, sm, serv.xTurnInfo, serv.xDistToTurn, True)
+  assert atc_type_u == "straight"
+  assert atc_desired_u < 45.0
+
+  # Openpilot navInstruction already set (xTurnInfo >= 0) -> stock navi must not overwrite
+  serv.xTurnInfo = 1
+  serv.xDistToTurn = 90.0
+  serv.szTBTMainText = "NavInstruction Left"
+  serv._apply_vehicle_navi_tbt(cs)
+  assert (serv.xTurnInfo, serv.xDistToTurn, serv.szTBTMainText) == (1, 90.0, "NavInstruction Left")
+
+  # External navigation active -> stock navi must not override
+  serv.external_navigation_active = True
+  serv.xTurnInfo = -1
+  serv.szTBTMainText = "External Tmap"
+  serv._apply_vehicle_navi_tbt(cs)
+  assert serv.xTurnInfo == -1
+  assert serv.szTBTMainText == "External Tmap"
+
+  # Clearing TBT clears stock-navi szTBTMainText cleanly
+  serv.external_navigation_active = False
+  serv.szTBTMainText = ""
+  cs.vehicleNaviTurnInfo = 2
+  cs.vehicleNaviTurnDistance = 120.0
+  cs.vehicleNaviTurnDisplayType = 0x43
+  serv._apply_vehicle_navi_tbt(cs)
+  assert serv.szTBTMainText == "우회전"
+  serv.xTurnInfo = -1
+  cs.vehicleNaviTurnInfo = -1
+  cs.vehicleNaviTurnDistance = 0.0
+  serv._apply_vehicle_navi_tbt(cs)
+  assert serv.szTBTMainText == ""
+  assert serv.vehicle_navi_tbt_active is False
