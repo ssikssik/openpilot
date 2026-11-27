@@ -490,6 +490,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
 
     {"CustomSR", {PERSISTENT, INT, "0"}},
     {"SteerRatioRate", {PERSISTENT, INT, "100"}},
+    {"SteerRatioHighSpeedRate", {PERSISTENT, INT, "100"}},
 
     {"SoftRestartTriggered", {CLEAR_ON_MANAGER_START, INT}},
 

@@ -136,7 +136,9 @@ class Controls:
     # Invalid persisted rates still fall back to the unscaled learned ratio.
     sr = resolve_vehicle_model_steer_ratio(lp.steerRatio,
                                            self.params.get_float("SteerRatioRate"),
-                                           self.params.get_float("CustomSR"))
+                                           self.params.get_float("CustomSR"),
+                                           self.params.get_float("SteerRatioHighSpeedRate"),
+                                           CS.vEgo)
     self.VM.update_geometry(getattr(lp, "centerToFrontRatio", 0.0))
     self.VM.update_params(x, sr)
 
