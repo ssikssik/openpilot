@@ -482,7 +482,15 @@ class CarrotServ:
     return self._vehicle_navi_curve_calculated_speed(CS)
 
   def _vehicle_navi_curve_display_speed(self, CS):
-    return min(250.0, max(0.0, self._vehicle_navi_curve_calculated_speed(CS)))
+    speed = min(250.0, max(0.0, self._vehicle_navi_curve_calculated_speed(CS)))
+    if speed <= 0.0 or speed >= 250.0:
+      return 0.0
+    v_ego_kph = max(0.0, float(getattr(CS, "vEgo", 0.0)) * 3.6)
+    cruise_state = getattr(CS, "cruiseState", None)
+    cruise_kph = max(0.0, float(getattr(cruise_state, "speedCluster", 0.0)) * 3.6)
+    if v_ego_kph > 5.0 and speed > max(v_ego_kph, cruise_kph) + 20.0:
+      return 0.0
+    return speed
 
   def _vehicle_navi_junction_display(self, CS):
     if self.external_navigation_active or CS is None:
