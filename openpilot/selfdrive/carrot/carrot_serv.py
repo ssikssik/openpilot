@@ -1798,9 +1798,6 @@ class CarrotServ:
           maneuvers.append(maneuver)
 
       instruction.allManeuvers = maneuvers
-    elif not self._external_navigation_connected() and sm.alive['navInstruction'] and sm.valid['navInstruction']:
-      inst.valid = True
-      inst.navInstructionCarrot = sm['navInstruction']
     elif getattr(self, "vehicle_navi_tbt_active", False) and self.xTurnInfo > 0:
       navType, navModifier = self._vehicle_navi_tbt_maneuver(
         getattr(self, "vehicle_navi_tbt_display_type", 0), self.xTurnInfo,
@@ -1818,6 +1815,9 @@ class CarrotServ:
           'type': navType,
           'modifier': navModifier,
         }]
+    elif not self._external_navigation_connected() and sm.alive['navInstruction'] and sm.valid['navInstruction']:
+      inst.valid = True
+      inst.navInstructionCarrot = sm['navInstruction']
 
     pm.send('navInstructionCarrot', inst)
 

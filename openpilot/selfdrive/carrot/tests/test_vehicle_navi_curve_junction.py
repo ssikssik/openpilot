@@ -544,6 +544,7 @@ def test_junction_accel_uses_navigation_priority_and_live_service(fault):
   (0xB2, 0, 0, 1, 6),   # tollgate
   (0x30, 0, 0, 1, 6),   # tollgate close
   (0x48, 0, 0, 5, 7),   # U-turn -> Carrot xTurnInfo=7 (straight + stop speed)
+  (0x70, 0, 0, 5, 8),   # destination approach (variant) -> Carrot xTurnInfo=8 (arrive)
   (0x72, 0, 0, 5, 8),   # destination approach -> Carrot xTurnInfo=8 (arrive)
   (0x54, 0, 0, 5, None),  # underpass straight -> inactive
   (0x73, 0, 0, 5, None),  # waypoint -> inactive
@@ -774,3 +775,21 @@ def test_carrot_planner_atc_active_accepts_stock_navi_tbt():
   v_cruise, atc_active = planner._update_carrot_man(sm, 40.0, 60.0)
   assert v_cruise == 45.0
   assert atc_active is True
+
+
+def test_maneuver_classifier_imminent_urban_atc_turn_without_wide_edge():
+  from openpilot.selfdrive.controls.lib.desire_lib.maneuver_classifier import classify_maneuver_type
+  cs = SimpleNamespace(vEgo=26.0 / 3.6, aEgo=-0.5)
+  side = SimpleNamespace(
+    lane_available=False,
+    edge_available=False,
+    dist_to_edge_far=1.8,  # urban curb <= 4.0m
+    lane_exist_count=SimpleNamespace(counter=0),
+  )
+  # Beyond 20m -> still waits for edge_far > 4.0
+  assert classify_maneuver_type(2, cs, side, False, "turn right", "lane_change", atc_dist=30.0) == "lane_change"
+  # Within 20m in outer turn lane at turn speed -> transitions directly to "turn"
+  assert classify_maneuver_type(2, cs, side, False, "turn right", "lane_change", atc_dist=18.0) == "turn"
+  # If another lane still exists on the turn side -> does not skip lane change
+  side.lane_available = True
+  assert classify_maneuver_type(2, cs, side, False, "turn right", "lane_change", atc_dist=18.0) == "lane_change"
