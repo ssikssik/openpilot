@@ -739,11 +739,11 @@ def test_turn_info_hud_renders_compact_stock_navi_atc_without_goal_eta(hud_modul
 
   renderer._draw_turn_info_hud(module.rl.Rectangle(0, 0, 2160, 1080))
   assert boxes[0][0][2] == 360  # compact card width
-  assert boxes[0][1] == module.COLORS.VEHICLE_NAVI_LAVENDER  # vnavi purple border
-  assert boxes[1][0][4] == module.rl.Color(199, 125, 255, 100)  # vnavi purple prepare fill
-  assert ("좌회전", module.COLORS.VEHICLE_NAVI_LAVENDER) in texts
+  assert boxes[0][1] == module.rl.WHITE  # original white card border
+  assert boxes[1][0][4] == module.rl.Color(0, 255, 0, 100)  # original green prepare fill
+  assert ("좌회전", module.rl.WHITE) in texts
   assert ("1.2 km", module.rl.WHITE) in texts
-  assert ("ATC 준비", module.COLORS.VEHICLE_NAVI_LAVENDER) in texts
+  assert ("ATC 준비", module.rl.Color(180, 255, 180, 255)) in texts
 
   # Inactive TBT without goal distance stays hidden
   boxes.clear()
