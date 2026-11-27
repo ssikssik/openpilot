@@ -136,10 +136,11 @@ class VLDict(dict):
 
 
 class CANParser:
-  def __init__(self, dbc_name: str, messages: list[tuple[str | int, int]], bus: int):
+  def __init__(self, dbc_name: str, messages: list[tuple[str | int, int]], bus: int, ignore_counter: bool = False):
     self.dbc_name: str = dbc_name
     self.bus: int = bus
     self.dbc: DBC = DBC(dbc_name)
+    self.ignore_counter: bool = ignore_counter
 
     self.vl: dict[int | str, dict[str, float]] = VLDict(self)
     self.vl_all: dict[int | str, dict[str, list[float]]] = {}
@@ -192,7 +193,7 @@ class CANParser:
       size=msg.size,
       signals=list(msg.sigs.values()),
       ignore_alive=freq is not None and math.isnan(freq),
-      ignore_counter=ignore_counter,
+      ignore_counter=ignore_counter or self.ignore_counter,
     )
     state.first_seen_nanos = time.monotonic_ns()  # 등록시 즉시 타임스탬프 설정
     if freq is not None and freq > 0:
