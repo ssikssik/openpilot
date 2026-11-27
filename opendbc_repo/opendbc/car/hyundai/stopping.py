@@ -16,7 +16,7 @@ MOVING_SPEED = 0.10
 STOP_CONFIRM_TIME = 0.2
 APPROACH_ACCEL = -0.5
 STOP_LOWER_BAND = 0.20  # fixed during active ACC, including before StopReq; never copied from stock
-# SmoothFinalStop: below FINAL_TAPER_SPEED the approach floor is released linearly to FINAL_TAPER_ACCEL at
+# SmoothFinalStop: below FINAL_TAPER_SPEED the approach request is released linearly to FINAL_TAPER_ACCEL at
 # ENTRY_SPEED, like a driver easing off the brake, so the wheels do not stop while ~0.35 m/s^2 is still applied
 # (EV4 route 0000034a--4: aEgo -0.35 -> 0 in 0.3 s at 0.4 km/h). Adds ~0.3 m of stopping distance from 0.8 m/s.
 FINAL_TAPER_SPEED = 0.8  # m/s (~2.9 km/h)
@@ -114,6 +114,8 @@ class CanfdStopping:
     raw = min(accel, 0.0 if smooth_lead_stop else APPROACH_ACCEL)
     if self.final_taper and not smooth_lead_stop and accel >= FINAL_TAPER_URGENT_ACCEL and speed < FINAL_TAPER_SPEED:
       ratio = max(0.0, (speed - ENTRY_SPEED) / (FINAL_TAPER_SPEED - ENTRY_SPEED))
-      raw = max(raw, FINAL_TAPER_ACCEL + ratio * (APPROACH_ACCEL - FINAL_TAPER_ACCEL))
+      # Scale from the request in force at FINAL_TAPER_SPEED (often stronger than the floor, e.g. a held LoC
+      # stopping output of -0.96) so entering the taper never steps the request (EV4 0000034b--14: -0.96 -> -0.46).
+      raw = FINAL_TAPER_ACCEL + ratio * (raw - FINAL_TAPER_ACCEL)
     value = min(0.0, max(previous_value - jerk_l * DT, min(raw, previous_value + jerk_u * DT)))
     return StopCommand(0, raw, value, STOP_LOWER_BAND)

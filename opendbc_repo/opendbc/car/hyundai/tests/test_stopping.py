@@ -619,6 +619,17 @@ def test_final_taper_releases_floor_linearly_to_entry_then_zeros():
   assert (cmd.stop_req, cmd.raw, cmd.value) == (1, 0., 0.)
 
 
+@pytest.mark.parametrize("accel", [-0.6, -0.96])
+def test_final_taper_is_continuous_from_a_stronger_request(accel):
+  from opendbc.car.hyundai.stopping import FINAL_TAPER_ACCEL, FINAL_TAPER_SPEED
+  controller = CanfdStopping()
+  controller.final_taper = True
+  assert step(controller, speed=FINAL_TAPER_SPEED + .01, accel=accel, previous_value=accel).raw == accel
+  assert step(controller, speed=FINAL_TAPER_SPEED - .001, accel=accel, previous_value=accel).raw == pytest.approx(accel, abs=2e-3)
+  mid = (FINAL_TAPER_SPEED + ENTRY_SPEED) / 2
+  assert step(controller, speed=mid, accel=accel, previous_value=accel).raw == pytest.approx((accel + FINAL_TAPER_ACCEL) / 2)
+
+
 @pytest.mark.parametrize("accel", [-1.2, -2.0])
 def test_final_taper_never_weakens_urgent_braking(accel):
   controller = CanfdStopping()
