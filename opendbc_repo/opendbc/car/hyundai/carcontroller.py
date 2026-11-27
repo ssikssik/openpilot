@@ -826,6 +826,7 @@ class CarController(CarControllerBase):
       self.depart_jerk = params.get_int("StopGoLongAssist") >= 2
       if self.canfd_stopping is not None:
         self.canfd_stopping.unheld_brake = params.get_int("StopGoLongAssist") >= 1  # stop guard level (stopping.py)
+        self.canfd_stopping.final_taper = params.get_bool("SmoothFinalStop")
       self.blinker_control = params.get_bool("CanfdBlinkerKick")
       self.blinker_kick_mode = params.get_int("CanfdBlinkerKickMode")
       self.spas2_only = params.get_int("CanfdBlinkerSpas2Only")

@@ -922,7 +922,8 @@
           "zh": "制动",
           "params": [
             "ComfortBrake",
-            "SmoothLeadStop"
+            "SmoothLeadStop",
+            "SmoothFinalStop"
           ]
         },
         {
@@ -1648,6 +1649,23 @@
       "cgroup": "ej",
       "ctitle": "平顺跟车停车",
       "cdescr": "K8 混动和 EV4 启用 openpilot 纵向控制时，在雷达确认前车静止后按目标间距平顺停车。默认关闭。",
+      "min": 0,
+      "max": 1,
+      "default": 0,
+      "unit": 1,
+      "control": "toggle"
+    },
+    {
+      "group": "ej",
+      "name": "SmoothFinalStop",
+      "title": "정차 직전 브레이크 풀기",
+      "descr": "현대·기아 CAN-FD 롱컨 정차 시 약 2.9km/h 아래에서 정지 접근 감속(-0.50m/s²)을 0.4km/h에서 -0.15m/s²가 되도록 서서히 풀어 멈추는 순간의 울컥임을 줄입니다. 1.0m/s²보다 센 제동 요청과 앞차 앞 부드럽게 정차 적용 중에는 쓰지 않습니다. 정지 거리가 약 0.3m 늘어납니다. 최종 정지 요청(StopReq)과 정차 유지는 바뀌지 않습니다. 기본값은 꺼짐입니다.",
+      "egroup": "EJ",
+      "etitle": "Ease off the brake before stopping",
+      "edescr": "Hyundai/Kia CAN-FD openpilot longitudinal: below about 2.9 km/h, release the stop-approach deceleration (-0.50 m/s²) linearly to -0.15 m/s² at 0.4 km/h to reduce the jolt when the car comes to rest. Not used for requests stronger than 1.0 m/s² or while Smooth stop behind a lead is active. Adds about 0.3 m of stopping distance. The final stop request (StopReq) and hold are unchanged. Off by default.",
+      "cgroup": "ej",
+      "ctitle": "停车前松开制动",
+      "cdescr": "现代/起亚 CAN-FD openpilot 纵向控制：约 2.9km/h 以下将停车接近减速度（-0.50m/s²）线性放松到 0.4km/h 时的 -0.15m/s²，减轻停车瞬间的顿挫。制动请求强于 1.0m/s² 或平顺跟车停车生效时不使用。停车距离约增加 0.3m。最终停车请求（StopReq）和驻车保持不变。默认关闭。",
       "min": 0,
       "max": 1,
       "default": 0,
