@@ -112,6 +112,10 @@ CANFD_CAMERA_TX_MESSAGES = (
   ("ADRV_0x1ea", "adrv_0x1ea", 122), ("ADRV_0x160", "adrv_0x160", 122),
   ("CCNC_0x162", "ccnc_0x162", 122),
 )
+# EV4 stock ADAS_DRV ECU retransmits identical frames (dc=0) followed by dc=+2
+# (~18-19% of frames) on its high-rate control messages, which trips CANParser's
+# MAX_BAD_COUNTER=5 during short bursts even though CRC and timing remain valid.
+EV4_IGNORE_COUNTER_CAMERA_MSGS = frozenset({"LFA", "LFA_ALT", "ADRV_0x160"})
 CANFD_CAMERA_FIRST_FRAME_MAX_AGE_NS = 150_000_000
 TRAILER_DISCONNECT_GRACE_FRAMES = int(5.0 / DT_CTRL)
 EV_MODE_STATUS_TIMEOUT_NS = 500_000_000
@@ -535,7 +539,8 @@ class CarState(CarStateBase):
       if msg is None or msg.address not in parser.seen_addresses:
         continue
       if msg.address not in parser.addresses:
-        parser._add_message(name)
+        ignore_counter = self.CP.carFingerprint == CAR.KIA_EV4 and name in EV4_IGNORE_COUNTER_CAMERA_MSGS
+        parser._add_message(name, ignore_counter=ignore_counter)
 
       # _add_message creates a zero-filled dictionary. Do not expose it to TX;
       # wait for a real frame accepted by the existing CRC/counter checks.
@@ -610,7 +615,7 @@ class CarState(CarStateBase):
       else: # canfd
         if self.controls_ready_count == 120:
           cp_cruise = self.cp_cam if self.CP.flags & HyundaiFlags.CANFD_CAMERA_SCC else self.cp
-          add_and_cache(cp_cruise, "SCC_CONTROL", "scc_control")
+          add_and_cache(cp_cruise, "SCC_CONTROL", "scc_control", ignore_counter=self.CP.carFingerprint == CAR.KIA_EV4)
         elif self.controls_ready_count == 121:
           add_and_cache(self.cp, "TCS", "tcs")
           add_and_cache(self.cp, "MDPS", "mdps")
