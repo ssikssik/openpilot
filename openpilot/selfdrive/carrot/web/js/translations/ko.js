@@ -672,7 +672,7 @@ window.CarrotTranslations.register("ko", {
     joystick_debug_mode: "조이스틱 디버그 모드",
     joystick_mode: "조이스틱 모드",
     joystick_mode_confirm: "조이스틱 모드를 활성화하시겠습니까?\n안전한 사유지/공터에서만 사용하고, 테스트 후 반드시 꺼주세요.",
-    joystick_mode_offroad_only: "시동을 끈 상태(정차/오프로드)에서만 조이스틱 모드를 켤 수 있습니다.",
+    joystick_mode_standstill_only: "정차 상태에서만 조이스틱 모드를 켤 수 있습니다.",
     joystick_mode_enabled: "조이스틱 모드가 활성화되었습니다.",
     joystick_mode_disabled: "조이스틱 모드가 비활성화되었습니다.",
     longitudinal_maneuver_mode: "종방향 기동 모드",

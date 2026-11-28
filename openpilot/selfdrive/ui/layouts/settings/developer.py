@@ -57,7 +57,7 @@ class DeveloperLayout(Widget):
       description="",
       initial_state=self._params.get_bool("JoystickDebugMode"),
       callback=self._on_joystick_debug_mode,
-      enabled=ui_state.is_offroad,
+      enabled=self._can_toggle_joystick,
     )
 
     self._long_maneuver_toggle = toggle_item(
@@ -152,6 +152,14 @@ class DeveloperLayout(Widget):
 
   def _on_enable_ssh(self, state: bool):
     self._params.put_bool("SshEnabled", state)
+
+  def _can_toggle_joystick(self) -> bool:
+    if ui_state.is_offroad():
+      return True
+    if not ui_state.sm.recv_frame["carState"]:
+      return True
+    cs = ui_state.sm["carState"]
+    return bool(cs.standstill or abs(cs.vEgo) < 0.3)
 
   def _on_joystick_debug_mode(self, state: bool):
     self._params.put_bool("JoystickDebugMode", state)
