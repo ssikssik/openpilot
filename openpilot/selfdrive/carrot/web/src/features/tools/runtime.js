@@ -687,6 +687,7 @@ function rerenderPageLangUi() {
   renderToolsMeta();
   renderToolsShortcuts();
   globalThis.CarrotEgpuModel?.render?.();
+  globalThis.CarrotJoystick?.render?.();
   refreshToolsMetaInfo().catch(() => {});
   if (CURRENT_PAGE === "logs") {
     globalThis.CarrotLogsRuntime?.dashcam.render?.({ animate: false });
@@ -1120,6 +1121,7 @@ function initToolsPage() {
   initToolsLogPanel();
   globalThis.CarrotEgpuModel?.init?.();
   globalThis.CarrotBluetooth?.init?.();
+  globalThis.CarrotJoystick?.init?.();
 
   bindOnce("btnToolsCarSelect", () => {
     if (typeof window.openCarPickerFlow === "function") window.openCarPickerFlow();
