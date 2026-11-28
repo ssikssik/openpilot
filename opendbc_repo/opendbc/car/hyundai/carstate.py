@@ -1567,6 +1567,8 @@ class CarState(CarStateBase):
   def _decode_vehicle_navi_tbt(values, link_class=0):
     """Decode Hyundai/Kia CAN-FD 0x2A3 (HU_CLU_PE_02) TBT into Carrot xTurnInfo (1..8) and meters."""
     display_type = int(values.get("TBT_DISPLAY_TYPE", 0))
+    side_street = int(values.get("TBT_SIDE_STREET", 0))
+    is_carplay_tbt = side_street == 0xFFFF
     direction = int(values.get("TBT_DIRECTION", 0))
     bar_level = int(values.get("TBT_BAR_GRAPH_LEVEL", 0))
     raw_dist = int(values.get("TBT_DISTANCE_TURN_POINT", 0xFFFF))
@@ -1587,7 +1589,10 @@ class CarState(CarStateBase):
       step_m = 100.0
     else:
       dist_m = float(raw_dist)
-      step_m = 100.0 if raw_dist >= 300 else (10.0 if raw_dist >= 10 else 5.0)
+      if is_carplay_tbt:
+        step_m = 5.0
+      else:
+        step_m = 100.0 if raw_dist >= 300 else (10.0 if raw_dist >= 10 else 5.0)
 
     if next_raw == 0xFFFF or next_scale not in (0, 1) or (next_scale == 1 and next_dec > 9):
       next_dist_m = 0.0
@@ -1599,15 +1604,18 @@ class CarState(CarStateBase):
     # Verified EV4/ccNC 0x2A3 TBT_DISPLAY_TYPE -> Carrot xTurnInfo mapping (fail-closed on unknown codes).
     # Straight/underpass/overpass/waypoint codes (0x54/0x58/0x5B/0x2C/0x2E/0x73/0x77) stay inactive so they
     # do not trigger ATC steering, speed cuts, or a misleading TG icon.
+    # In CarPlay TMap projection (TBT_SIDE_STREET == 0xFFFF), 0x41 means straight continuation (NOT left fork),
+    # so we emit turn_info=9 (straight NOO guidance only; ATC stays completely off), and 0x93/0x95 are right
+    # IC/JC exit/curved ramps (turn_info=4).
     if display_type == 0x46:  # city turn left
       turn_info = 1
     elif display_type == 0x47:  # slight left / left branch
       turn_info = 3 if link_class in VEHICLE_NAVI_CONTROLLED_ACCESS_LINK_CLASSES else 1
     elif display_type == 0x43:  # city turn right
       turn_info = 2
-    elif display_type == 0x41:  # highway fork left
-      turn_info = 3
-    elif display_type in (0x42, 0xA1, 0xA4, 0x11):  # highway JC/IC fork right, entry right, IC exit right
+    elif display_type == 0x41:  # CarPlay TMap straight continuation vs stock-navi highway fork left
+      turn_info = 9 if is_carplay_tbt else 3
+    elif display_type in (0x42, 0x93, 0x95, 0xA1, 0xA4, 0x11):  # highway JC/IC fork right, entry/exit/loop ramp right
       turn_info = 4
     elif display_type == 0x0D:  # close-range highway/ramp branch graphic
       if direction == 0x00 and bar_level == 0:

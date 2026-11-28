@@ -23,7 +23,11 @@ def stock_navi_map_active(sm, route_id: int, tracker, fresh_tbt: bool, enabled: 
   if not sm.valid['carrotMan']:
     return False
   cm = sm['carrotMan']
-  if not (cm.vehicleNaviAvailable and cm.xTurnInfo > 0):
+  straight_guidance = (
+    'carState' in sm and sm.valid['carState'] and
+    getattr(sm['carState'], 'vehicleNaviTurnInfo', -1) == 9
+  )
+  if not (cm.vehicleNaviAvailable and (cm.xTurnInfo > 0 or straight_guidance)):
     return False
   if cm.remote or cm.nGoPosDist > 0 or cm.nGoPosTime > 0:
     return False

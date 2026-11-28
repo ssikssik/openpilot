@@ -299,3 +299,19 @@ def test_navd_ignores_vehicle_navi_bump_and_curve_active_carrot():
   sm['carrotMan'].remote = ''
   sm.alive['carrotNavi'] = sm.valid['carrotNavi'] = True
   assert engine._external_nav_active()
+
+
+def test_carplay_tmap_straight_guidance_enables_mapsd_noo_without_atc():
+  class SM(dict):
+    pass
+
+  sm = SM(
+    carrotMan=NS(vehicleNaviAvailable=True, xTurnInfo=-1, remote='', nGoPosDist=0, nGoPosTime=0, activeCarrot=0),
+    carrotNavi=NS(),
+    carState=NS(vehicleNaviTurnInfo=9),
+  )
+  sm.valid = {'carrotMan': True, 'carrotNavi': False, 'carState': True}
+  sm.alive = {'carrotMan': True, 'carrotNavi': False, 'carState': True}
+  assert stock_navi_map_active(sm, route_id=777, tracker=None, fresh_tbt=True, enabled=True)
+  sm['carState'].vehicleNaviTurnInfo = -1
+  assert not stock_navi_map_active(sm, route_id=777, tracker=None, fresh_tbt=True, enabled=True)
