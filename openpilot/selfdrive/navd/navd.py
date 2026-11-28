@@ -102,7 +102,8 @@ class RouteEngine:
       self.reset_recompute_limits()
 
   def _external_nav_active(self):
-    if self.sm.alive.get('carrotNavi', False) and self.sm.valid.get('carrotNavi', False):
+    if (self.sm.alive.get('carrotNavi', False) and self.sm.valid.get('carrotNavi', False) and
+        getattr(self.sm['carrotNavi'], 'connected', False)):
       return True
     if self.sm.valid.get('carrotMan', False) and self.sm.alive.get('carrotMan', False):
       cm = self.sm['carrotMan']

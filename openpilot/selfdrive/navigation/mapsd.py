@@ -18,7 +18,8 @@ def stock_navi_map_active(sm, route_id: int, tracker, fresh_tbt: bool, enabled: 
   """True when stock-navi 0x2A3 TBT should synthesize a local Mapbox-tile route."""
   if not (enabled and tracker is None and route_id != 0 and fresh_tbt):
     return False
-  if sm.alive.get('carrotNavi', False) and sm.valid.get('carrotNavi', False):
+  if (sm.alive.get('carrotNavi', False) and sm.valid.get('carrotNavi', False) and
+      getattr(sm['carrotNavi'], 'connected', False)):
     return False
   if not sm.valid.get('carrotMan', False):
     return False
