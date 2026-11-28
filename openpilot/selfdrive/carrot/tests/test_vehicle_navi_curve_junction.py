@@ -795,3 +795,60 @@ def test_maneuver_classifier_imminent_urban_atc_turn_without_wide_edge():
   # If another lane still exists on the turn side -> does not skip lane change
   side.lane_available = True
   assert classify_maneuver_type(2, cs, side, False, "turn right", "lane_change", atc_dist=18.0) == "lane_change"
+
+
+def test_vehicle_bump_active_carrot_does_not_clobber_stock_navi_instruction(monkeypatch):
+  from openpilot.selfdrive.carrot import carrot_serv
+  from openpilot.selfdrive.carrot.tests.test_vehicle_speed_camera_control import _car_state
+
+  values = {
+    "AutoNaviSpeedBumpSpeed": 25, "AutoNaviSpeedBumpTime": 4,
+    "AutoNaviSpeedBumpEndDistance": 200, "AutoNaviSpeedCtrlMode": 2,
+    "AutoNaviSpeedCtrlEnd": 10, "AutoNaviSpeedDecelRate": 120,
+    "AutoNaviRearCameraHoldDistance": 100, "AutoNaviSpeedSafetyFactor": 100,
+    "AutoNaviCountDownMode": 0, "VehicleNaviCanControl": 1,
+    "VehicleNaviAtcControl": 1, "AutoTurnControl": 2,
+    "AutoTurnControlSpeedTurn": 25, "AutoTurnControlTurnEnd": 5,
+    "IsMetric": 1, "AutoRoadSpeedLimitOffset": -1,
+  }
+
+  class _Params:
+    def __init__(self, *_args):
+      pass
+    def get(self, key):
+      return str(values.get(key, 0))
+    def get_int(self, key):
+      return int(self.get(key))
+    def get_float(self, key):
+      return float(self.get(key))
+    def get_bool(self, key):
+      return bool(self.get_int(key))
+
+  monkeypatch.setattr(carrot_serv, "Params", _Params)
+  serv = carrot_serv.CarrotServ()
+  monkeypatch.setattr(serv, "_update_carrot_navi", lambda _sm: False)
+  monkeypatch.setattr(serv, "_update_gps", lambda *_args: 0.)
+
+  cs = _car_state(speed_limit=50, distance=0, v_ego=30 / 3.6)
+  cs.vehicleNaviActive = cs.vehicleNaviAvailable = True
+  cs.speedBumpDistance = 20.0  # triggers self.active_carrot = 5 without external nav
+  cs.vehicleNaviTurnInfo = 2
+  cs.vehicleNaviTurnDistance = 80.0
+  cs.vehicleNaviTurnDisplayType = 0x10
+
+  class _SM(dict):
+    alive = {"carState": True, "selfdriveState": True, "navInstruction": False}
+    valid = {"carState": True, "selfdriveState": True, "navInstruction": False}
+
+  sm = _SM(carState=cs, selfdriveState=SimpleNamespace(distanceTraveled=0.))
+  sent = {}
+  pm = SimpleNamespace(send=lambda name, msg: sent.update({name: msg}))
+  serv.update_navi("", sm, pm, 200., [], [], 200., "gpsLocationExternal")
+
+  nic = sent["navInstructionCarrot"]
+  assert sent["carrotMan"].carrotMan.activeCarrot == 5
+  assert nic.valid
+  assert nic.navInstructionCarrot.maneuverType == "turn"
+  assert nic.navInstructionCarrot.maneuverModifier == "right"
+  assert nic.navInstructionCarrot.maneuverDistance == pytest.approx(80.0)
+  assert len(nic.navInstructionCarrot.allManeuvers) == 1
