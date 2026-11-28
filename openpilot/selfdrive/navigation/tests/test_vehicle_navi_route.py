@@ -243,12 +243,12 @@ def test_route_source_stock_navi_priority_and_map_input_handshake(monkeypatch):
 
   sm = SM(
     carrotMan=NS(vehicleNaviAvailable=True, xTurnInfo=2, remote='', nGoPosDist=0, nGoPosTime=0, activeCarrot=5),
-    carrotNavi=NS(),
+    carrotNavi=NS(connected=False),
     navInstructionCarrot=_inst('turn', 'right', 80.0),
     navRoute=NS(carrotRouteId=777),
   )
-  sm.valid = {'carrotMan': True, 'carrotNavi': False, 'navInstructionCarrot': True, 'navRoute': True}
-  sm.alive = {'carrotMan': True, 'carrotNavi': False}
+  sm.valid = {'carrotMan': True, 'carrotNavi': True, 'navInstructionCarrot': True, 'navRoute': True}
+  sm.alive = {'carrotMan': True, 'carrotNavi': True}
   sm.recv_time = {'navInstructionCarrot': 9.9}
 
   assert stock_navi_map_active(sm, route_id=777, tracker=None, fresh_tbt=True, enabled=True)
@@ -256,9 +256,9 @@ def test_route_source_stock_navi_priority_and_map_input_handshake(monkeypatch):
   sm['carrotMan'].remote = '192.168.1.10'
   assert not stock_navi_map_active(sm, route_id=777, tracker=None, fresh_tbt=True, enabled=True)
   sm['carrotMan'].remote = ''
-  sm.alive['carrotNavi'] = sm.valid['carrotNavi'] = True
+  sm['carrotNavi'].connected = True
   assert not stock_navi_map_active(sm, route_id=777, tracker=None, fresh_tbt=True, enabled=True)
-  sm.alive['carrotNavi'] = sm.valid['carrotNavi'] = False
+  sm['carrotNavi'].connected = False
 
   # Verify MapInput accepts stock-navi nav_map + navigation when route_id matches.
   monkeypatch.setattr(map_client.time, 'monotonic', lambda: 10.0)
@@ -278,10 +278,10 @@ def test_navd_ignores_vehicle_navi_bump_and_curve_active_carrot():
 
   sm = SM(
     carrotMan=NS(activeCarrot=5, remote='', vehicleNaviAvailable=True),
-    carrotNavi=NS(),
+    carrotNavi=NS(connected=False),
   )
-  sm.valid = {'carrotMan': True, 'carrotNavi': False}
-  sm.alive = {'carrotMan': True, 'carrotNavi': False}
+  sm.valid = {'carrotMan': True, 'carrotNavi': True}
+  sm.alive = {'carrotMan': True, 'carrotNavi': True}
   engine = navd.RouteEngine.__new__(navd.RouteEngine)
   engine.sm = sm
   assert not engine._external_nav_active()
@@ -297,7 +297,7 @@ def test_navd_ignores_vehicle_navi_bump_and_curve_active_carrot():
   assert engine._external_nav_active()
 
   sm['carrotMan'].remote = ''
-  sm.alive['carrotNavi'] = sm.valid['carrotNavi'] = True
+  sm['carrotNavi'].connected = True
   assert engine._external_nav_active()
 
 
@@ -314,11 +314,9 @@ def test_carplay_tmap_straight_guidance_enables_mapsd_noo_without_atc():
 
   sm = RealLikeSubMaster({
     'carrotMan': NS(vehicleNaviAvailable=True, xTurnInfo=-1, remote='', nGoPosDist=0, nGoPosTime=0, activeCarrot=0),
-    'carrotNavi': NS(),
+    'carrotNavi': NS(connected=False),
     'carState': NS(vehicleNaviTurnInfo=9),
   })
-  sm.valid['carrotNavi'] = False
-  sm.alive['carrotNavi'] = False
   assert stock_navi_map_active(sm, route_id=777, tracker=None, fresh_tbt=True, enabled=True)
   sm['carState'].vehicleNaviTurnInfo = -1
   assert not stock_navi_map_active(sm, route_id=777, tracker=None, fresh_tbt=True, enabled=True)
