@@ -115,12 +115,16 @@ def main() -> None:
     cloudlog.info(f"Caught signal {signum}, exiting")
     nonlocal do_exit
     do_exit = True
-    if process is not None:
-      process.send_signal(signal.SIGINT)
+    if process is not None and process.poll() is None:
+      try:
+        process.send_signal(signal.SIGINT)
+      except ProcessLookupError:
+        pass
 
   process = None
   do_exit = False
-  signal.signal(signal.SIGINT, signal_handler)
+  for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    signal.signal(sig, signal_handler)
 
   count = 0
   first_run = True
@@ -205,6 +209,9 @@ def main() -> None:
         panda.close()
 
     first_run = False
+
+    if do_exit:
+      break
 
     # run pandad with all connected serials as arguments
     configure_boardd_firmware_check(params)
