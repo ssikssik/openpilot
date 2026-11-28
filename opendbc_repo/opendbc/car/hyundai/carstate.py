@@ -111,6 +111,8 @@ VEHICLE_NAVI_CURVE_TARGET_LAT_ACCEL = 1.9
 VEHICLE_NAVI_CURVE_ALLOWED_LINK_CLASSES = VEHICLE_NAVI_CONTROLLED_ACCESS_LINK_CLASSES  # Freeway (1), IC (2), JC (3)
 VEHICLE_NAVI_CURVE_SEGMENT_TIMEOUT_NS = 600_000_000_000  # 0x099/0x4B9 ADASIS SEGMENT is event-driven (~300s refresh); 0x364/0x4A3 2s gates liveness
 VEHICLE_NAVI_RAMP_FRWINFO_VALUES = (1, 2, 3, 4)  # Fork warning within ~500 m
+VEHICLE_NAVI_RAMP_HOLD_NS = 6_000_000_000  # Keep armed ramp preview across blinker-off -> ramp-entry handoff
+VEHICLE_NAVI_RAMP_TBT_MAX_DISTANCE = 500.0  # Arm ramp curves automatically when 0x2A3 TBT exit matches within 500 m
 VEHICLE_NAVI_HDA_TIMEOUT_NS = 2_000_000_000
 VEHICLE_NAVI_STUB_EXIT_BRANCH_TYPE = 0x49
 VEHICLE_NAVI_STUB_MERGE_BRANCH_TYPE = 0x01
@@ -323,6 +325,8 @@ class CarState(CarStateBase):
     self.vehicleNaviCurves = []
     self.vehicleNaviRampCurves = []
     self.vehicleNaviJunctions = []
+    self.vehicleNaviRampHoldSide = 0
+    self.vehicleNaviRampHoldUntilNanos = 0
     self.vehicleNaviCurveRouteActive = False
     self.vehicleNaviCurveRouteState = 3
     self.vehicleNaviCurvePathIndex = None
@@ -1219,6 +1223,8 @@ class CarState(CarStateBase):
     self.vehicleNaviCurves = []
     self.vehicleNaviRampCurves = []
     self.vehicleNaviJunctions = []
+    self.vehicleNaviRampHoldSide = 0
+    self.vehicleNaviRampHoldUntilNanos = 0
 
   @staticmethod
   def _decode_hyundai_navi_curvature(value):
@@ -1516,7 +1522,7 @@ class CarState(CarStateBase):
       ret.vehicleNaviJunctionDistance = 500.0
       ret.vehicleNaviJunctionLane = 0
 
-  def _update_vehicle_navi_curve_output(self, ret, link_class, frw_info, hda_fresh):
+  def _update_vehicle_navi_curve_output(self, ret, link_class, frw_info, hda_fresh, now_ns=0):
     self.vehicleNaviCurves = [
       curve for curve in self.vehicleNaviCurves if curve["target"] + curve.get("span", 0.0) >= self.totalDistance
     ]
@@ -1529,18 +1535,55 @@ class CarState(CarStateBase):
     ret.vehicleNaviCurveRouteState = self.vehicleNaviCurveRouteState
     ret.vehicleNaviFrwInfo = frw_info if curve_road_allowed else 0
     if not curve_road_allowed or self.vehicleNaviCurveRouteState not in (0, 1):
+      self.vehicleNaviRampHoldSide = 0
+      self.vehicleNaviRampHoldUntilNanos = 0
       return
 
     candidates_raw = [(curve, False) for curve in self.vehicleNaviCurves]
     left_blinker = bool(getattr(ret, "leftBlinker", False))
     right_blinker = bool(getattr(ret, "rightBlinker", False))
+    both_blinkers = left_blinker and right_blinker
     single_blinker = left_blinker != right_blinker
     blinker_side = 1 if left_blinker else (2 if right_blinker else 0)
     upcoming_exits = [j for j in self.vehicleNaviJunctions
                       if j["type"] == 1 and j["end"] >= self.totalDistance and j["start"] - self.totalDistance <= 600.0]
     expected_exit_side = next((j["side"] for j in upcoming_exits if j["side"] in (1, 2)), 0)
-    ramp_armed = bool(self.vehicleNaviRampCurveControl and frw_info in VEHICLE_NAVI_RAMP_FRWINFO_VALUES and
-                      single_blinker and blinker_side == expected_exit_side)
+
+    tbt_turn_info = int(getattr(ret, "vehicleNaviTurnInfo", 0))
+    tbt_turn_dist = float(getattr(ret, "vehicleNaviTurnDistance", 0.0))
+    tbt_exit_side = 1 if tbt_turn_info == 3 else (2 if tbt_turn_info == 4 else 0)
+    tbt_has_guidance = tbt_turn_info > 0
+    tbt_matches_exit = (tbt_exit_side in (1, 2) and tbt_turn_dist <= VEHICLE_NAVI_RAMP_TBT_MAX_DISTANCE and
+                        (expected_exit_side == 0 or tbt_exit_side == expected_exit_side))
+    # Suppress highway lane-change blinker false triggers when active 0x2A3 TBT is guiding straight (9) or elsewhere.
+    tbt_suppresses_blinker = tbt_has_guidance and not tbt_matches_exit
+
+    in_ramp_zone = frw_info in VEHICLE_NAVI_RAMP_FRWINFO_VALUES
+    blinker_matches_exit = (not tbt_suppresses_blinker and single_blinker and
+                            expected_exit_side in (1, 2) and blinker_side == expected_exit_side)
+
+    if not self.vehicleNaviRampCurveControl or both_blinkers:
+      self.vehicleNaviRampHoldSide = 0
+      self.vehicleNaviRampHoldUntilNanos = 0
+    elif self.vehicleNaviRampHoldSide in (1, 2):
+      if (single_blinker and blinker_side != self.vehicleNaviRampHoldSide) or (
+          expected_exit_side in (1, 2) and expected_exit_side != self.vehicleNaviRampHoldSide):
+        self.vehicleNaviRampHoldSide = 0
+        self.vehicleNaviRampHoldUntilNanos = 0
+
+    direct_arm = bool(self.vehicleNaviRampCurveControl and not both_blinkers and in_ramp_zone and
+                      (tbt_matches_exit or blinker_matches_exit))
+    if direct_arm:
+      self.vehicleNaviRampHoldSide = tbt_exit_side if tbt_matches_exit else blinker_side
+      self.vehicleNaviRampHoldUntilNanos = (now_ns + VEHICLE_NAVI_RAMP_HOLD_NS) if now_ns > 0 else 0
+      ramp_armed = True
+    else:
+      hold_active = bool(self.vehicleNaviRampCurveControl and self.vehicleNaviRampHoldSide in (1, 2) and
+                         now_ns > 0 and now_ns <= self.vehicleNaviRampHoldUntilNanos)
+      if not hold_active:
+        self.vehicleNaviRampHoldSide = 0
+        self.vehicleNaviRampHoldUntilNanos = 0
+      ramp_armed = hold_active
     if ramp_armed:
       candidates_raw.extend((curve, True) for curve in self.vehicleNaviRampCurves)
 
@@ -2450,9 +2493,9 @@ class CarState(CarStateBase):
     self._consume_vehicle_navi_proshort(cp)
     self._consume_vehicle_navi_ramp_and_stub(cp)
     link_class, frw_info, hda_fresh = self._vehicle_navi_hda_state(cp)
-    self._update_vehicle_navi_curve_output(ret, link_class, frw_info, hda_fresh)
-    self._update_vehicle_navi_junction_output(ret, link_class, frw_info, hda_fresh)
     self._update_vehicle_navi_tbt(cp, ret, link_class)
+    self._update_vehicle_navi_curve_output(ret, link_class, frw_info, hda_fresh, now_ns=getattr(cp, "_last_update_nanos", 0))
+    self._update_vehicle_navi_junction_output(ret, link_class, frw_info, hda_fresh)
 
     on_controlled_access_road = self._vehicle_navi_is_controlled_access_road()
     if on_controlled_access_road:
