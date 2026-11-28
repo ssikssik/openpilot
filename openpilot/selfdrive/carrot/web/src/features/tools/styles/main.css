@@ -133,6 +133,12 @@
   margin-bottom: 16px;
 }
 
+#btnToolsJoystick[data-state="on"] {
+  border-color: color-mix(in srgb, var(--md-primary) 58%, var(--md-outline-var));
+  background: var(--md-primary-state);
+  color: var(--md-primary);
+}
+
 .tools-group__toggle {
   width: 100%;
   min-height: 34px;

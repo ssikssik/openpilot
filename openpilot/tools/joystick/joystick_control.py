@@ -1,17 +1,50 @@
 #!/usr/bin/env python3
 import os
+import struct
+import time
 import argparse
 import threading
 import numpy as np
-from inputs import UnpluggedError, get_gamepad
 
 from openpilot.cereal import messaging
 from openpilot.common.params import Params
 from openpilot.common.realtime import Ratekeeper
-from openpilot.system.hardware import HARDWARE
 from openpilot.tools.lib.kbhit import KBHit
 
 EXPO = 0.4
+DEADZONE = 0.08
+TRIGGER_DEADZONE = 0.03
+MAX_GB = 0.5
+MAX_STEER = 1.0
+
+JS_EVENT_BUTTON = 0x01
+JS_EVENT_AXIS = 0x02
+JS_EVENT_INIT = 0x80
+JS_EVENT_FORMAT = "<IhBB"
+JS_EVENT_SIZE = struct.calcsize(JS_EVENT_FORMAT)
+
+
+def _clamp(val: float, lo: float = -1.0, hi: float = 1.0) -> float:
+  return max(lo, min(hi, val))
+
+
+def _apply_deadzone(val: float, deadzone: float) -> float:
+  if abs(val) < deadzone:
+    return 0.0
+  sign = 1.0 if val > 0 else -1.0
+  return sign * (abs(val) - deadzone) / (1.0 - deadzone)
+
+
+def _normalize_stick(raw: int, deadzone: float = DEADZONE) -> float:
+  norm = _apply_deadzone(_clamp(raw / 32767.0, -1.0, 1.0), deadzone)
+  return EXPO * (norm ** 3) + (1.0 - EXPO) * norm
+
+
+def _normalize_trigger(raw: int, deadzone: float = TRIGGER_DEADZONE) -> float:
+  val = _clamp((raw + 32767.0) / 65534.0, 0.0, 1.0)
+  if val < deadzone:
+    return 0.0
+  return (val - deadzone) / (1.0 - deadzone)
 
 
 class Keyboard:
@@ -41,53 +74,87 @@ class Keyboard:
 
 
 class Joystick:
-  def __init__(self):
-    # This class supports a PlayStation 5 DualSense controller on the comma 3X
-    # TODO: find a way to get this from API or detect gamepad/PC, perhaps "inputs" doesn't support it
-    self.cancel_button = 'BTN_NORTH'  # BTN_NORTH=X/triangle
-    if HARDWARE.get_device_type() == 'pc':
-      accel_axis = 'ABS_Z'
-      steer_axis = 'ABS_RX'
-      # TODO: once the longcontrol API is finalized, we can replace this with outputting gas/brake and steering
-      self.flip_map = {'ABS_RZ': accel_axis}
-    else:
-      accel_axis = 'ABS_RX'
-      steer_axis = 'ABS_Z'
-      self.flip_map = {'ABS_RY': accel_axis}
+  """Xbox Series S|X Bluetooth controller (/dev/input/js0) for comma 3/3X.
 
-    self.min_axis_value = {accel_axis: 0., steer_axis: 0.}
-    self.max_axis_value = {accel_axis: 255., steer_axis: 255.}
-    self.axes_values = {accel_axis: 0., steer_axis: 0.}
-    self.axes_order = [accel_axis, steer_axis]
+  Verified mapping for 045E:0B13 over Bluetooth:
+    - Axis 0: Left Stick X -> steer (+left, -right)
+    - Axis 4: RT trigger   -> gas (+)
+    - Axis 5: LT trigger   -> brake (-)
+    - Btn  1: B button     -> hold for instant neutral (0, 0)
+  """
+
+  def __init__(self, device: str = "/dev/input/js0"):
+    self.device = device
+    self.axes_values = {'gb': 0., 'steer': 0.}
+    self.axes_order = ['gb', 'steer']
     self.cancel = False
 
+    self._raw_axes = {0: 0, 4: -32767, 5: -32767}
+    self._raw_buttons = {1: 0, 6: 0}
+    self._js_file = None
+
+  def _reset(self):
+    self._raw_axes = {0: 0, 4: -32767, 5: -32767}
+    self._raw_buttons = {1: 0, 6: 0}
+    self.axes_values['gb'] = 0.0
+    self.axes_values['steer'] = 0.0
+    self.cancel = False
+    if self._js_file is not None:
+      try:
+        self._js_file.close()
+      except OSError:
+        pass
+      self._js_file = None
+
+  def _recompute(self):
+    if self._raw_buttons.get(1, 0) == 1:
+      self.axes_values['gb'] = 0.0
+      self.axes_values['steer'] = 0.0
+      self.cancel = True
+      return
+
+    self.cancel = False
+    steer = -_normalize_stick(self._raw_axes.get(0, 0))
+    gas = _normalize_trigger(self._raw_axes.get(4, -32767))
+    brake = _normalize_trigger(self._raw_axes.get(5, -32767))
+    gb = gas - brake
+
+    self.axes_values['gb'] = _clamp(gb * MAX_GB, -1.0, 1.0)
+    self.axes_values['steer'] = _clamp(steer * MAX_STEER, -1.0, 1.0)
+
   def update(self):
+    if self._js_file is None:
+      if not os.path.exists(self.device):
+        time.sleep(0.2)
+        return False
+      try:
+        self._js_file = open(self.device, "rb", buffering=0)
+        print(f"\n[Xbox] Connected to {self.device}")
+      except OSError:
+        time.sleep(0.2)
+        return False
+
     try:
-      joystick_event = get_gamepad()[0]
-    except (OSError, UnpluggedError):
-      self.axes_values = dict.fromkeys(self.axes_values, 0.)
+      raw_ev = self._js_file.read(JS_EVENT_SIZE)
+      if not raw_ev or len(raw_ev) != JS_EVENT_SIZE:
+        self._reset()
+        return False
+    except OSError:
+      print("\n[Xbox] Disconnected! Resetting outputs to 0.")
+      self._reset()
+      time.sleep(0.2)
       return False
 
-    event = (joystick_event.code, joystick_event.state)
-
-    # flip left trigger to negative accel
-    if event[0] in self.flip_map:
-      event = (self.flip_map[event[0]], -event[1])
-
-    if event[0] == self.cancel_button:
-      if event[1] == 1:
-        self.cancel = True
-      elif event[1] == 0:   # state 0 is falling edge
-        self.cancel = False
-    elif event[0] in self.axes_values:
-      self.max_axis_value[event[0]] = max(event[1], self.max_axis_value[event[0]])
-      self.min_axis_value[event[0]] = min(event[1], self.min_axis_value[event[0]])
-
-      norm = -float(np.interp(event[1], [self.min_axis_value[event[0]], self.max_axis_value[event[0]]], [-1., 1.]))
-      norm = norm if abs(norm) > 0.03 else 0.  # center can be noisy, deadzone of 3%
-      self.axes_values[event[0]] = EXPO * norm ** 3 + (1 - EXPO) * norm  # less action near center for fine control
+    _, value, ev_type, number = struct.unpack(JS_EVENT_FORMAT, raw_ev)
+    base_type = ev_type & ~JS_EVENT_INIT
+    if base_type == JS_EVENT_AXIS:
+      self._raw_axes[number] = value
+    elif base_type == JS_EVENT_BUTTON:
+      self._raw_buttons[number] = value
     else:
       return False
+
+    self._recompute()
     return True
 
 
@@ -121,9 +188,8 @@ def main():
 
 
 if __name__ == '__main__':
-  parser = argparse.ArgumentParser(description='Publishes events from your joystick to control your car.\n' +
-                                               'openpilot must be offroad before starting joystick_control. This tool supports ' +
-                                               'a PlayStation 5 DualSense controller on the comma 3X.',
+  parser = argparse.ArgumentParser(description='Publishes events from your Xbox controller to control your car.\n' +
+                                               'openpilot must be offroad before starting joystick_control.',
                                    formatter_class=argparse.ArgumentDefaultsHelpFormatter)
   parser.add_argument('--keyboard', action='store_true', help='Use your keyboard instead of a joystick')
   args = parser.parse_args()
@@ -140,8 +206,7 @@ if __name__ == '__main__':
     print('- `R`: Resets axes')
     print('- `C`: Cancel cruise control')
   else:
-    print('Using joystick, make sure to run cereal/messaging/bridge on your device if running over the network!')
-    print('If not running on a comma device, the mapping may need to be adjusted.')
+    print('Using Xbox Bluetooth controller (/dev/input/js0): Left Stick=steer, RT=gas, LT=brake, B=neutral')
 
   joystick = Keyboard() if args.keyboard else Joystick()
   joystick_control_thread(joystick)
