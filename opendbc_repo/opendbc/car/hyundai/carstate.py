@@ -87,6 +87,14 @@ VEHICLE_NAVI_CURVE_DISTANCE_FACTOR = 2.0
 VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_DISTANCE = 10.0
 VEHICLE_NAVI_CURVE_SHORT_SPOT_MAX_SPEED = 60.0
 VEHICLE_NAVI_CURVE_TARGET_LAT_ACCEL = 1.9
+# Matches external-navi carrot_man.py V_CURVE_LOOKUP_BP / V_CRUVE_LOOKUP_VALS
+VEHICLE_NAVI_CURVE_LOOKUP_BP = (
+  0.0, 1.0 / 800.0, 1.0 / 670.0, 1.0 / 560.0, 1.0 / 440.0, 1.0 / 360.0,
+  1.0 / 265.0, 1.0 / 190.0, 1.0 / 135.0, 1.0 / 85.0, 1.0 / 55.0, 1.0 / 30.0, 1.0 / 25.0,
+)
+VEHICLE_NAVI_CURVE_LOOKUP_VALS = (
+  300.0, 150.0, 120.0, 110.0, 100.0, 90.0, 80.0, 70.0, 60.0, 50.0, 40.0, 15.0, 5.0,
+)
 VEHICLE_NAVI_CURVE_ALLOWED_LINK_CLASSES = VEHICLE_NAVI_CONTROLLED_ACCESS_LINK_CLASSES  # Freeway (1), IC (2), JC (3)
 VEHICLE_NAVI_CURVE_SEGMENT_TIMEOUT_NS = 600_000_000_000  # 0x099/0x4B9 ADASIS SEGMENT is event-driven (~300s refresh); 0x364/0x4A3 2s gates liveness
 VEHICLE_NAVI_RAMP_FRWINFO_VALUES = (1, 2, 3, 4)  # Fork warning within ~500 m
@@ -981,7 +989,7 @@ class CarState(CarStateBase):
     if raw_decel <= 0:
       raw_decel = 120
     raw_ctrl_end = self._read_op_int("VehicleNaviCurveCtrlEnd", 3)
-    self.vehicleNaviCurveSpeedFactor = min(2.0, max(0.5, raw_factor * 0.01))
+    self.vehicleNaviCurveSpeedFactor = min(3.0, max(0.5, raw_factor * 0.01))
     self.vehicleNaviCurveLowerLimit = max(5.0, float(raw_lower))
     self.vehicleNaviCurveDecelRate = max(0.01, raw_decel * 0.01)
     self.vehicleNaviCurveControlEnd = max(0.0, float(raw_ctrl_end))
@@ -1209,9 +1217,19 @@ class CarState(CarStateBase):
 
   @staticmethod
   def _vehicle_navi_curve_reference_speed(curvature):
-    if abs(curvature) < 1e-7:
+    abs_curv = abs(curvature)
+    if abs_curv < 1e-7:
       return 250.0
-    return min(250.0, max(5.0, math.sqrt(VEHICLE_NAVI_CURVE_TARGET_LAT_ACCEL / abs(curvature)) * CV.MS_TO_KPH))
+    bp = VEHICLE_NAVI_CURVE_LOOKUP_BP
+    vals = VEHICLE_NAVI_CURVE_LOOKUP_VALS
+    if abs_curv >= bp[-1]:
+      return vals[-1]
+    for i in range(1, len(bp)):
+      if abs_curv <= bp[i]:
+        t = (abs_curv - bp[i - 1]) / (bp[i] - bp[i - 1])
+        speed = vals[i - 1] + t * (vals[i] - vals[i - 1])
+        return min(250.0, max(5.0, speed))
+    return min(250.0, max(5.0, vals[-1]))
 
   def _add_vehicle_navi_curve(self, target_list, curve, *, is_ramp=False):
     target = self.totalDistance + curve["offset"]
