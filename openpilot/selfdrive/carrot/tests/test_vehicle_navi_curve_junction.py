@@ -301,9 +301,18 @@ def test_carrot_serv_curve_gates_scaling_and_external_nav_priority():
   CS.vehicleNaviJunctionSide = 2
   CS.vehicleNaviJunctionDistance = 180.0
 
-  # Opt-in off: speed control inactive (250), diagnostic display active when relevant to current speed
+  # Regular curve opt-in off, ramp opt-in on: regular curve stays off (250), ramp curve still activates independently
+  expected = serv.calculate_current_speed(120.0, 55.0, 3.0, serv.autoNaviSpeedDecelRate)
+  CS.vehicleNaviCurveIsRamp = False
   assert serv._vehicle_navi_curve_speed(CS) == 250.0
   assert 55.0 <= serv._vehicle_navi_curve_display_speed(CS) < 250.0
+  CS.vehicleNaviCurveIsRamp = True
+  assert serv._vehicle_navi_curve_speed(CS) == pytest.approx(expected)
+
+  # Both opt-ins off: ramp curve also inactive (250)
+  serv.vehicleNaviRampCurveControl = False
+  assert serv._vehicle_navi_curve_speed(CS) == 250.0
+  serv.vehicleNaviRampCurveControl = True
 
   # Far-away curve preview (> vEgo + 20 kph) is suppressed on HUD to avoid high-speed noise
   CS.vehicleNaviCurveDistance = 1200.0
@@ -312,7 +321,6 @@ def test_carrot_serv_curve_gates_scaling_and_external_nav_priority():
 
   # Opt-in on + scaling + ramp source label
   serv.vehicleNaviCurveControl = True
-  expected = serv.calculate_current_speed(120.0, 55.0, 3.0, serv.autoNaviSpeedDecelRate)
   assert serv._vehicle_navi_curve_speed(CS) == pytest.approx(expected)
   assert deceleration_source_presentation("hda_ramp") == ("ramp", 3)
   assert deceleration_source_presentation("hda_curve") == ("curve", 3)
@@ -320,9 +328,12 @@ def test_carrot_serv_curve_gates_scaling_and_external_nav_priority():
   assert deceleration_source_presentation("gas") == ("gas", 2)
   assert deceleration_source_presentation("gas", vehicle_navi_active=True) == ("gas", 3)
 
-  # Ramp gate off -> ignores ramp curve
+  # Ramp gate off with regular curve gate on -> ignores ramp curve, keeps regular curve active
   serv.vehicleNaviRampCurveControl = False
   assert serv._vehicle_navi_curve_speed(CS) == 250.0
+  CS.vehicleNaviCurveIsRamp = False
+  assert serv._vehicle_navi_curve_speed(CS) == pytest.approx(expected)
+  CS.vehicleNaviCurveIsRamp = True
   serv.vehicleNaviRampCurveControl = True
 
   # Local road gate (RoadAllowed=False) -> blocked
@@ -802,3 +813,82 @@ def test_carplay_tmap_0x2a3_0x41_straight_and_0x93_0x95_ramps(monkeypatch):
   assert nic.valid
   assert nic.navInstructionCarrot.maneuverType == "continue"
   assert nic.navInstructionCarrot.maneuverModifier == "straight"
+
+
+def test_ev4_098_ramp_tbt_auto_arm_suppression_and_6s_hold(monkeypatch):
+  CS, parsers, packer = _make_hyundai_state(monkeypatch, CAR.KIA_EV4, can_control=1, ramp_control=True)
+  bus = parsers[Bus.pt].bus
+  seg_frame = (Bus.pt, packer.make_can_msg("CANFD_NAVI_SEGMENT_099", bus, _segment_values(calc_route=0, path_idx=8)))
+  hda_fork = (Bus.pt, packer.make_can_msg("CANFD_HDA_INFO_364", bus, {"LinkClass": 1, "Frwinfo": 3}))
+  hda_clear = (Bus.pt, packer.make_can_msg("CANFD_HDA_INFO_364", bus, {"LinkClass": 1, "Frwinfo": 0}))
+  hda_local = (Bus.pt, packer.make_can_msg("CANFD_HDA_INFO_364", bus, {"LinkClass": 0, "Frwinfo": 0}))
+  ramp_curve = (Bus.pt, packer.make_can_msg("CANFD_NAVI_RAMP_098", bus, {
+    "PROSHORT_OFFSET": 400, "PROSHORT_PATH_INDEX": 9, "PROSHORT_DISTANCE": 5,
+    "PROSHORT_VALUE_0": 521, "PROSHORT_VALUE_1": 0, "PROSHORT_PROFILE_TYPE": 1,
+  }))
+  stub_right = (Bus.pt, packer.make_can_msg("CANFD_NAVI_STUB_09A", bus, {
+    "STUB_OFFSET": 350, "STUB_PATH_INDEX": 8, "STUB_BRANCH_TYPE": 0x49, "STUB_TURN_ANGLE": 16.875,
+  }))
+  tbt_straight = (Bus.pt, packer.make_can_msg("CANFD_NAVI_TBT_2A3", bus, {
+    "ALIVE_COUNTER": 1, "TBT_DISPLAY_TYPE": 0x41, "TBT_SIDE_STREET": 0xFFFF,
+    "TBT_DISTANCE_TURN_POINT": 1, "TBT_SCALE": 1, "TBT_DIST_DECIMAL": 2,
+  }))
+  tbt_left_city = (Bus.pt, packer.make_can_msg("CANFD_NAVI_TBT_2A3", bus, {
+    "ALIVE_COUNTER": 2, "TBT_DISPLAY_TYPE": 0x46, "TBT_SIDE_STREET": 0x0000,
+    "TBT_DISTANCE_TURN_POINT": 65, "TBT_SCALE": 0, "TBT_DIST_DECIMAL": 0,
+  }))
+  tbt_exit_far = (Bus.pt, packer.make_can_msg("CANFD_NAVI_TBT_2A3", bus, {
+    "ALIVE_COUNTER": 3, "TBT_DISPLAY_TYPE": 0x42, "TBT_SIDE_STREET": 0x0000,
+    "TBT_DISTANCE_TURN_POINT": 700, "TBT_SCALE": 0, "TBT_DIST_DECIMAL": 0,
+  }))
+  tbt_exit_right = (Bus.pt, packer.make_can_msg("CANFD_NAVI_TBT_2A3", bus, {
+    "ALIVE_COUNTER": 4, "TBT_DISPLAY_TYPE": 0x93, "TBT_SIDE_STREET": 0xFFFF,
+    "TBT_DISTANCE_TURN_POINT": 250, "TBT_SCALE": 0, "TBT_DIST_DECIMAL": 0,
+  }))
+  tbt_no_route = (Bus.pt, packer.make_can_msg("CANFD_NAVI_TBT_2A3", bus, {
+    "ALIVE_COUNTER": 5, "TBT_DISPLAY_TYPE": 0x08, "TBT_SIDE_STREET": 0x0000,
+    "TBT_DISTANCE_TURN_POINT": 0xFFFF, "TBT_SCALE": 0, "TBT_DIST_DECIMAL": 0,
+  }))
+
+  # 1. Active 0x2A3 TBT straight (CarPlay 0x41 -> turn_info=9) suppresses right lane-change blinker false trigger.
+  ret = _step(CS, parsers, 1.0, [seg_frame, hda_fork, ramp_curve, stub_right, tbt_straight], v_ego=20.0, right_blinker=True)
+  assert ret.vehicleNaviTurnInfo == 9
+  assert ret.vehicleNaviCurveIsRamp is False
+  assert ret.vehicleNaviCurveSpeed == 0.0
+
+  # 2. Active 0x2A3 TBT non-exit (city left 0x46 @ 65m, or far exit > 500m) also suppresses right blinker.
+  ret = _step(CS, parsers, 1.5, [hda_fork, tbt_left_city], v_ego=20.0, right_blinker=True)
+  assert ret.vehicleNaviCurveIsRamp is False
+  ret = _step(CS, parsers, 2.0, [hda_fork, tbt_exit_far], v_ego=20.0, right_blinker=True)
+  assert ret.vehicleNaviCurveIsRamp is False
+
+  # 3. Matching 0x2A3 TBT right exit within 500m arms 0x098 automatically with NO blinker!
+  ret = _step(CS, parsers, 2.5, [hda_fork, tbt_exit_right], v_ego=20.0, right_blinker=False)
+  assert ret.vehicleNaviTurnInfo == 4
+  assert ret.vehicleNaviCurveIsRamp is True
+  assert ret.vehicleNaviCurveSpeed > 0.0
+
+  # 4. At ramp entry, Frwinfo drops (3 -> 0) and 0x2A3 advances to next straight maneuver: 6s hold bridges cleanly.
+  ret = _step(CS, parsers, 5.5, [hda_clear, tbt_straight], v_ego=20.0, right_blinker=False)
+  assert ret.vehicleNaviCurveIsRamp is True
+  ret = _step(CS, parsers, 8.4, [hda_clear, tbt_straight], v_ego=20.0, right_blinker=False)
+  assert ret.vehicleNaviCurveIsRamp is True
+  # After 6s hold expires (2.5 + 6.0 = 8.5s), drops cleanly.
+  ret = _step(CS, parsers, 8.6, [hda_clear, tbt_straight], v_ego=20.0, right_blinker=False)
+  assert ret.vehicleNaviCurveIsRamp is False
+
+  # 5. Free driving (0x08 compass / no TBT): right blinker arms, blinker-off holds for 6s, opposite blinker cancels immediately.
+  ret = _step(CS, parsers, 10.0, [hda_fork, tbt_no_route], v_ego=20.0, right_blinker=True)
+  assert ret.vehicleNaviCurveIsRamp is True
+  ret = _step(CS, parsers, 13.0, [hda_clear, tbt_no_route], v_ego=20.0, right_blinker=False)
+  assert ret.vehicleNaviCurveIsRamp is True
+  # Opposite blinker immediately cancels hold.
+  ret = _step(CS, parsers, 13.5, [hda_clear, tbt_no_route], v_ego=20.0, left_blinker=True)
+  assert ret.vehicleNaviCurveIsRamp is False
+
+  # 6. Re-arm and verify hazards or leaving controlled-access road cancels hold immediately.
+  assert _step(CS, parsers, 14.0, [hda_fork, tbt_no_route], v_ego=20.0, right_blinker=True).vehicleNaviCurveIsRamp is True
+  assert _step(CS, parsers, 14.5, [hda_clear, tbt_no_route], v_ego=20.0, left_blinker=True, right_blinker=True).vehicleNaviCurveIsRamp is False
+  assert _step(CS, parsers, 15.0, [hda_fork, tbt_no_route], v_ego=20.0, right_blinker=True).vehicleNaviCurveIsRamp is True
+  assert _step(CS, parsers, 15.5, [hda_local, tbt_no_route], v_ego=20.0).vehicleNaviCurveIsRamp is False
+  assert _step(CS, parsers, 16.0, [hda_clear, tbt_no_route], v_ego=20.0).vehicleNaviCurveIsRamp is False

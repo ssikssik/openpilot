@@ -464,9 +464,11 @@ class CarrotServ:
   def _vehicle_navi_curve_enabled(self, CS):
     if self.external_navigation_active or not self._vehicle_navi_curve_available(CS):
       return False
-    if not self.vehicleNaviCurveControl:
-      return False
-    if bool(getattr(CS, "vehicleNaviCurveIsRamp", False)) and not self.vehicleNaviRampCurveControl:
+    is_ramp = bool(getattr(CS, "vehicleNaviCurveIsRamp", False))
+    if is_ramp:
+      if not self.vehicleNaviRampCurveControl:
+        return False
+    elif not self.vehicleNaviCurveControl:
       return False
     route_active = bool(getattr(CS, "vehicleNaviCurveRouteActive", False))
     route_state = int(getattr(CS, "vehicleNaviCurveRouteState", 1 if route_active else 3))
