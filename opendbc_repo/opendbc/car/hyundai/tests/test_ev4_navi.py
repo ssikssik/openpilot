@@ -651,8 +651,17 @@ def test_ev4_093_slot1_decodes_logged_frame_and_queues_camera(ev4):
   state.controls_ready_count = 122
   bus = parsers[Bus.pt].bus
 
+  # Logged EV4_PROFILE_093_SLOT1_ONLY has path_index=9 (off-path branch camera): decoded, then filtered out.
+  decoded_slot1 = carstate.CarState._decode_canfd_profile_slot1(EV4_PROFILE_093_SLOT1_ONLY)
+  assert decoded_slot1 is not None and decoded_slot1['PROLONG_PATH_INDEX'] == 9
   state.totalDistance = 200.
   receive(state, parsers, 1.0, [(0x93, EV4_PROFILE_093_SLOT1_ONLY, bus)])
+  school_output(state, parsers)
+  assert state.vehicleNaviEvents == []
+
+  # Mainline path_index=8 camera in slot 1 IS queued cleanly.
+  slot1_mainline = bytes.fromhex('62c676ffffffffffffffffffffffffff9200000048e30804')
+  receive(state, parsers, 1.5, [(0x93, slot1_mainline, bus)])
   school_output(state, parsers)
   assert len(state.vehicleNaviEvents) == 1
   assert state.vehicleNaviEvents[0] == {'type': 'camera', 'speed': 40, 'kind': 2, 'target': 1040.0}
@@ -789,3 +798,200 @@ def test_ev4_section_end_clears_matching_380_kind7_zone(ev4):
   assert state.ev4Section is None
   assert not ret.vehicleNaviSectionActive
   assert not state.vehicleNaviSpeedZoneActive
+
+
+def _hda_lc_frame(packer, bus, limit_kph, map_source=1, link_class=1):
+  return packer.make_can_msg(carstate.CANFD_HDA_INFO_MSG, bus, {
+    'LinkClass': link_class,
+    'SPEED_LIMIT': limit_kph,
+    'CountryCode': 410,
+    'MapSource': map_source,
+  })
+
+
+def test_ev4_094_ignores_section_when_live_364_never_saw_start_camera(ev4):
+  """If 0x094 announced a section but the car merged/bypassed around the start gate
+  (live 0x364 approached start without MapSource=2), section control MUST NOT activate."""
+  state, parsers, packer = ev4
+  state.controls_ready_count = 122
+  bus = parsers[Bus.pt].bus
+
+  section_094_receive(state, parsers, 1.0, 1000., proshort=EV4_SECTION_094_7940)  # start=2990, end=10930
+  # Live 0x364 streaming MapSource=1 during approach (no start camera warning).
+  for i, dist in enumerate((2600., 2800., 2950., 2995., 3100.)):
+    state.totalDistance = dist
+    receive(state, parsers, 2.0 + i * 0.5, [_hda_lc_frame(packer, bus, 90, map_source=1, link_class=1)])
+    ret = SimpleNamespace(speedLimit=90., vEgo=25.)
+    state._update_vehicle_navi_events(parsers[Bus.pt], ret, False, parsers[Bus.alt])
+    assert not ret.vehicleNaviSectionActive
+
+  # Past start + sync margin without ever seeing start camera -> section dropped cleanly.
+  state.totalDistance = 3200.
+  receive(state, parsers, 5.0, [_hda_lc_frame(packer, bus, 90, map_source=1, link_class=1)])
+  ret = SimpleNamespace(speedLimit=90., vEgo=25.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret, False, parsers[Bus.alt])
+  assert not ret.vehicleNaviSectionActive
+  assert state.ev4Section is None
+
+
+def test_ev4_kind7_380_requires_start_camera_pass_when_364_live(ev4):
+  """Regression for 00000356--8, 0000035d--22, 0000035d--92..93 and mid-section merges:
+  with live 0x364, 0x380 0x10 + 0x093 kind=7 without passing a start camera must NOT latch."""
+  state, parsers, packer = ev4
+  state.controls_ready_count = 122
+  bus = parsers[Bus.pt].bus
+
+  # Case 1: Non-section road / mid-section ramp merge (LinkClass 2 -> 1, MapSource=1).
+  state.totalDistance = 100.
+  receive(state, parsers, 1.0, [_hda_lc_frame(packer, bus, 60, map_source=1, link_class=2)])
+  state._update_vehicle_navi_events(parsers[Bus.pt], SimpleNamespace(speedLimit=60., vEgo=15.), False, parsers[Bus.alt])
+
+  state.totalDistance = 160.
+  receive(state, parsers, 2.0, [
+    _hda_lc_frame(packer, bus, 100, map_source=1, link_class=1),
+    (0x380, EV4_STATUS[(0x10, 100)], parsers[Bus.alt].bus),
+  ])
+  state._update_vehicle_navi_events(parsers[Bus.pt], SimpleNamespace(speedLimit=100., vEgo=22.), False, parsers[Bus.alt])
+
+  state.totalDistance = 170.
+  receive(state, parsers, 2.4, [
+    _hda_lc_frame(packer, bus, 100, map_source=1, link_class=1),
+    (0x380, EV4_STATUS[(0x10, 100)], parsers[Bus.alt].bus),
+    (0x93, EV4_PROFILE_SECTION_100, bus),
+  ])
+  ret = SimpleNamespace(speedLimit=100., vEgo=22.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret, False, parsers[Bus.alt])
+  assert not ret.vehicleNaviSectionActive
+  assert not state.vehicleNaviSpeedZoneActive
+
+  # Case 2: Approaching start camera (MapSource=2 still ON, not yet passed; e.g. 0000035d--22 exit ramp)
+  # must also NOT prematurely latch on 0x380 0x10 + kind=7.
+  state.totalDistance = 500.
+  receive(state, parsers, 10.0, [
+    _hda_lc_frame(packer, bus, 100, map_source=2, link_class=1),
+    (0x380, EV4_STATUS[(0x10, 100)], parsers[Bus.alt].bus),
+  ])
+  state._update_vehicle_navi_events(parsers[Bus.pt], SimpleNamespace(speedLimit=100., vEgo=22.), True, parsers[Bus.alt])
+  state.totalDistance = 510.
+  receive(state, parsers, 10.4, [
+    _hda_lc_frame(packer, bus, 100, map_source=2, link_class=1),
+    (0x380, EV4_STATUS[(0x10, 100)], parsers[Bus.alt].bus),
+    (0x93, EV4_PROFILE_SECTION_100, bus),
+  ])
+  ret2 = SimpleNamespace(speedLimit=100., vEgo=22.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret2, True, parsers[Bus.alt])
+  assert not ret2.vehicleNaviSectionActive
+
+  # Case 3: Genuine start camera pass (MapSource 2 -> 1) followed immediately by 0x380 0x10 + kind=7 DOES latch.
+  state.totalDistance = 650.
+  receive(state, parsers, 15.0, [
+    _hda_lc_frame(packer, bus, 100, map_source=1, link_class=1),
+    (0x380, EV4_STATUS[(0x10, 100)], parsers[Bus.alt].bus),
+  ])
+  state._update_vehicle_navi_events(parsers[Bus.pt], SimpleNamespace(speedLimit=100., vEgo=22.), False, parsers[Bus.alt])
+  state.totalDistance = 660.
+  receive(state, parsers, 15.4, [
+    _hda_lc_frame(packer, bus, 100, map_source=1, link_class=1),
+    (0x380, EV4_STATUS[(0x10, 100)], parsers[Bus.alt].bus),
+    (0x93, EV4_PROFILE_SECTION_100, bus),
+  ])
+  ret3 = SimpleNamespace(speedLimit=100., vEgo=22.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret3, False, parsers[Bus.alt])
+  assert ret3.vehicleNaviSectionActive
+  assert ret3.vehicleNaviSpeed == 100
+
+
+def test_ev4_ramp_merge_before_start_gate_still_activates_section(ev4):
+  """Regression for 0000035d--125..127: merging from IC ramp BEFORE the start gate,
+  then seeing MapSource=2 start camera, activates section enforcement normally."""
+  state, parsers, packer = ev4
+  state.controls_ready_count = 122
+  bus = parsers[Bus.pt].bus
+
+  # Announced on approach road (lc=5), then IC ramp (lc=2) -> freeway (lc=1) BEFORE start gate.
+  state.totalDistance = 1000.
+  receive(state, parsers, 1.0, [
+    _hda_lc_frame(packer, bus, 60, map_source=1, link_class=5),
+    (0x94, EV4_SECTION_094_7940, bus),
+  ])
+  state._update_vehicle_navi_events(parsers[Bus.pt], SimpleNamespace(speedLimit=60., vEgo=18.), False, parsers[Bus.alt])
+
+  state.totalDistance = 1800.
+  receive(state, parsers, 20.0, [_hda_lc_frame(packer, bus, 60, map_source=1, link_class=2)])
+  state._update_vehicle_navi_events(parsers[Bus.pt], SimpleNamespace(speedLimit=60., vEgo=18.), False, parsers[Bus.alt])
+
+  state.totalDistance = 2100.
+  receive(state, parsers, 30.0, [_hda_lc_frame(packer, bus, 90, map_source=1, link_class=1)])
+  state._update_vehicle_navi_events(parsers[Bus.pt], SimpleNamespace(speedLimit=90., vEgo=24.), False, parsers[Bus.alt])
+
+  # Start camera warning approaches and passes at d=2990.
+  state.totalDistance = 2600.
+  receive(state, parsers, 45.0, [_hda_lc_frame(packer, bus, 90, map_source=2, link_class=1)])
+  state._update_vehicle_navi_events(parsers[Bus.pt], SimpleNamespace(speedLimit=90., vEgo=24.), True, parsers[Bus.alt])
+
+  state.totalDistance = 2990.
+  receive(state, parsers, 60.0, [
+    _hda_lc_frame(packer, bus, 90, map_source=1, link_class=1),
+    (0x380, EV4_STATUS[(0, 90)], parsers[Bus.alt].bus),
+  ])
+  ret = SimpleNamespace(speedLimit=90., vEgo=24.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret, False, parsers[Bus.alt])
+  assert ret.vehicleNaviSectionActive
+  assert ret.vehicleNaviSpeed == 90
+
+
+def test_ev4_363_mid_section_merge_ignores_section_but_keeps_end_camera(ev4):
+  """Merging from an IC ramp straight into an active 0x363 range-avg section without
+  passing a start gate ignores section-avg control while still decelerating for the end camera."""
+  state, parsers, packer = ev4
+  state.controls_ready_count = 122
+  bus = parsers[Bus.pt].bus
+
+  # 1. On IC ramp (lc=2, MapSource=1, avg=0).
+  state.totalDistance = 100.
+  receive(state, parsers, 1.0, [
+    _hda_lc_frame(packer, bus, 40, map_source=1, link_class=2),
+    (0x363, EV4_POS_363_ZERO, bus),
+  ])
+  ret_ramp = SimpleNamespace(speedLimit=40., vEgo=15.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret_ramp, False, parsers[Bus.alt])
+  assert not ret_ramp.vehicleNaviSectionActive
+
+  # 2. Merge directly into mid-section (lc=1, MapSource=2, avg=90 simultaneously -> no start camera pass!).
+  state.totalDistance = 150.
+  receive(state, parsers, 3.0, [
+    _hda_lc_frame(packer, bus, 90, map_source=2, link_class=1),
+    (0x363, EV4_POS_363_AVG_90, bus),
+  ])
+  ret_merge = SimpleNamespace(speedLimit=90., vEgo=25.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret_merge, True, parsers[Bus.alt])
+  state.update_speed_limit(ret_merge, True, distance_time_changed=False)
+  assert state.vehicleNaviSectionMergeIgnored
+  assert not ret_merge.vehicleNaviSectionActive
+  assert not ret_merge.vehicleNaviActive
+  assert ret_merge.speedLimitDistance == 0.0
+
+  # 3. Approaching end camera inside the merged section -> end camera DOES decelerate normally.
+  state.totalDistance = 2000.
+  state.vehicleNaviEvents = [{'type': 'camera', 'speed': 90, 'kind': 0, 'target': 2300.0}]
+  receive(state, parsers, 75.0, [
+    _hda_lc_frame(packer, bus, 90, map_source=2, link_class=1),
+    (0x363, EV4_POS_363_AVG_90, bus),
+  ])
+  ret_end = SimpleNamespace(speedLimit=90., vEgo=25.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret_end, True, parsers[Bus.alt])
+  state.update_speed_limit(ret_end, True, distance_time_changed=False)
+  assert not ret_end.vehicleNaviSectionActive
+  assert ret_end.vehicleNaviActive
+  assert ret_end.speedLimitDistance == pytest.approx(300.0 - 25.0 * carstate.DT_CTRL)
+
+  # 4. After exiting section (avg=0), ignore flag clears for future sections.
+  state.totalDistance = 2350.
+  receive(state, parsers, 90.0, [
+    _hda_lc_frame(packer, bus, 90, map_source=1, link_class=1),
+    (0x363, EV4_POS_363_ZERO, bus),
+  ])
+  ret_exit = SimpleNamespace(speedLimit=90., vEgo=25.)
+  state._update_vehicle_navi_events(parsers[Bus.pt], ret_exit, False, parsers[Bus.alt])
+  assert not state.vehicleNaviSectionMergeIgnored
+  assert not ret_exit.vehicleNaviSectionActive

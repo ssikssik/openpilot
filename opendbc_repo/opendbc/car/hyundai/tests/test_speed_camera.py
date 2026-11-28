@@ -1648,3 +1648,74 @@ def test_fixed_camera_always_decelerates():
   ret = SimpleNamespace(vEgo=16.0, speedLimit=60.0, gasPressed=False, vehicleNaviSectionActive=False)
   assert state._apply_speedcam_policy(ret, True, True, 60.0, True)
   assert not state.speedcam_accel_swallow                 # + keeps raising the set speed
+
+
+def test_section_mid_merge_on_4b4_ignores_section_but_genuine_start_pass_activates():
+  state = _car_state()
+  state.vehicleNaviCanControl = True
+  state.hda_info_4a3 = {"LinkClass": 2, "Frwinfo": 0, "MapSource": 1, "SPEED_LIMIT": 40}
+  state.navi_position_4b4 = {"POS_RANGE_AVG_SPEED": 0}
+  cp = SimpleNamespace(
+    dat={0x4A3: b"\x00" * 8},
+    ts_nanos={
+      "HDA_INFO_4A3": {"LinkClass": 1_000_000_000},
+      "NEW_MSG_4B4": {"POS_RANGE_AVG_SPEED": 1_000_000_000},
+    },
+    _last_update_nanos=1_050_000_000,
+  )
+
+  # 1) IC ramp (LinkClass=2, MapSource=1, avg=0)
+  state.totalDistance = 100.0
+  ret1 = SimpleNamespace(vEgo=15.0, speedLimit=40.0, speedBumpDistance=0.0, schoolZoneActive=False)
+  state._update_vehicle_navi_events(cp, ret1, False)
+  assert not ret1.vehicleNaviSectionActive
+
+  # 2) Mid-section merge without start gate (LinkClass=1, MapSource=2, avg=105 simultaneously)
+  state.totalDistance = 140.0
+  state.hda_info_4a3.update({"LinkClass": 1, "MapSource": 2, "SPEED_LIMIT": 100})
+  state.navi_position_4b4["POS_RANGE_AVG_SPEED"] = 105
+  cp.ts_nanos["HDA_INFO_4A3"]["LinkClass"] = 3_000_000_000
+  cp.ts_nanos["NEW_MSG_4B4"]["POS_RANGE_AVG_SPEED"] = 3_000_000_000
+  cp._last_update_nanos = 3_050_000_000
+  ret2 = SimpleNamespace(vEgo=25.0, speedLimit=100.0, speedBumpDistance=0.0, schoolZoneActive=False)
+  state._update_vehicle_navi_events(cp, ret2, True)
+  state.update_speed_limit(ret2, True, distance_time_changed=False)
+  assert state.vehicleNaviSectionMergeIgnored
+  assert not ret2.vehicleNaviSectionActive
+  assert not ret2.vehicleNaviActive
+  assert ret2.speedLimitDistance == 0.0
+
+  # 3) After exit (avg=0), ramp merge BEFORE start gate with >=100 m start-camera approach -> activates!
+  state.totalDistance = 2000.0
+  state.hda_info_4a3.update({"LinkClass": 2, "MapSource": 1, "SPEED_LIMIT": 40})
+  state.navi_position_4b4["POS_RANGE_AVG_SPEED"] = 0
+  cp.ts_nanos["HDA_INFO_4A3"]["LinkClass"] = 70_000_000_000
+  cp.ts_nanos["NEW_MSG_4B4"]["POS_RANGE_AVG_SPEED"] = 70_000_000_000
+  cp._last_update_nanos = 70_050_000_000
+  state._update_vehicle_navi_events(cp, SimpleNamespace(vEgo=15.0, speedLimit=40.0), False)
+  assert not state.vehicleNaviSectionMergeIgnored
+
+  state.totalDistance = 2100.0
+  state.hda_info_4a3.update({"LinkClass": 1, "MapSource": 1, "SPEED_LIMIT": 100})
+  cp.ts_nanos["HDA_INFO_4A3"]["LinkClass"] = 75_000_000_000
+  cp.ts_nanos["NEW_MSG_4B4"]["POS_RANGE_AVG_SPEED"] = 75_000_000_000
+  cp._last_update_nanos = 75_050_000_000
+  state._update_vehicle_navi_events(cp, SimpleNamespace(vEgo=25.0, speedLimit=100.0), False)
+
+  state.totalDistance = 2300.0
+  state.hda_info_4a3.update({"LinkClass": 1, "MapSource": 2, "SPEED_LIMIT": 100})
+  cp.ts_nanos["HDA_INFO_4A3"]["LinkClass"] = 83_000_000_000
+  cp.ts_nanos["NEW_MSG_4B4"]["POS_RANGE_AVG_SPEED"] = 83_000_000_000
+  cp._last_update_nanos = 83_050_000_000
+  state._update_vehicle_navi_events(cp, SimpleNamespace(vEgo=25.0, speedLimit=100.0), True)
+
+  state.totalDistance = 2600.0
+  state.navi_position_4b4["POS_RANGE_AVG_SPEED"] = 100
+  cp.ts_nanos["HDA_INFO_4A3"]["LinkClass"] = 95_000_000_000
+  cp.ts_nanos["NEW_MSG_4B4"]["POS_RANGE_AVG_SPEED"] = 95_000_000_000
+  cp._last_update_nanos = 95_050_000_000
+  ret_ok = SimpleNamespace(vEgo=25.0, speedLimit=100.0, speedBumpDistance=0.0, schoolZoneActive=False)
+  state._update_vehicle_navi_events(cp, ret_ok, True)
+  assert not state.vehicleNaviSectionMergeIgnored
+  assert ret_ok.vehicleNaviSectionActive
+  assert ret_ok.vehicleNaviSpeed == 100.0
