@@ -753,3 +753,30 @@ def test_turn_info_hud_renders_compact_stock_navi_atc_without_goal_eta(hud_modul
   renderer._draw_turn_info_hud(module.rl.Rectangle(0, 0, 2160, 1080))
   assert boxes == []
   assert texts == []
+
+
+def test_gas_override_uses_vnavi_purple_only_while_vnavi_is_active(hud_module):
+  module, _ = hud_module
+  sm_vnavi = {
+    "longitudinalPlan": SimpleNamespace(cruiseTarget=0.0),
+    "carrotMan": SimpleNamespace(
+      desiredSpeed=45,
+      desiredSource="gas",
+      vehicleNaviAvailable=True,
+      remote="",
+    ),
+  }
+  ov_vnavi = module.SetSpeedOverride().compute(sm_vnavi, set_speed_kph=60)
+  assert (ov_vnavi.active, ov_vnavi.label, ov_vnavi.speed_color_mode) == (True, "gas", 3)
+
+  sm_ext = {
+    "longitudinalPlan": SimpleNamespace(cruiseTarget=0.0),
+    "carrotMan": SimpleNamespace(
+      desiredSpeed=45,
+      desiredSource="gas",
+      vehicleNaviAvailable=True,
+      remote="192.168.1.10",
+    ),
+  }
+  ov_ext = module.SetSpeedOverride().compute(sm_ext, set_speed_kph=60)
+  assert (ov_ext.active, ov_ext.label, ov_ext.speed_color_mode) == (True, "gas", 2)

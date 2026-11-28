@@ -472,7 +472,10 @@ class OpenpilotLiveSource:
                 desired_speed = safe_optional_float(carrot_man, "desiredSpeed")
                 if desired_speed is not None and 0.0 < desired_speed < 200.0 and desired_speed < state.cruise_kph:
                     cruise_override_kph = desired_speed
-                    cruise_override_label, cruise_override_color_mode = deceleration_source_presentation(desired_source)
+                    cruise_override_label, cruise_override_color_mode = deceleration_source_presentation(
+                        desired_source,
+                        vehicle_navi_active=bool(vehicle_navi_available and not external_nav_active),
+                    )
 
         return replace(
             state,
