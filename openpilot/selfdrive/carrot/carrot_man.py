@@ -512,7 +512,10 @@ class CarrotMan:
 
 
   def _select_navigation_route(self, carrot_navi):
-    vehicle_navi_active = bool(getattr(self.carrot_serv, 'vehicle_navi_tbt_active', False))
+    vehicle_navi_active = bool(
+      getattr(self.carrot_serv, 'vehicle_navi_tbt_active', False) or
+      getattr(self.carrot_serv, 'vehicle_navi_straight_active', False)
+    )
     selected = self.route_source.select(self.carrot_serv._external_navigation_connected(), carrot_navi,
                                         vehicle_navi_active=vehicle_navi_active)
     if selected is not None:

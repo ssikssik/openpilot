@@ -1348,7 +1348,7 @@ class CarrotServ:
     if display_type == 0x47 and turn_info == 1:
       labels = {"ko": "좌측 방향", "en": "Slight left", "zh": "向左前方"}
       return labels.get(lang, labels["en"])
-    if display_type in (0xA4, 0x11):
+    if display_type in (0xA4, 0x11, 0x93, 0x95):
       labels = {"ko": "우측 출구", "en": "Right exit", "zh": "右侧出口"}
       return labels.get(lang, labels["en"])
     if display_type == 0xA1:
@@ -1370,7 +1370,7 @@ class CarrotServ:
   def _vehicle_navi_tbt_maneuver(display_type, turn_info):
     if display_type == 0x47 and turn_info == 1:
       return "turn", "slight left"
-    if display_type in (0xA4, 0x11):
+    if display_type in (0xA4, 0x11, 0x93, 0x95):
       return "off ramp", "right"
     if display_type == 0xA1:
       return "on ramp", "right"
@@ -1389,6 +1389,8 @@ class CarrotServ:
         or self.xTurnInfo >= 0 or getattr(self, "nGoPosDist", 0) > 0 or CS is None):
       self.vehicle_navi_tbt_hold = None
       self.vehicle_navi_tbt_display_type = 0
+      self.vehicle_navi_straight_active = False
+      self.vehicle_navi_straight_dist = 0.0
       if getattr(self, "vehicle_navi_tbt_active", False):
         if not self.external_navigation_active and self.xTurnInfo < 0:
           self.szTBTMainText = ""
@@ -1417,15 +1419,18 @@ class CarrotServ:
           self.vehicle_navi_tbt_display_type = hold["display_type"]
           self.szTBTMainText = self._vehicle_navi_tbt_label(hold["display_type"], hold["turn_info"])
           self.vehicle_navi_tbt_active = True
+          self.vehicle_navi_straight_active = False
           return
       self.vehicle_navi_tbt_hold = None
 
-    if turn_info > 0 and turn_dist >= 0.0:
+    if 1 <= turn_info <= 8 and turn_dist >= 0.0:
       self.xTurnInfo = turn_info
       self.xDistToTurn = turn_dist
       self.vehicle_navi_tbt_display_type = display_type
       self.szTBTMainText = self._vehicle_navi_tbt_label(display_type, turn_info)
       self.vehicle_navi_tbt_active = True
+      self.vehicle_navi_straight_active = False
+      self.vehicle_navi_straight_dist = 0.0
       if turn_info in (1, 2) and turn_dist <= 35.0:
         self.vehicle_navi_tbt_hold = {
           "turn_info": turn_info,
@@ -1433,10 +1438,22 @@ class CarrotServ:
           "dist_m": turn_dist,
           "expires": now + 8.0,
         }
-    elif getattr(self, "vehicle_navi_tbt_active", False):
-      self.szTBTMainText = ""
-      self.vehicle_navi_tbt_display_type = 0
-      self.vehicle_navi_tbt_active = False
+    elif turn_info == 9 and turn_dist >= 0.0:
+      # Straight continuation (e.g., CarPlay TMap 0x41): keep ATC steering/decel off,
+      # but expose straight guidance so Mapbox NOO continues drawing the current road route.
+      if getattr(self, "vehicle_navi_tbt_active", False):
+        self.szTBTMainText = ""
+        self.vehicle_navi_tbt_active = False
+      self.vehicle_navi_tbt_display_type = display_type
+      self.vehicle_navi_straight_active = True
+      self.vehicle_navi_straight_dist = turn_dist
+    else:
+      self.vehicle_navi_straight_active = False
+      self.vehicle_navi_straight_dist = 0.0
+      if getattr(self, "vehicle_navi_tbt_active", False):
+        self.szTBTMainText = ""
+        self.vehicle_navi_tbt_display_type = 0
+        self.vehicle_navi_tbt_active = False
 
   def update_nav_instruction(self, sm):
     if self._external_navigation_connected():
@@ -1820,6 +1837,19 @@ class CarrotServ:
           'type': navType,
           'modifier': navModifier,
         }]
+    elif getattr(self, "vehicle_navi_straight_active", False):
+      inst.valid = True
+      instruction = inst.navInstructionCarrot
+      instruction.speedLimit = self.nRoadLimitSpeed / 3.6 if self.nRoadLimitSpeed > 0 else 0
+      straight_dist = float(max(0.0, getattr(self, "vehicle_navi_straight_dist", 0.0)))
+      instruction.maneuverDistance = straight_dist
+      instruction.maneuverType = "continue"
+      instruction.maneuverModifier = "straight"
+      instruction.allManeuvers = [{
+        'distance': straight_dist,
+        'type': 'continue',
+        'modifier': 'straight',
+      }]
     elif not self._external_navigation_connected() and sm.alive['navInstruction'] and sm.valid['navInstruction']:
       inst.valid = True
       inst.navInstructionCarrot = sm['navInstruction']

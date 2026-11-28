@@ -725,3 +725,80 @@ def test_vehicle_bump_active_carrot_does_not_clobber_stock_navi_instruction(monk
   assert nic.navInstructionCarrot.maneuverModifier == "right"
   assert nic.navInstructionCarrot.maneuverDistance == pytest.approx(80.0)
   assert len(nic.navInstructionCarrot.allManeuvers) == 1
+
+
+def test_carplay_tmap_0x2a3_0x41_straight_and_0x93_0x95_ramps(monkeypatch):
+  from opendbc.car.hyundai.carstate import CarState
+  from openpilot.selfdrive.carrot import carrot_serv
+  from openpilot.selfdrive.carrot.tests.test_vehicle_speed_camera_control import _car_state
+
+  # Stock navi 0x41 (side_street=0) -> left fork (3)
+  stock_41 = CarState._decode_vehicle_navi_tbt({
+    "TBT_DISPLAY_TYPE": 0x41, "TBT_SIDE_STREET": 0x0000,
+    "TBT_DISTANCE_TURN_POINT": 300, "TBT_SCALE": 0, "TBT_DIST_DECIMAL": 0,
+  })
+  assert stock_41["turn_info"] == 3
+
+  # CarPlay TMap 0x41 (side_street=0xFFFF) -> straight NOO-only guidance (9), never left fork
+  carplay_41 = CarState._decode_vehicle_navi_tbt({
+    "TBT_DISPLAY_TYPE": 0x41, "TBT_SIDE_STREET": 0xFFFF,
+    "TBT_DISTANCE_TURN_POINT": 2, "TBT_SCALE": 1, "TBT_DIST_DECIMAL": 4,
+  })
+  assert carplay_41["turn_info"] == 9
+  assert carplay_41["dist_m"] == pytest.approx(2400.0)
+
+  # CarPlay TMap 0x93 & 0x95 -> right IC/JC exit ramp (4)
+  for code in (0x93, 0x95):
+    dec = CarState._decode_vehicle_navi_tbt({
+      "TBT_DISPLAY_TYPE": code, "TBT_SIDE_STREET": 0xFFFF,
+      "TBT_DISTANCE_TURN_POINT": 120, "TBT_SCALE": 0, "TBT_DIST_DECIMAL": 0,
+    })
+    assert dec["turn_info"] == 4
+    assert dec["step_m"] == 5.0
+    assert carrot_serv.CarrotServ._vehicle_navi_tbt_maneuver(code, 4) == ("off ramp", "right")
+
+  # Verify turn_info=9 keeps ATC off (xTurnInfo=-1) while still emitting continue/straight navInstructionCarrot
+  values = {
+    "AutoNaviSpeedBumpSpeed": 25, "AutoNaviSpeedBumpTime": 4,
+    "AutoNaviSpeedBumpEndDistance": 200, "AutoNaviSpeedCtrlMode": 2,
+    "AutoNaviSpeedCtrlEnd": 10, "AutoNaviSpeedDecelRate": 120,
+    "AutoNaviRearCameraHoldDistance": 100, "AutoNaviSpeedSafetyFactor": 100,
+    "AutoNaviCountDownMode": 0, "VehicleNaviCanControl": 1,
+    "VehicleNaviAtcControl": 1, "AutoTurnControl": 2,
+    "AutoTurnControlSpeedTurn": 25, "AutoTurnControlTurnEnd": 5,
+    "IsMetric": 1, "AutoRoadSpeedLimitOffset": -1,
+  }
+  class _Params:
+    def __init__(self, *_args): pass
+    def get(self, key): return str(values.get(key, 0))
+    def get_int(self, key): return int(self.get(key))
+    def get_float(self, key): return float(self.get(key))
+    def get_bool(self, key): return bool(self.get_int(key))
+
+  monkeypatch.setattr(carrot_serv, "Params", _Params)
+  serv = carrot_serv.CarrotServ()
+  monkeypatch.setattr(serv, "_update_carrot_navi", lambda _sm: False)
+  monkeypatch.setattr(serv, "_update_gps", lambda *_args: 0.)
+
+  cs = _car_state(speed_limit=80, distance=0, v_ego=75 / 3.6)
+  cs.vehicleNaviActive = cs.vehicleNaviAvailable = True
+  cs.vehicleNaviTurnInfo = 9
+  cs.vehicleNaviTurnDistance = 1200.0
+  cs.vehicleNaviTurnDisplayType = 0x41
+
+  class _SM(dict):
+    alive = {"carState": True, "selfdriveState": True, "navInstruction": False}
+    valid = {"carState": True, "selfdriveState": True, "navInstruction": False}
+
+  sm = _SM(carState=cs, selfdriveState=SimpleNamespace(distanceTraveled=0.))
+  sent = {}
+  pm = SimpleNamespace(send=lambda name, msg: sent.update({name: msg}))
+  serv.update_navi("", sm, pm, 200., [], [], 200., "gpsLocationExternal")
+
+  assert sent["carrotMan"].carrotMan.xTurnInfo == -1
+  assert sent["carrotMan"].carrotMan.atcType == "none"
+  assert serv.vehicle_navi_straight_active
+  nic = sent["navInstructionCarrot"]
+  assert nic.valid
+  assert nic.navInstructionCarrot.maneuverType == "continue"
+  assert nic.navInstructionCarrot.maneuverModifier == "straight"
