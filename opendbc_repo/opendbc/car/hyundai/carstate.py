@@ -2111,18 +2111,30 @@ class CarState(CarStateBase):
       "profile_type": int(values.get("PROLONG_PROFILE_TYPE", 31)),
     }
 
+  def _vehicle_navi_profile_on_active_path(self, profile):
+    path_index = profile["path_index"]
+    if path_index == 63:
+      return False
+    if self.vehicleNaviRoutePathIndex is not None:
+      return path_index in (0, self.vehicleNaviRoutePathIndex)
+    # On EV4/ccNC wrapped ADASIS (0x093), path_index=8 is the MPP mainline and
+    # path_index>=9 are off-ramp/side-road branch sub-paths.
+    if (self.canfd_ev4_navi or self.canfd_wrapped_navi) and path_index > 8:
+      return False
+    return True
+
   def _vehicle_navi_profile_allowed(self, event_type, profile):
     if not self.vehicleNaviCanControl:
       return False
 
-    # Mode 1 accepts all future profiles. Mode 2 route-gates bumps, and mode 3
-    # route-gates cameras and bumps. A route-gated profile must belong to the
-    # currently calculated path reported by the segment message
-    # (0x4B9; or 0x4B5 on the 0x4B5/0x4B8/0x4DE navi family).
+    # Mode 1 accepts mainline/MPP profiles while rejecting off-path branch stubs
+    # (e.g. path_index=9 off-ramp cameras). Mode 2 route-gates bumps, and mode 3
+    # route-gates cameras and bumps to an active calculated route reported by the
+    # segment message (0x4B9; or 0x4B5 on the 0x4B5/0x4B8/0x4DE navi family).
     route_required = (self.vehicleNaviCanControl == 3 or
                       (self.vehicleNaviCanControl == 2 and event_type == "bump"))
     if not route_required:
-      return True
+      return self._vehicle_navi_profile_on_active_path(profile)
     return (self.vehicleNaviRouteState == 1 and
             profile["path_index"] == self.vehicleNaviRoutePathIndex)
 
@@ -2156,7 +2168,8 @@ class CarState(CarStateBase):
   def _handle_vehicle_navi_profile(self, values, timestamp, ret, speed_limit_cam, on_controlled_access_road):
     profile = self._decode_vehicle_navi_profile(values)
     if (not self.canfd_wrapped_navi and profile["profile_type"] == 16 and
-        timestamp > self.vehicleNaviRouteResetTimestamp):
+        timestamp > self.vehicleNaviRouteResetTimestamp and
+        self._vehicle_navi_profile_on_active_path(profile)):
       self.speedcam_policy.add_preview(profile["value"], profile["offset"], self.totalDistance)
     event = self._classify_vehicle_navi_profile(profile)
     if event is not None and timestamp > self.vehicleNaviRouteResetTimestamp:
