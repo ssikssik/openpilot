@@ -41,9 +41,24 @@ def step(controller, cs, cc):
 
 @pytest.mark.parametrize("car", [CAR.KIA_EV4, CAR.KIA_EV6, CAR.KIA_EV6_PE, CAR.HYUNDAI_IONIQ_5_PE])
 @pytest.mark.parametrize("kph", [0.0, 20.0, 40.0, 80.0, 110.0])
-def test_angle_max_torque_and_smoothing_use_full_authority(car, kph):
+def test_angle_max_torque_uses_full_authority(car, kph):
   assert steering_angle_max_torque(car, kph / 3.6) == pytest.approx(250.0)
+
+
+@pytest.mark.parametrize("car", [CAR.KIA_EV6, CAR.KIA_EV6_PE, CAR.HYUNDAI_IONIQ_5_PE])
+@pytest.mark.parametrize("kph", [0.0, 20.0, 40.0, 80.0])
+def test_other_cars_keep_no_smoothing(car, kph):
   assert steering_angle_smooth_tau(car, kph / 3.6) == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("kph, expected", [
+  (0.0, 0.018),
+  (40.0, 0.015),
+  (50.0, 0.0),
+  (90.0, 0.0),
+])
+def test_ev4_angle_smooth_tau_profile(kph, expected):
+  assert steering_angle_smooth_tau(CAR.KIA_EV4, kph / 3.6) == pytest.approx(expected)
 
 
 def test_ev4_can_max_torque_uses_full_250_and_recovers_after_handover(monkeypatch):
@@ -71,14 +86,37 @@ def test_ev4_can_max_torque_uses_full_250_and_recovers_after_handover(monkeypatc
   assert controller.steer_handover.state == "waiting"
 
 
-def test_ev4_no_smoothing_lag_across_speeds(monkeypatch):
+def test_ev4_low_speed_smoothing_eliminates_stale_carcontrol_zero_steps_and_double_jumps(monkeypatch):
+  controller, cs, cc = setup_controller(monkeypatch, car=CAR.KIA_EV4, v_kph=30.0)
+  cmd = 0.0
+  outputs = []
+  for tick in range(80):
+    if tick % 4 != 3:
+      cmd += 0.30 if tick % 4 != 0 else 0.60
+    cc.actuators.steeringAngleDeg = cmd
+    cs.out.steeringAngleDeg = max(0.0, cmd - 1.0)
+    output, _ = step(controller, cs, cc)
+    outputs.append(output.steeringAngleDeg)
+
+  steps = [outputs[i] - outputs[i - 1] for i in range(15, len(outputs))]
+  assert min(steps) > 0.12
+  assert max(steps) < 0.52
+
+
+def test_ev4_smoothing_resets_on_disengage_and_bypasses_at_highway_speed(monkeypatch):
   controller, cs, cc = setup_controller(monkeypatch, car=CAR.KIA_EV4, v_kph=25.0)
+  cc.actuators.steeringAngleDeg = 12.0
+  for _ in range(10):
+    step(controller, cs, cc)
+
   cc.latActive = False
   cs.out.steeringAngleDeg = -5.0
   output, _ = step(controller, cs, cc)
   assert output.steeringAngleDeg == pytest.approx(-5.0)
+  assert controller.apply_angle_filtered == pytest.approx(-5.0)
 
   cc.latActive = True
+  cs.out.vEgoRaw = 80.0 / 3.6
   cc.actuators.steeringAngleDeg = -4.8
   output, _ = step(controller, cs, cc)
   assert output.steeringAngleDeg == pytest.approx(-4.8)
