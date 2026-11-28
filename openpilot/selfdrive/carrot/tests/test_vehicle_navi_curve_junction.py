@@ -1049,3 +1049,21 @@ def test_ev4_093_ignores_branch_path_9_camera_alongside_mainline_path_8_camera(m
   assert cameras2[0]["speed"] == 90
   assert ret2.speedLimit == pytest.approx(90.0)
   assert CS2.vehicleNaviCameraTarget - CS2.totalDistance == pytest.approx(815.0)
+
+
+@pytest.mark.parametrize(
+  ("radius_m", "expected_kph"),
+  (
+    (800.0, 150.0),
+    (440.0, 100.0),
+    (190.0, 70.0),
+    (135.0, 60.0),
+    (85.0, 50.0),
+    (55.0, 40.0),
+    (30.0, 15.0),
+    (25.0, 5.0),
+  ),
+)
+def test_vnavi_curve_reference_speed_matches_external_navi_lookup(radius_m, expected_kph):
+  assert CarState._vehicle_navi_curve_reference_speed(1.0 / radius_m) == pytest.approx(expected_kph)
+  assert CarState._vehicle_navi_curve_reference_speed(-1.0 / radius_m) == pytest.approx(expected_kph)

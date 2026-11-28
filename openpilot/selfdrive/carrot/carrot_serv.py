@@ -243,7 +243,7 @@ class CarrotServ:
     raw_curve_factor = self._get_int_param("VehicleNaviCurveSpeedFactor", 100)
     if raw_curve_factor <= 0:
       raw_curve_factor = 100
-    self.vehicleNaviCurveSpeedFactor = min(2.0, max(0.5, raw_curve_factor * 0.01))
+    self.vehicleNaviCurveSpeedFactor = min(3.0, max(0.5, raw_curve_factor * 0.01))
     self.vehicleNaviCurveControlEnd = max(0.0, float(self._get_int_param("VehicleNaviCurveCtrlEnd", 3)))
     self.vehicleNaviJunctionAssist = self._get_bool_param("VehicleNaviJunctionAssist", False)
     self.vehicleNaviAtcControl = self._get_bool_param("VehicleNaviAtcControl", False)
