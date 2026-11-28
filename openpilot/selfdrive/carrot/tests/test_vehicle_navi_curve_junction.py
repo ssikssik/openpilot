@@ -892,3 +892,33 @@ def test_ev4_098_ramp_tbt_auto_arm_suppression_and_6s_hold(monkeypatch):
   assert _step(CS, parsers, 15.0, [hda_fork, tbt_no_route], v_ego=20.0, right_blinker=True).vehicleNaviCurveIsRamp is True
   assert _step(CS, parsers, 15.5, [hda_local, tbt_no_route], v_ego=20.0).vehicleNaviCurveIsRamp is False
   assert _step(CS, parsers, 16.0, [hda_clear, tbt_no_route], v_ego=20.0).vehicleNaviCurveIsRamp is False
+
+
+def test_ev4_093_ignores_branch_path_9_camera_alongside_mainline_path_8_camera(monkeypatch):
+  CS, parsers, packer = _make_hyundai_state(monkeypatch, CAR.KIA_EV4, can_control=1)
+  bus = parsers[Bus.pt].bus
+  hda = (Bus.pt, packer.make_can_msg("CANFD_HDA_INFO_364", bus, {"LinkClass": 1, "SPEED_LIMIT": 90, "MapSource": 1}))
+  seg = (Bus.pt, packer.make_can_msg("CANFD_NAVI_SEGMENT_099", bus, _segment_values(calc_route=0, path_idx=8)))
+  # Real EV4 00000371--4 t=294.66 0x093 frame:
+  #   slot 0: path_index=8 (mainline), 90 km/h @ 815m
+  #   slot 1: path_index=9 (off-ramp branch), 40 km/h @ 810m
+  raw_093 = bytes.fromhex("cdb82effffffffff320100002fe3081c920000002ae30904")
+  ret = _step(CS, parsers, 1.0, [hda, seg, (Bus.pt, (0x093, raw_093, bus))], v_ego=26.5)
+
+  cameras = [e for e in CS.vehicleNaviEvents if e["type"] == "camera"]
+  assert len(cameras) == 1
+  assert cameras[0]["speed"] == 90
+  assert cameras[0]["target"] - CS.totalDistance == pytest.approx(815.0)
+  assert ret.speedLimit == pytest.approx(90.0)
+  assert CS.vehicleNaviCameraTarget - CS.totalDistance == pytest.approx(815.0)
+
+  # Even before 0x099 is received, EV4 must reject path_index=9 branch cameras
+  CS2, parsers2, packer2 = _make_hyundai_state(monkeypatch, CAR.KIA_EV4, can_control=1)
+  bus2 = parsers2[Bus.pt].bus
+  hda2 = (Bus.pt, packer2.make_can_msg("CANFD_HDA_INFO_364", bus2, {"LinkClass": 1, "SPEED_LIMIT": 90, "MapSource": 1}))
+  ret2 = _step(CS2, parsers2, 1.0, [hda2, (Bus.pt, (0x093, raw_093, bus2))], v_ego=26.5)
+  cameras2 = [e for e in CS2.vehicleNaviEvents if e["type"] == "camera"]
+  assert len(cameras2) == 1
+  assert cameras2[0]["speed"] == 90
+  assert ret2.speedLimit == pytest.approx(90.0)
+  assert CS2.vehicleNaviCameraTarget - CS2.totalDistance == pytest.approx(815.0)
