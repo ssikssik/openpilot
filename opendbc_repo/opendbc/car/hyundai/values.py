@@ -1141,16 +1141,3 @@ if __name__ == "__main__":
 
 def steering_angle_max(fingerprint, v_ego_raw, standard_max=CarControllerParams.ANGLE_LIMITS.STEER_ANGLE_MAX):
   return standard_max
-
-
-def steering_angle_max_torque(fingerprint, v_ego_raw, standard_max=250.0, angle_error_deg=0.0, steering_pressed=False):
-  return float(standard_max)
-
-
-def steering_angle_smooth_tau(fingerprint, v_ego_raw):
-  if fingerprint != CAR.KIA_EV4:
-    return 0.0
-  # Short low-speed smoothing suppresses stale-carControl 0-step / 2x-jump impulses on 0xCB
-  # while keeping full 250 torque authority and minimal phase lag (~15-18 ms below 40 kph, 0 ms at 50+ kph).
-  v_kph = max(0.0, float(v_ego_raw) * CV.MS_TO_KPH)
-  return float(np.interp(v_kph, (0.0, 40.0, 50.0), (0.018, 0.015, 0.0)))

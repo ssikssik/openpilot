@@ -14,8 +14,7 @@ from opendbc.car.hyundai.steering_handover import SteeringHandover
 from opendbc.car.carlog import carlog
 from opendbc.car.hyundai.hyundaicanfd import CanBus
 from opendbc.car.hyundai.values import (HyundaiFlags, HyundaiSafetyFlags, Buttons, CarControllerParams, CAR, CAN_GEARS,
-                                        HyundaiExtFlags, steering_angle_max, steering_angle_max_torque,
-                                        steering_angle_smooth_tau)
+                                        HyundaiExtFlags, steering_angle_max)
 from opendbc.car.interfaces import CarControllerBase
 from opendbc.car.vehicle_model import VehicleModel
 from opendbc.car.hyundai.values import get_pedal_interceptor_params
@@ -238,23 +237,23 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
                                      steer_sw_max_deg: float,
                                      model_v2=None) -> float:
   max_lat_accel = 8.5   # m/s^2
-  max_lat_jerk  = 7.0   # m/s^3
+  max_lat_jerk  = 4.0   # m/s^3
   y_std_1s = 0.1
   if model_v2 is not None and len(model_v2.position.yStd) > 10:
     model_y_std_1s = float(model_v2.position.yStd[10])
     if np.isfinite(model_y_std_1s) and model_y_std_1s >= 0.0:
       y_std_1s = model_y_std_1s
-  max_sw_rate_deg_per_tick = float(np.interp(y_std_1s, [0.1, 0.2, 0.4], [2.8, 2.0, 1.1]))
+  max_sw_rate_deg_per_tick = float(np.interp(y_std_1s, [0.1, 0.2, 0.4], [2.0, 1.5, 0.8]))
   v = max(float(v_ego), 1.0)
 
   target_sw = clip_float(desired_sw_deg, -steer_sw_max_deg, steer_sw_max_deg)
   if v_ego < MID_SPEED_ANGLE_RATE_LIMIT_SPEED:
     # Keep low/mid-speed angle commands quieter without reducing LKAS_ANGLE_MAX_TORQUE.
-    # The extra cap ramps from 1.8 to 2.2 deg/tick at 0~15 kph, then tapers to
-    # 1.8 deg/tick at 40 kph. At 40 kph and above, this extra cap does not apply.
+    # Allow the angle, but slow the arrival: 0~15 kph ramps 0.8->1.1 deg/tick,
+    # then 15~40 kph tapers 1.1->0.8 deg/tick. Above 40 kph, physics limits take over.
     low_mid_speed_cap = float(np.interp(v_ego,
                                         [0.0, LOW_SPEED_ANGLE_RATE_RAMP_SPEED, MID_SPEED_ANGLE_RATE_LIMIT_SPEED],
-                                        [1.8, 2.2, 1.8]))
+                                        [0.8, 1.1, 0.8]))
     max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, low_mid_speed_cap)
 
   target_rw = target_sw / steer_ratio
@@ -265,14 +264,14 @@ def apply_steer_angle_limits_physics(desired_sw_deg: float,
   rw_max = float(np.degrees(rw_max_rad))
 
   # --- jerk -> rate limit ---
-  sec2 = 1.0
+  sec2 = 1.2
   max_drw_dt = (max_lat_jerk * wheelbase_m) / (v * v * sec2)     # rad/s
   max_drw_per_tick = max_drw_dt * DT_CTRL                        # rad/tick
   max_drw_per_tick_deg = float(np.degrees(max_drw_per_tick))
 
   err = abs(target_sw - last_sw_deg)
   if err > 20.0:
-    max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, 2.2)
+    max_sw_rate_deg_per_tick = min(max_sw_rate_deg_per_tick, 1.0)
 
   # Once steering is in the large-angle region, do not make the return toward center wait on
   # the normal low-speed/large-error cap. This only relaxes unwinding; winding farther into the
@@ -306,18 +305,6 @@ def park_assist_active(CS):
 class CarController(CarControllerBase):
   def steer_angle_max(self, v_ego_raw):
     return steering_angle_max(self.CP.carFingerprint, v_ego_raw, self.params.ANGLE_LIMITS.STEER_ANGLE_MAX)
-
-  def steer_angle_max_torque(self, v_ego_raw, angle_error_deg=0.0, steering_pressed=False):
-    return steering_angle_max_torque(
-      self.CP.carFingerprint,
-      v_ego_raw,
-      self.angle_max_torque,
-      angle_error_deg=angle_error_deg,
-      steering_pressed=steering_pressed,
-    )
-
-  def steer_angle_smooth_tau(self, v_ego_raw):
-    return steering_angle_smooth_tau(self.CP.carFingerprint, v_ego_raw)
 
   def __init__(self, dbc_names, CP):
     super().__init__(dbc_names, CP)
@@ -406,7 +393,6 @@ class CarController(CarControllerBase):
     self.button_spam3 = 1
 
     self.apply_angle_last = 0
-    self.apply_angle_filtered = None
     self.steering_template_ready = False
     self.lkas_max_torque = 0
     self.angle_max_torque = 250
@@ -883,22 +869,8 @@ class CarController(CarControllerBase):
     #apply_angle = apply_std_steer_angle_limits(actuators.steeringAngleDeg, self.apply_angle_last, CS.out.vEgoRaw,
     #                                           CS.out.steeringAngleDeg, CC.latActive, self.params.ANGLE_LIMITS)
 
-    desired_angle = float(actuators.steeringAngleDeg)
-    if not CC.latActive:
-      self.apply_angle_filtered = float(CS.out.steeringAngleDeg)
-    else:
-      smooth_tau = self.steer_angle_smooth_tau(CS.out.vEgoRaw)
-      if smooth_tau > 0.0:
-        if self.apply_angle_filtered is None or not np.isfinite(self.apply_angle_filtered):
-          self.apply_angle_filtered = float(self.apply_angle_last)
-        smooth_alpha = DT_CTRL / (smooth_tau + DT_CTRL)
-        self.apply_angle_filtered += smooth_alpha * (desired_angle - self.apply_angle_filtered)
-        desired_angle = self.apply_angle_filtered
-      else:
-        self.apply_angle_filtered = desired_angle
-
     apply_angle = apply_steer_angle_limits_physics(
-      desired_angle,
+      actuators.steeringAngleDeg,
       self.apply_angle_last,
       CS.out.vEgoRaw,
       CS.out.steeringAngleDeg,
@@ -913,11 +885,7 @@ class CarController(CarControllerBase):
     if angle_control:
       apply_steer_req = CC.latActive
 
-    angle_torque_cap = self.steer_angle_max_torque(
-      CS.out.vEgoRaw,
-      angle_error_deg=apply_angle - CS.out.steeringAngleDeg,
-      steering_pressed=CS.out.steeringPressed,
-    )
+    angle_torque_cap = self.angle_max_torque
 
     steering_pressed_rising = CS.out.steeringPressed and not self.steering_pressed_prev
     if steering_pressed_rising:
