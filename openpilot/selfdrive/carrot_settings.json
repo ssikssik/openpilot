@@ -362,7 +362,6 @@
                 "LaneChangeBsd",
                 "LaneLineCheck",
                 "AutoTurnControl",
-                "VehicleNaviAtcControl",
                 "AutoTurnControlSpeedTurn",
                 "AutoTurnControlTurnEnd",
                 "AutoTurnMapChange",
@@ -467,17 +466,6 @@
               "en": "Speed Camera",
               "zh": "测速摄像头",
               "params": [
-                "VehicleNaviCanControl",
-                "VehicleNaviSchoolZoneControl",
-                "VehicleNaviDecelCancel",
-                "VehicleNaviDecelCancelBox",
-                "VehicleNaviDecelCancelMobileZone",
-                "VehicleNaviDecelCancelBump",
-                "VehicleNaviDecelCancelUnknown",
-                "VehicleNaviDecelCancelEarlyWarning",
-                "VehicleNaviSectionAvgControl",
-                "VehicleSpeedCameraControlMode",
-                "VehicleSpeedCameraDistanceTime",
                 "AutoNaviSpeedCtrlMode",
                 "AutoNaviSpeedCtrlEnd",
                 "AutoNaviRearCameraHoldDistance",
@@ -519,13 +507,7 @@
                 "AutoCurveSpeedLowerLimit",
                 "TurnSpeedControlMode",
                 "MapTurnSpeedFactor",
-                "ApplyModelSpeed",
-                "VehicleNaviCurveControl",
-                "VehicleNaviCurveMppControl",
-                "VehicleNaviRampCurveControl",
-                "VehicleNaviCurveSpeedFactor",
-                "VehicleNaviCurveCtrlEnd",
-                "VehicleNaviJunctionAssist"
+                "ApplyModelSpeed"
               ]
             },
             {
@@ -638,6 +620,56 @@
                 "CarrotCruiseAtcDecel"
               ]
             }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "VNAVI",
+      "ko": "순정 내비 (vNAVI)",
+      "en": "Stock Navi (vNAVI)",
+      "zh": "原车导航 (vNAVI)",
+      "groups": [
+        {
+          "id": "VNAVI_CAMERA",
+          "ko": "카메라·구간·스쿨존",
+          "en": "Camera, Section & School Zone",
+          "zh": "测速·区间·学区",
+          "params": [
+            "VehicleNaviCanControl",
+            "VehicleSpeedCameraControlMode",
+            "VehicleSpeedCameraDistanceTime",
+            "VehicleNaviSectionAvgControl",
+            "VehicleNaviSchoolZoneControl",
+            "VehicleNaviDecelCancel",
+            "VehicleNaviDecelCancelBox",
+            "VehicleNaviDecelCancelMobileZone",
+            "VehicleNaviDecelCancelBump",
+            "VehicleNaviDecelCancelUnknown",
+            "VehicleNaviDecelCancelEarlyWarning"
+          ]
+        },
+        {
+          "id": "VNAVI_CURVE",
+          "ko": "커브·램프·분기",
+          "en": "Curve, Ramp & Junction",
+          "zh": "弯道·匝道·分流",
+          "params": [
+            "VehicleNaviCurveControl",
+            "VehicleNaviCurveMppControl",
+            "VehicleNaviRampCurveControl",
+            "VehicleNaviCurveSpeedFactor",
+            "VehicleNaviCurveCtrlEnd",
+            "VehicleNaviJunctionAssist"
+          ]
+        },
+        {
+          "id": "VNAVI_TBT",
+          "ko": "TBT · ATC 연동",
+          "en": "TBT & ATC",
+          "zh": "TBT · ATC 联动",
+          "params": [
+            "VehicleNaviAtcControl"
           ]
         }
       ]
