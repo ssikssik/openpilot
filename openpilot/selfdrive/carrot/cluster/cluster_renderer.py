@@ -473,7 +473,10 @@ CLEAN_TTC_RED_S = 2.5
 # EV6 HUD patch v22: signal assist chip, see ClusterUiRenderer._ev6_draw_signal_assist_chip
 CLEAN_CAMERA_SHOW_M = 1000  # speed camera chip appears this far before the camera
 CLEAN_SLOWDOWN_LABELS_KO = {
-    "turn": "커브", "vturn": "커브", "atc": "커브", "atc2": "커브", "hda_atc": "커브", "cam": "카메라", "section": "구간단속",
+    "curve": "커브", "hda_curve": "커브", "vturn": "커브",
+    "ramp": "램프", "hda_ramp": "램프",
+    "turn": "회전", "atc": "회전", "atc2": "회전", "hda_atc": "회전",
+    "cam": "카메라", "section": "구간단속",
     "bump": "방지턱", "school": "어린이", "police": "경찰", "road": "도로제한", "route": "경로",
     "model": "모델", "gas": "가속", "eco": "에코", "apply": "감속", "waze": "waze",
 }
