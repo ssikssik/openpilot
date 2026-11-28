@@ -484,9 +484,8 @@ def test_vehicle_navi_can_control_exposes_route_filter_modes(settings, params):
   assert "calculated route" in control["edescr"]
   assert "VehicleSpeedCameraControlMode" in control["edescr"]
 
-  driving = next(category for category in settings["menu"] if category["id"] == "DRIVING")
-  speed = next(group for group in driving["groups"] if group["id"] == "SPEED")
-  camera = next(group for group in speed["groups"] if group["id"] == "SPEED_CAMERA")
+  vnavi = next(category for category in settings["menu"] if category["id"] == "VNAVI")
+  camera = next(group for group in vnavi["groups"] if group["id"] == "VNAVI_CAMERA")
   assert "VehicleNaviCanControl" in camera["params"]
 
   params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
@@ -518,9 +517,8 @@ def test_vehicle_navi_school_zone_control_is_opt_in(settings, params):
   assert "PV5에서는 아직 동작하지 않습니다" in control["descr"]
   assert "not yet supported on the PV5" in control["edescr"]
 
-  driving = next(category for category in settings["menu"] if category["id"] == "DRIVING")
-  speed = next(group for group in driving["groups"] if group["id"] == "SPEED")
-  camera = next(group for group in speed["groups"] if group["id"] == "SPEED_CAMERA")
+  vnavi = next(category for category in settings["menu"] if category["id"] == "VNAVI")
+  camera = next(group for group in vnavi["groups"] if group["id"] == "VNAVI_CAMERA")
   assert "VehicleNaviSchoolZoneControl" in camera["params"]
 
   params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
@@ -545,9 +543,8 @@ def test_speedcam_decel_cancel_and_section_average_settings_are_opt_in(settings,
              for name in (*children, "VehicleNaviDecelCancelUnknown",
                           "VehicleNaviDecelCancelEarlyWarning"))
 
-  driving = next(category for category in settings["menu"] if category["id"] == "DRIVING")
-  speed = next(group for group in driving["groups"] if group["id"] == "SPEED")
-  camera = next(group for group in speed["groups"] if group["id"] == "SPEED_CAMERA")
+  vnavi = next(category for category in settings["menu"] if category["id"] == "VNAVI")
+  camera = next(group for group in vnavi["groups"] if group["id"] == "VNAVI_CAMERA")
   params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
   for name, default in defaults.items():
     assert name in camera["params"]
@@ -558,9 +555,8 @@ def test_speedcam_decel_cancel_and_section_average_settings_are_opt_in(settings,
 
 
 def test_vehicle_navi_curve_control_settings_present(settings):
-  driving = next(category for category in settings["menu"] if category["id"] == "DRIVING")
-  speed = next(group for group in driving["groups"] if group["id"] == "SPEED")
-  curve = next(group for group in speed["groups"] if group["id"] == "SPEED_CURVE")
+  vnavi = next(category for category in settings["menu"] if category["id"] == "VNAVI")
+  curve = next(group for group in vnavi["groups"] if group["id"] == "VNAVI_CURVE")
   expected = [
     "VehicleNaviCurveControl",
     "VehicleNaviCurveMppControl",
@@ -582,11 +578,9 @@ def test_vehicle_navi_atc_control_setting_present(settings, params):
   by_name = {p["name"]: p for p in params}
   atc = by_name["VehicleNaviAtcControl"]
   assert (atc["control"], atc["min"], atc["max"], atc["default"]) == ("toggle", 0, 1, 0)
-  driving = next(category for category in settings["menu"] if category["id"] == "DRIVING")
-  steering = next(group for group in driving["groups"] if group["id"] == "STEER")
-  lane_change = next(group for group in steering["groups"] if group["id"] == "STEER_LANECHANGE")
-  assert "VehicleNaviAtcControl" in lane_change["params"]
-  assert lane_change["params"].index("VehicleNaviAtcControl") == lane_change["params"].index("AutoTurnControl") + 1
+  vnavi = next(category for category in settings["menu"] if category["id"] == "VNAVI")
+  tbt = next(group for group in vnavi["groups"] if group["id"] == "VNAVI_TBT")
+  assert "VehicleNaviAtcControl" in tbt["params"]
   params_keys = PARAMS_KEYS_PATH.read_text(encoding="utf-8")
   assert '{"VehicleNaviAtcControl", {PERSISTENT, BOOL, "0"}}' in params_keys
   assert params_keys.count('{"VehicleNaviAtcControl",') == 1
