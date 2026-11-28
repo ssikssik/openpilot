@@ -18,13 +18,13 @@ def stock_navi_map_active(sm, route_id: int, tracker, fresh_tbt: bool, enabled: 
   """True when stock-navi 0x2A3 TBT should synthesize a local Mapbox-tile route."""
   if not (enabled and tracker is None and route_id != 0 and fresh_tbt):
     return False
-  if 'carrotNavi' in sm and sm.alive['carrotNavi'] and sm.valid['carrotNavi']:
+  if sm.alive.get('carrotNavi', False) and sm.valid.get('carrotNavi', False):
     return False
-  if not sm.valid['carrotMan']:
+  if not sm.valid.get('carrotMan', False):
     return False
   cm = sm['carrotMan']
   straight_guidance = (
-    'carState' in sm and sm.valid['carState'] and
+    sm.valid.get('carState', False) and
     getattr(sm['carState'], 'vehicleNaviTurnInfo', -1) == 9
   )
   if not (cm.vehicleNaviAvailable and (cm.xTurnInfo > 0 or straight_guidance)):
