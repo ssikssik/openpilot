@@ -317,6 +317,8 @@ def test_carrot_serv_curve_gates_scaling_and_external_nav_priority():
   assert deceleration_source_presentation("hda_ramp") == ("ramp", 3)
   assert deceleration_source_presentation("hda_curve") == ("curve", 3)
   assert deceleration_source_presentation("hda_atc") == ("turn", 3)
+  assert deceleration_source_presentation("gas") == ("gas", 2)
+  assert deceleration_source_presentation("gas", vehicle_navi_active=True) == ("gas", 3)
 
   # Ramp gate off -> ignores ramp curve
   serv.vehicleNaviRampCurveControl = False

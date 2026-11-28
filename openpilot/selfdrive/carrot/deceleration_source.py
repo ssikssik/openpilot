@@ -32,7 +32,7 @@ def is_vehicle_navigation_source(source: str | None) -> bool:
   return normalized in VEHICLE_NAVI_SOURCES or normalized in ("cam:v", "bump:v", "curve:v", "ramp:v", "school:v")
 
 
-def deceleration_source_presentation(source: str | None) -> tuple[str, int]:
+def deceleration_source_presentation(source: str | None, *, vehicle_navi_active: bool = False) -> tuple[str, int]:
   """Return the actual deceleration reason and its source color mode.
 
   Color mode 2 is the normal deceleration orange, mode 3 is vehicle CAN
@@ -41,6 +41,8 @@ def deceleration_source_presentation(source: str | None) -> tuple[str, int]:
   normalized = str(source or "").strip().lower()
   if not normalized:
     return "apply", 2
+  if normalized == "gas" and vehicle_navi_active:
+    return "gas", 3
   if is_vehicle_navigation_source(normalized):
     base = normalized.removesuffix(":v")
     return DECELERATION_SOURCE_LABELS.get(base, base[:8]), 3

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from openpilot.common.constants import CV
 from openpilot.selfdrive.carrot.deceleration_source import (
   deceleration_source_presentation,
+  external_navigation_connected,
   format_vehicle_navi_junction,
 )
 from openpilot.selfdrive.ui.onroad.exp_button import ExpButton
@@ -118,15 +119,29 @@ class SetSpeedOverride:
     # 2) apply_speed (desiredSpeed/source)
     desired_speed = None
     desired_source = ""
+    vehicle_navi_using = False
     try:
-      desired_speed = float(sm['carrotMan'].desiredSpeed)
-      desired_source = str(sm['carrotMan'].desiredSource or "")
+      cm = sm['carrotMan']
+      desired_speed = float(cm.desiredSpeed)
+      desired_source = str(cm.desiredSource or "")
+      carrot_navi_connected = False
+      try:
+        carrot_navi_connected = bool(
+          sm.alive['carrotNavi'] and sm.valid['carrotNavi'] and getattr(sm['carrotNavi'], 'connected', False)
+        )
+      except Exception:
+        carrot_navi_connected = False
+      external_nav_active = external_navigation_connected(getattr(cm, 'remote', ''), carrot_navi_connected)
+      vehicle_navi_using = bool(getattr(cm, 'vehicleNaviAvailable', False)) and not external_nav_active
     except Exception:
       desired_speed = None
       desired_source = ""
+      vehicle_navi_using = False
 
     if desired_speed is not None and 0 < desired_speed < 200 and desired_speed < set_speed_kph:
-      label, speed_color_mode = deceleration_source_presentation(desired_source)
+      label, speed_color_mode = deceleration_source_presentation(
+        desired_source, vehicle_navi_active=vehicle_navi_using,
+      )
       return SetSpeedOverrideState(
         active=True,
         speed_kph=desired_speed,
