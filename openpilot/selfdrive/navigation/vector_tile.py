@@ -14,6 +14,7 @@ class Road:
   detail: str = ''
   tunnel: bool = False
   bridge: bool = False
+  oneway: bool = False
 
 
 def fields(data: bytes):
@@ -139,11 +140,13 @@ def decode_roads(data: bytes) -> list[Road]:
           kind = 'minor_road'
         else:
           continue  # rail, pedestrian, path, ferry and construction are not driveable roads
+        oneway = properties.get('oneway') in ('true', True, 1)
         roads.extend(Road(points, kind, extent, detail, properties.get('structure') == 'tunnel',
-                          properties.get('structure') == 'bridge') for points in decode_lines(geometry))
+                          properties.get('structure') == 'bridge', oneway) for points in decode_lines(geometry))
         continue
       kind = properties.get('kind', '')
       if kind in ('highway', 'major_road', 'minor_road', 'other'):
+        oneway = properties.get('is_oneway') is True or properties.get('oneway') in ('true', True, 1)
         roads.extend(Road(points, kind, extent, properties.get('kind_detail', ''), properties.get('is_tunnel') is True,
-                          properties.get('is_bridge') is True) for points in decode_lines(geometry))
+                          properties.get('is_bridge') is True, oneway) for points in decode_lines(geometry))
   return roads

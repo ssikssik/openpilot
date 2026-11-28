@@ -29,7 +29,7 @@ class RouteSource:
     self.selected = None
     self.external_was_active = False
 
-  def select(self, external_active, v2=None):
+  def select(self, external_active, v2=None, vehicle_navi_active=False):
     if v2 is not None:
       route = v2.route.polyline if v2.route.present and not v2.off_route else ()
       choice = ('external', tuple(route))
@@ -39,7 +39,12 @@ class RouteSource:
       # A disconnected sender must provide its route again on reconnect.
       if self.external_was_active:
         self.legacy = ()
-      choice = ('mapbox', self.mapbox)
+      if self.mapbox:
+        choice = ('mapbox', self.mapbox)
+      elif vehicle_navi_active:
+        choice = ('vehicle_navi', ())
+      else:
+        choice = ('mapbox', ())
     self.external_was_active = external_active or v2 is not None
     if choice == self.selected:
       return None

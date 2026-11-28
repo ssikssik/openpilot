@@ -101,6 +101,19 @@ class RouteEngine:
       self.clear_route()
       self.reset_recompute_limits()
 
+  def _external_nav_active(self):
+    if 'carrotNavi' in self.sm and self.sm.alive['carrotNavi'] and self.sm.valid['carrotNavi']:
+      return True
+    if self.sm.valid['carrotMan'] and self.sm.alive['carrotMan']:
+      cm = self.sm['carrotMan']
+      if getattr(cm, 'remote', ''):
+        return True
+      if cm.activeCarrot in (1, 2, 3):
+        return True
+      if cm.activeCarrot > 0 and not getattr(cm, 'vehicleNaviAvailable', False):
+        return True
+    return False
+
   def update(self):
     self.sm.update(0)
 
@@ -119,7 +132,7 @@ class RouteEngine:
       self.send_route()
       self.resend_at = time.monotonic() + 5.
     self.poll_route()
-    if self.sm.valid['carrotMan'] and self.sm.alive['carrotMan'] and self.sm['carrotMan'].activeCarrot > 0:
+    if self._external_nav_active():
       self.was_external = True
       self.pm.send('navInstruction', messaging.new_message('navInstruction', valid=False))
       return
@@ -435,7 +448,7 @@ class RouteEngine:
 
 def main():
   pm = messaging.PubMaster(['navInstruction', 'navRouteNavd'])
-  sm = messaging.SubMaster(['managerState', 'carrotMan', 'gpsLocation', 'gpsLocationExternal', 'carState'])
+  sm = messaging.SubMaster(['managerState', 'carrotMan', 'carrotNavi', 'gpsLocation', 'gpsLocationExternal', 'carState'])
 
   rk = Ratekeeper(1.0)
   route_engine = RouteEngine(sm, pm)

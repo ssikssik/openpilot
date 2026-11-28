@@ -1385,7 +1385,8 @@ class CarrotServ:
     }.get(int(turn_info), ("invalid", ""))
 
   def _apply_vehicle_navi_tbt(self, CS, delta_dist=0.0):
-    if not getattr(self, "vehicleNaviAtcControl", False) or self.external_navigation_active or self.xTurnInfo >= 0 or CS is None:
+    if (not getattr(self, "vehicleNaviAtcControl", False) or self.external_navigation_active
+        or self.xTurnInfo >= 0 or getattr(self, "nGoPosDist", 0) > 0 or CS is None):
       self.vehicle_navi_tbt_hold = None
       self.vehicle_navi_tbt_display_type = 0
       if getattr(self, "vehicle_navi_tbt_active", False):
@@ -1763,7 +1764,7 @@ class CarrotServ:
     pm.send('carrotMan', msg)
 
     inst = messaging.new_message('navInstructionCarrot', valid=False)
-    if self.active_carrot > 1 and self.active_kisa_count <= 0:
+    if self.external_navigation_active and self.active_carrot > 1 and self.active_kisa_count <= 0:
       inst.valid = True
 
       instruction = inst.navInstructionCarrot

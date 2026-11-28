@@ -198,15 +198,22 @@ class MapRenderer:
   def __init__(self, archive: PMTiles):
     self.archive = archive
     self.zoom = min(max(ZOOM, archive.min_zoom), archive.max_zoom)
+    self._decoded = lru_cache(maxsize=128)(self._load_decoded_roads)
     self.roads = lru_cache(maxsize=128)(self._load_roads)
 
-  def _load_roads(self, x: int, y: int):
-    """A tile's visible road segments as flat arrays: mercator starts/ends, style index, level and polyline end flags."""
+  def _load_decoded_roads(self, x: int, y: int) -> list[Road] | None:
     tile = self.archive.get(self.zoom, x, y)
     if tile is None:
       return None
+    return [road for road in decode_roads(tile) if road_style(road) is not None and len(road.points) >= 2]
+
+  def _load_roads(self, x: int, y: int):
+    """A tile's visible road segments as flat arrays: mercator starts/ends, style index, level and polyline end flags."""
+    decoded = self._decoded(x, y)
+    if decoded is None:
+      return None
     starts, ends, styles, levels, caps = [], [], [], [], []
-    for road in decode_roads(tile):
+    for road in decoded:
       style = road_style(road)
       if style is None:
         continue
@@ -222,6 +229,22 @@ class MapRenderer:
     if not starts:
       return np.empty((0, 2)), np.empty((0, 2)), np.empty(0, dtype=int), np.empty(0, dtype=int), np.empty((0, 2), dtype=bool)
     return np.concatenate(starts), np.concatenate(ends), np.concatenate(styles), np.concatenate(levels), np.concatenate(caps)
+
+  def view_roads(self, longitude: float, latitude: float) -> tuple[list[tuple[np.ndarray, Road]], bool]:
+    """Decoded visible road polylines in normalized Web Mercator for the current view."""
+    wanted, complete = self.view_tiles(longitude, latitude)
+    scale = 1 << self.zoom
+    result: list[tuple[np.ndarray, Road]] = []
+    for x, y in wanted:
+      decoded = self._decoded(x, y)
+      if decoded is None:
+        complete = False
+        continue
+      offset = np.array([x, y], dtype=np.float64)
+      for road in decoded:
+        points = (road.points / road.extent + offset) / scale
+        result.append((points, road))
+    return result, complete
 
   def view_tiles(self, longitude: float, latitude: float) -> tuple[list[tuple[int, int]], bool]:
     """Tiles covering the view at a point for every heading, and whether the view stays within the map."""

@@ -5,11 +5,28 @@ import pytest
 from opendbc.can import CANParser
 from opendbc.car import structs
 from opendbc.car.hyundai.values import CANFD_CAR, CAR
-from opendbc.car.hyundai.vehicle_gps import MESSAGE, VehicleGPS, register_vehicle_gps
+from opendbc.car.hyundai.vehicle_gps import (
+  CANFD_COORD_SCALE, CANFD_HEADING_SCALE, CANFD_MESSAGE, MESSAGE, VehicleGPS, register_vehicle_gps,
+)
 
 
 def frame(lat=37., lon=127.):
   return int(lat * 1e6).to_bytes(4, 'little') + int(lon * 1e6).to_bytes(4, 'little')
+
+
+def canfd_frame(lat=37.6611, lon=126.8412, heading=222.0, speed=10.0, counter=0):
+  import struct
+  from opendbc.can.dbc import DBC
+  dbc = DBC('hyundai_canfd_generated')
+  sig = dbc.name_to_msg[CANFD_MESSAGE].sigs['CHECKSUM']
+  payload = bytearray(32)
+  payload[2] = counter & 0xFF
+  struct.pack_into('<ii', payload, 16, int(round(lat / CANFD_COORD_SCALE)), int(round(lon / CANFD_COORD_SCALE)))
+  raw_hdg = 0xFFFF if heading is None else int(round((heading % 360.0) / CANFD_HEADING_SCALE)) & 0xFFFF
+  struct.pack_into('<HH', payload, 24, raw_hdg, int(round(speed * 100.0)) & 0xFFFF)
+  crc = sig.calc_checksum(0x206, sig, payload)
+  struct.pack_into('<H', payload, 0, crc)
+  return bytes(payload)
 
 
 def setup():
@@ -141,3 +158,27 @@ def test_same_id_or_name_with_incompatible_dbc_does_not_enable(field, value):
   register_vehicle_gps(cp)
   assert 0x374 not in cp.addresses
   assert VehicleGPS().update(cp, 0.) == {}
+
+
+def test_canfd_206_acquisition_native_heading_at_standstill_and_moving():
+  cp = register_vehicle_gps(CANParser('hyundai_canfd_generated', [], 0))
+  gps = VehicleGPS()
+  assert 0x206 in cp.addresses
+  assert cp.message_states[0x206].ignore_alive
+  # 5 Hz frames at 0 km/h standstill still provide valid native heading after 3 consistent frames.
+  for i in range(3):
+    t = 1.0 + i * 0.2
+    cp.update([[int(t * 1e9), [(0x206, canfd_frame(37.6611, 126.8412, heading=222.0, speed=0.0, counter=i * 2), 0)]]])
+    state = gps.update(cp, 0.0)
+  assert state['valid'] and state['headingValid']
+  assert state['latitude'] == pytest.approx(37.6611, abs=1e-5)
+  assert state['longitude'] == pytest.approx(126.8412, abs=1e-5)
+  assert state['headingDeg'] == pytest.approx(222.0, abs=0.05)
+
+  # Reverse disables headingValid; invalid heading sentinel (0xFFFF) does not produce headingValid.
+  cp.update([[int(1.6 * 1e9), [(0x206, canfd_frame(37.6611, 126.8412, heading=222.0, speed=0.0, counter=6), 0)]]])
+  assert not gps.update(cp, 0.0, reverse=True)['headingValid']
+
+  # Zero coordinates or corrupted CRC are rejected.
+  cp.update([[int(1.8 * 1e9), [(0x206, canfd_frame(0.0, 0.0, heading=0.0, speed=0.0, counter=8), 0)]]])
+  assert not gps.update(cp, 0.0)['valid']
