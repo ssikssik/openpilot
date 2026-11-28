@@ -47,6 +47,8 @@ const CanMsg HYUNDAI_CANFD_HDA2_LONG_TX_MSGS[] = {
   {0x2A4, 0, 24}, // CAM_0x2A4
   {0x51, 0, 32},  // ADRV_0x51
   {0x730, 1, 8},  // tester present for ADAS ECU disable
+  {0x730, 2, 8},  // ADAS_DRV UDS ClearDTC on CAM bus while parked (CAMERA_SCC)
+  {0x7C4, 0, 8},  // FR_CMR UDS ClearDTC on ECAN bus while parked (CAMERA_SCC)
   {0x7B1, 0, 8},  // parking ECU (APRK) session / disable / tester present, CanfdBlinkerKick
   {0x7B1, 1, 8},  // same on bus 1, where a second SPAS1 stream runs (SpasSteerTest)
   {0x165, 0, 24}, // SPAS1, sent while APRK is silenced
@@ -263,7 +265,7 @@ static uint32_t hyundai_canfd_get_checksum(const CANPacket_t* to_push) {
 
 typedef struct {
   int addr;
-  int bus;              // forwarding block ´ë»ó tx bus: 0 or 2
+  int bus;              // forwarding block ëŒ€ìƒ tx bus: 0 or 2
   int hz;
   uint32_t timeout_us;
   uint32_t last_tx_us;
@@ -271,7 +273,7 @@ typedef struct {
   bool tx_active;
 } CanfdTxState;
 
-// forwarding block¿ë: bus 0,2¸¸ »ç¿ë
+// forwarding blockìš©: bus 0,2ë§Œ ì‚¬ìš©
 CanfdTxState canfd_tx_states[] = {
   {0x50,  0, 100, 0U, 0U, 0U, false}, // 80:  LKAS
   {0x51,  0, 100, 0U, 0U, 0U, false}, // 81:  ADRV_0x51
@@ -563,7 +565,7 @@ static bool canfd_bfwd_pop(CanfdBufferedFwd* st, CANPacket_t* pkt) {
   st->head = (st->head + 1U) % CANFD_BFWD_MAX_QUEUE;
   st->count--;
 
-  // ¸¶Áö¸· Á¤»ó packet ÀúÀå
+  // ë§ˆì§€ë§‰ ì •ìƒ packet ì €ì¥
   canfd_copy_packet(&st->last_pkt, pkt);
   st->has_last_pkt = true;
   st->reuse_left = CANFD_BFWD_REUSE_MAX;
@@ -764,9 +766,22 @@ static bool hyundai_canfd_tx_hook(const CANPacket_t *to_send_const) {
   }
 #endif
 
-  // UDS: only tester present ("\x02\x3E\x80\x00\x00\x00\x00\x00") allowed on diagnostics address
-  if ((addr == 0x730) && hyundai_canfd_hda2) {
-    if ((GET_BYTES(to_send, 0, 4) != 0x00803E02U) || (GET_BYTES(to_send, 4, 4) != 0x0U)) {
+  // UDS: TesterPresent ("\x02\x3E\x80\x00\x00\x00\x00\x00") on bus 1 (HDA2 longitudinal ECU disable),
+  // plus stationary disengaged ClearDTC (0x14 FF FF FF) and Default/Extended session (0x10 01/03)
+  // on FR_CMR (0x7C4 bus 0) and ADAS_DRV (0x730 bus 2) for CAMERA_SCC HDA2 cars (EV4).
+  if ((addr == 0x730) || (addr == 0x7C4)) {
+    uint32_t b0 = GET_BYTES(to_send, 0, 4);
+    uint32_t b4 = GET_BYTES(to_send, 4, 4);
+    bool is_tester_present = (addr == 0x730) && hyundai_canfd_hda2 && (GET_BUS(to_send) == 1U) &&
+                             (b0 == 0x00803E02U) && (b4 == 0x0U);
+    bool is_clear_dtc_cmd = ((b0 == 0x00011002U) && (b4 == 0x0U)) ||
+                            ((b0 == 0x00031002U) && (b4 == 0x0U)) ||
+                            ((b0 == 0xFFFF1404U) && (b4 == 0x000000FFU));
+    bool is_parked_clear_dtc = hyundai_canfd_hda2 && hyundai_camera_scc &&
+                               !vehicle_moving && !controls_allowed && is_clear_dtc_cmd &&
+                               (((addr == 0x7C4) && (GET_BUS(to_send) == 0U)) ||
+                                ((addr == 0x730) && (GET_BUS(to_send) == 2U)));
+    if (!is_tester_present && !is_parked_clear_dtc) {
       tx = false;
     }
   }
@@ -993,7 +1008,7 @@ static int hyundai_canfd_fwd_hook(CANPacket_t* to_send) {
       CANPacket_t buffered_pkt;
       bool use_buffered = canfd_bfwd_pop(bfwd, &buffered_pkt);
 
-      // queue°¡ ºñ¾úÀ¸¸é ¸¶Áö¸· Á¤»ó°ªÀ» 1~2È¸ Àç»ç¿ë
+      // queueê°€ ë¹„ì—ˆìœ¼ë©´ ë§ˆì§€ë§‰ ì •ìƒê°’ì„ 1~2íšŒ ì¬ì‚¬ìš©
       if (!use_buffered) {
         use_buffered = canfd_bfwd_reuse_last(bfwd, &buffered_pkt);
         if (use_buffered) {

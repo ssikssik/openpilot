@@ -418,6 +418,13 @@ class CarController(CarControllerBase):
     self.LFA_trigger = 0
 
     self.activeCarrot = 0
+    self.ev4_park_dtc_clear_enabled = (
+      self.car_fingerprint == CAR.KIA_EV4 and
+      bool(CP.flags & HyundaiFlags.CANFD_HDA2) and
+      bool(CP.flags & HyundaiFlags.CAMERA_SCC)
+    )
+    self.ev4_park_dtc_dirty = self.ev4_park_dtc_clear_enabled
+    self.ev4_park_dtc_start_frame = None
     self.camera_scc_params = Params().get_int("HyundaiCameraSCC")
     self.is_ldws_car = Params().get_bool("IsLdwsCar")
     self.enable_corner_radar = 0
@@ -1262,6 +1269,7 @@ class CarController(CarControllerBase):
         can_sends.append(hyundaican.create_frt_radar_opt(self.packer))
 
     if self.CP.flags & HyundaiFlags.CANFD:
+      can_sends.extend(self._ev4_park_dtc_clear_msgs(CC, CS))
       can_sends = hyundaicanfd.apply_cluster_test_control_msgs(self.packer, can_sends, CS)
     if self.pedal_interceptor is not None:
       pedal_active = (CC.longActive and not CS.pedal_interceptor_cruise_blocked and
@@ -1356,6 +1364,45 @@ class CarController(CarControllerBase):
           self.cruise_buttons_msg_cnt += 1
 
     return can_sends
+
+  def _ev4_park_dtc_clear_msgs(self, CC, CS):
+    """Clear EV4 FR_CMR (0x7C4) & ADAS_DRV (0x730) steering-mismatch DTCs once parked so next startup stays warning-free."""
+    if not self.ev4_park_dtc_clear_enabled:
+      return []
+    if CC.latActive:
+      self.ev4_park_dtc_dirty = True
+      self.ev4_park_dtc_start_frame = None
+      return []
+    parked = (
+      CS.out.gearShifter == structs.CarState.GearShifter.park and
+      CS.out.standstill and
+      not CC.enabled and
+      not CC.latActive
+    )
+    if not parked:
+      self.ev4_park_dtc_start_frame = None
+      return []
+    if not self.ev4_park_dtc_dirty:
+      return []
+    if self.ev4_park_dtc_start_frame is None:
+      self.ev4_park_dtc_start_frame = self.frame
+    elapsed = self.frame - self.ev4_park_dtc_start_frame
+    schedule = (
+      (5, b"\x04\x14\xFF\xFF\xFF\x00\x00\x00"),   # +50 ms: ClearDTC (Default session)
+      (11, b"\x02\x10\x03\x00\x00\x00\x00\x00"),  # +110 ms: Extended diagnostic session
+      (16, b"\x04\x14\xFF\xFF\xFF\x00\x00\x00"),  # +160 ms: ClearDTC (Extended session)
+      (21, b"\x02\x10\x01\x00\x00\x00\x00\x00"),  # +210 ms: Return to Default session
+    )
+    msgs = []
+    for step_frame, payload in schedule:
+      if elapsed == step_frame:
+        msgs.append((0x7C4, payload, self.CAN.ECAN))
+        msgs.append((0x730, payload, self.CAN.CAM))
+        if step_frame == schedule[-1][0]:
+          self.ev4_park_dtc_dirty = False
+          self.ev4_park_dtc_start_frame = None
+        break
+    return msgs
 
   def canfd_toggle_adas(self, CC, CS):
     trigger_min = -200

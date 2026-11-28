@@ -22,7 +22,7 @@ HDA1_TX_MSGS = [
 # Mirrors HYUNDAI_CANFD_HDA2_LONG_TX_MSGS in safety_hyundai_canfd.h (used for all HDA2 modes)
 HDA2_TX_MSGS = [
   [0x10B, 2], [0x50, 0], [0x1CF, 0], [0x1CF, 1], [0x1CF, 2],
-  [0x1AA, 0], [0x1AA, 1], [0x1AA, 2], [0x2A4, 0], [0x51, 0], [0x730, 1],
+  [0x1AA, 0], [0x1AA, 1], [0x1AA, 2], [0x2A4, 0], [0x51, 0], [0x730, 1], [0x730, 2], [0x7C4, 0],
   [0x7B1, 0], [0x7B1, 1], [0x165, 0], [0x16A, 0], [0x3C1, 0], [0x400, 0],
   [0x12A, 1], [0x160, 1], [0x1E0, 1], [0x1A0, 1], [0x1EA, 1], [0x200, 1], [0x345, 1], [0x1DA, 1],
   [0x12A, 0], [0x1E0, 0], [0x160, 0], [0x1EA, 0], [0x200, 0], [0x1A0, 0], [0x345, 0], [0x1DA, 0],
@@ -397,6 +397,72 @@ class TestHyundaiCanfdLFASteeringLong(HyundaiCanfdLongitudinalMixin, HyundaiLong
     addr, bus = self.DISABLED_ECU_UDS_MSG
     tester_present = libsafety_py.make_CANPacket(addr, bus, b"\x02\x3E\x80\x00\x00\x00\x00\x00")
     self.assertTrue(self._tx(tester_present))
+
+
+class TestHyundaiCanfdEv4ParkedClearDtc(unittest.TestCase):
+  TX_MSGS = HDA2_TX_MSGS
+
+  def setUp(self):
+    self.packer = CANPackerPanda("hyundai_canfd_generated")
+    self.safety = libsafety_py.libsafety
+    self.ev4_param = (HyundaiSafetyFlags.CANFD_LKA_STEERING | HyundaiSafetyFlags.CANFD_LKA_STEERING_ALT |
+                      HyundaiSafetyFlags.LONG | HyundaiSafetyFlags.EV_GAS | HyundaiSafetyFlags.CAMERA_SCC)
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, self.ev4_param)
+    self.safety.init_tests()
+
+  def _set_speed(self, raw_speed):
+    msg = self.packer.make_can_msg_panda("WHEEL_SPEEDS", 0, {f"WHEEL_SPEED_{i}": raw_speed * 0.03125 for i in range(1, 5)})
+    self.safety.safety_rx_hook(msg)
+
+  def test_parked_clear_dtc_allowlist_and_interlocks(self):
+    allowed_payloads = (
+      b"\x04\x14\xFF\xFF\xFF\x00\x00\x00",
+      b"\x02\x10\x03\x00\x00\x00\x00\x00",
+      b"\x02\x10\x01\x00\x00\x00\x00\x00",
+    )
+    disallowed_payloads = (
+      b"\x00\x00\x00\x00\x00\x00\x00\x00",
+      b"\x02\x11\x01\x00\x00\x00\x00\x00",  # ECU Reset
+      b"\x03\x28\x83\x01\x00\x00\x00\x00",  # CommunicationControl
+      b"\x02\x3E\x80\x00\x00\x00\x00\x00",  # TesterPresent not allowed on 0x7C4 or 0x730 bus 2
+      b"\x04\x14\xFF\xFF\xFF\x01\x00\x00",  # Non-zero trailing padding
+    )
+
+    self.safety.set_controls_allowed(False)
+    self._set_speed(0)
+
+    # Allowed on exact (addr, bus) when stationary + disengaged + CAMERA_SCC + HDA2
+    for addr, bus in ((0x7C4, 0), (0x730, 2)):
+      for payload in allowed_payloads:
+        self.assertTrue(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, payload)))
+      for payload in disallowed_payloads:
+        self.assertFalse(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, payload)))
+
+    # Blocked on wrong buses
+    for addr, bus in ((0x7C4, 1), (0x7C4, 2), (0x730, 0), (0x730, 1)):
+      self.assertFalse(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, allowed_payloads[0])))
+
+    # Existing TesterPresent on 0x730 bus 1 remains allowed
+    self.assertTrue(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(0x730, 1, b"\x02\x3E\x80\x00\x00\x00\x00\x00")))
+
+    # Blocked when controls_allowed is True
+    self.safety.set_controls_allowed(True)
+    for addr, bus in ((0x7C4, 0), (0x730, 2)):
+      self.assertFalse(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, allowed_payloads[0])))
+
+    # Blocked when vehicle is moving
+    self.safety.set_controls_allowed(False)
+    self._set_speed(100)
+    for addr, bus in ((0x7C4, 0), (0x730, 2)):
+      self.assertFalse(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, allowed_payloads[0])))
+
+    # Blocked on non-CAMERA_SCC HDA2
+    self.safety.set_safety_hooks(CarParams.SafetyModel.hyundaiCanfd, self.ev4_param & ~HyundaiSafetyFlags.CAMERA_SCC)
+    self.safety.init_tests()
+    self.safety.set_controls_allowed(False)
+    self._set_speed(0)
+    for addr, bus in ((0x7C4, 0), (0x730, 2)):
+      self.assertFalse(self.safety.safety_tx_hook(libsafety_py.make_CANPacket(addr, bus, allowed_payloads[0])))
 
 
 if __name__ == "__main__":
