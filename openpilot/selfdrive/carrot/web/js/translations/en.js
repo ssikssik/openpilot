@@ -653,7 +653,7 @@ window.CarrotTranslations.register("en", {
     joystick_debug_mode: "Joystick Debug Mode",
     joystick_mode: "Joystick Mode",
     joystick_mode_confirm: "Enable Joystick Mode?\nUse only in a safe private area and turn it off after testing.",
-    joystick_mode_offroad_only: "Turn off the car (offroad) before enabling Joystick Mode.",
+    joystick_mode_standstill_only: "Stop the car (standstill) before enabling Joystick Mode.",
     joystick_mode_enabled: "Joystick Mode enabled.",
     joystick_mode_disabled: "Joystick Mode disabled.",
     longitudinal_maneuver_mode: "Longitudinal Maneuver Mode",

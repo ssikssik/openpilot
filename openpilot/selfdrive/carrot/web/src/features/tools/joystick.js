@@ -1,5 +1,6 @@
 (() => {
   const BTN_ID = "btnToolsJoystick";
+  const STANDSTILL_SPEED_MPS = 0.3;
   let enabled = false;
   let busy = false;
 
@@ -22,6 +23,28 @@
     button.setAttribute("aria-pressed", enabled ? "true" : "false");
     button.classList.toggle("active", enabled);
     button.disabled = busy;
+  }
+
+  async function isVehicleStopped(offroad) {
+    if (offroad) return true;
+    if (typeof getJson !== "function") return true;
+    try {
+      const data = await getJson("/api/live_runtime?force=1");
+      const carState = data?.services?.carState || {};
+      if (carState.standstill === true) return true;
+      const rawSpeed =
+        carState.vEgo !== undefined && carState.vEgo !== null
+          ? carState.vEgo
+          : data?.runtime?.vEgo;
+      const speed = Number(rawSpeed);
+      if (Number.isFinite(speed)) {
+        return Math.abs(speed) < STANDSTILL_SPEED_MPS;
+      }
+      if (carState.standstill === false) return false;
+      return true;
+    } catch {
+      return true;
+    }
   }
 
   async function refresh() {
@@ -56,10 +79,11 @@
 
       const nextEnabled = !enabled;
       if (nextEnabled) {
-        if (!offroad) {
+        const stopped = await isVehicleStopped(offroad);
+        if (!stopped) {
           if (typeof showAppToast === "function") {
             showAppToast(
-              t("joystick_mode_offroad_only", "Turn off the car (offroad) before enabling Joystick Mode."),
+              t("joystick_mode_standstill_only", "Stop the car (standstill) before enabling Joystick Mode."),
               { tone: "error" },
             );
           }

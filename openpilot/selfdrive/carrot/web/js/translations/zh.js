@@ -562,7 +562,7 @@ window.CarrotTranslations.register("zh", {
     joystick_debug_mode: "摇杆调试模式",
     joystick_mode: "摇杆模式",
     joystick_mode_confirm: "确定启用摇杆模式吗？\n请仅在安全的封闭场地使用，测试完成后请及时关闭。",
-    joystick_mode_offroad_only: "请在车辆熄火（offroad）状态下启用摇杆模式。",
+    joystick_mode_standstill_only: "请在车辆静止（停车）状态下启用摇杆模式。",
     joystick_mode_enabled: "已启用摇杆模式。",
     joystick_mode_disabled: "已关闭摇杆模式。",
     longitudinal_maneuver_mode: "纵向机动模式",
